@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 0.** The repository currently builds a minimal runtime and its tests. It is not ready to create a complete game yet.
+> **Status: early development — Phase 1A.** The repository currently provides a Linux/X11 platform foundation. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -23,20 +23,21 @@ The complete direction is documented in [Idea.md](Idea.md). The implementation s
 
 ## Current status
 
-Phase 0 provides the public foundation needed for future engine work:
+Phase 0 is implemented and Phase 1A currently provides the first runtime platform layer:
 
 - CMake 3.25+ project using C++20 without compiler extensions;
-- minimal `gameengine_core` static library;
-- `gameengine_runtime` executable with a clean startup and shutdown path;
-- `gameengine_tests` executable without an external test framework;
-- CTest integration with core and runtime smoke tests;
+- `gameengine_core` with fixed-width types, status values, diagnostics, clock and input state;
+- `gameengine_platform` with a native Xlib/X11 Linux backend;
+- `gameengine_runtime` executable with a window, event processing and clean shutdown;
+- `gameengine_tests` and `gameengine_platform_tests` without an external test framework;
+- CTest integration with core, runtime and X11 smoke tests;
 - high-warning builds with warnings treated as errors;
 - Debug, Release and GCC sanitizer presets;
 - GitHub Actions for Windows/MSVC, Linux/GCC, Linux/Clang and ASan/UBSan.
 
-The following are intentionally not part of Phase 0:
+The following are intentionally not part of Phase 1A:
 
-- windowing, input or platform event loops;
+- the functional Windows/Win32 backend;
 - Vulkan, RHI or renderer code;
 - shaders and asset processing;
 - ECS, editor, Lua and Rust tooling;
@@ -50,6 +51,7 @@ The following are intentionally not part of Phase 0:
 | Runtime and core | C++20 | In use |
 | Build system | CMake 3.25+ | In use |
 | Tests | CTest, no external framework | In use |
+| Linux platform | Xlib/X11 | In use in Phase 1A |
 | Binary interoperability | Versioned C ABI | Planned |
 | Offline tooling | Rust | Planned |
 | Gameplay scripting | Optional Lua | Planned |
@@ -66,7 +68,14 @@ Phase 0 has no third-party runtime dependencies. Vulkan, Slang, Rust and Lua are
 - CMake 3.25 or newer;
 - a C++20 compiler;
 - Windows: Visual Studio 2022 with the **Desktop development with C++** workload;
-- Linux: GCC or Clang and a Make-compatible build tool.
+- Linux: GCC or Clang, a Make-compatible build tool, `libx11-dev` and `xvfb`.
+
+On Debian or Ubuntu, install the Linux development and virtual-display packages:
+
+```sh
+sudo apt-get update
+sudo apt-get install --no-install-recommends libx11-dev xvfb
+```
 
 Clone the repository and enter its root directory:
 
@@ -139,7 +148,11 @@ Presets are host-filtered. Windows shows the Windows presets, while Linux shows 
 
 ## Build outputs and tests
 
-The runtime does not open a window or print output yet. A successful execution exits with code `0`.
+On Linux, the runtime opens a 1280x720 X11 window and runs until it receives a close request. For an automated smoke test, use `--smoke-test`:
+
+```sh
+xvfb-run --auto-servernum ./build/linux-gcc-debug/gameengine_runtime --smoke-test
+```
 
 On Windows, the Debug executable is located at:
 
@@ -153,10 +166,11 @@ On Linux, the GCC Debug executable is located at:
 build/linux-gcc-debug/gameengine_runtime
 ```
 
-CTest currently runs two checks:
+CTest currently runs three checks on Linux:
 
 1. `gameengine_core`: verifies the core initialization and shutdown lifecycle;
-2. `gameengine_runtime_smoke`: verifies that the runtime starts and terminates successfully.
+2. `gameengine_runtime_smoke`: verifies that the runtime creates and destroys an X11 window;
+3. `gameengine_platform_x11`: verifies the platform lifecycle and idempotent shutdown.
 
 Build directories, compiler output, IDE files and local configuration are excluded by [.gitignore](.gitignore).
 

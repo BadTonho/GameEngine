@@ -2,14 +2,14 @@
 
 namespace gameengine::core {
 
-bool Core::initialize() noexcept
+Status Core::initialize() noexcept
 {
     if (initialized_) {
-        return false;
+        return Status{ErrorCode::already_initialized};
     }
 
     initialized_ = true;
-    return true;
+    return Status{};
 }
 
 void Core::shutdown() noexcept

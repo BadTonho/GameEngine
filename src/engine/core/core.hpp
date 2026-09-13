@@ -1,10 +1,12 @@
 #pragma once
 
+#include "engine/core/status.hpp"
+
 namespace gameengine::core {
 
 class Core final {
 public:
-    [[nodiscard]] bool initialize() noexcept;
+    [[nodiscard]] Status initialize() noexcept;
     void shutdown() noexcept;
 
     [[nodiscard]] bool is_initialized() const noexcept { return initialized_; }

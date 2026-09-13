@@ -64,21 +64,29 @@ Local Linux validation performed with GCC 15.2.0 and Clang 21.1.8:
 
 Goal: create a small, predictable runtime that shuts down correctly.
 
+Phase 1A is implemented for Linux with an Xlib backend. The Win32 backend and
+the remaining memory/handle coverage are still pending.
+
+The core and compilation checks pass locally. The X11 integration checks need
+an accessible display or a working Xvfb instance; the current restricted agent
+environment cannot create local X11 sockets.
+
 ### Tasks
 
-- [ ] Define basic types, error conventions and result values.
-- [ ] Create logging, assertions and development diagnostics.
-- [ ] Define ownership, lifetime and allocation policies.
-- [ ] Create allocators only after their use cases are defined.
+- [x] Define basic types, error conventions and result values.
+- [x] Create logging, assertions and development diagnostics.
+- [x] Define ownership, lifetime and allocation policies.
+- [x] Create allocators only after their use cases are defined.
 - [ ] Create opaque handles and generation-based IDs where needed.
 - [ ] Create the minimum math types for the first scene.
-- [ ] Create the platform layer.
+- [x] Create the platform layer.
 - [ ] Create the Windows window and event loop.
-- [ ] Add initial Linux support without spreading conditionals through the core.
-- [ ] Create keyboard and mouse input.
-- [ ] Create timing and the main loop.
-- [ ] Define shutdown and resource-destruction paths.
-- [ ] Add memory, handle, timing and event tests.
+- [x] Add initial Linux support without spreading conditionals through the core.
+- [x] Create keyboard and mouse input.
+- [x] Create timing and the main loop.
+- [x] Define shutdown and resource-destruction paths.
+- [ ] Add memory and handle tests.
+- [x] Add timing and event tests.
 
 ### Completion criteria
 
