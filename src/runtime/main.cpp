@@ -2,6 +2,7 @@
 #include "engine/core/clock.hpp"
 #include "engine/core/diagnostics.hpp"
 #include "engine/platform/platform.hpp"
+#include "engine/rhi/rhi.hpp"
 
 #include <chrono>
 #include <cstring>
@@ -46,11 +47,35 @@ int main(int argc, char** argv)
         return 4;
     }
 
+#if GAMEENGINE_RENDERER_HAS_VULKAN
+    gameengine::rhi::Renderer renderer;
+    const gameengine::core::Status renderer_status = renderer.initialize(platform);
+    if (!renderer_status) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              gameengine::core::to_string(renderer_status.code));
+        platform.shutdown();
+        core.shutdown();
+        return 5;
+    }
+#endif
+
     gameengine::core::Clock clock;
     do {
         platform.poll_events();
         const gameengine::core::f64 delta_seconds = clock.tick();
         (void)delta_seconds;
+
+#if GAMEENGINE_RENDERER_HAS_VULKAN
+        const gameengine::core::Status frame_status = renderer.render_frame(platform);
+        if (!frame_status) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  gameengine::core::to_string(frame_status.code));
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+#endif
 
         if (smoke_test) {
             platform.request_close();
@@ -59,6 +84,9 @@ int main(int argc, char** argv)
         }
     } while (!platform.should_close());
 
+#if GAMEENGINE_RENDERER_HAS_VULKAN
+    renderer.shutdown();
+#endif
     platform.shutdown();
 #else
     (void)argc;

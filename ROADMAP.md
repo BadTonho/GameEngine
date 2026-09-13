@@ -6,7 +6,7 @@ The roadmap does not define deadlines. Each phase is a technical milestone. A ph
 
 ## Current status
 
-The repository is in Phase 0. The initial public foundation, CMake build, minimal C++ runtime and local tests are implemented. The GitHub Actions workflow is prepared but still needs to run in the remote repository.
+The repository is in Phase 2A on Linux. The public foundation, X11 platform, minimal Vulkan RHI, swapchain and triangle smoke path are implemented locally. The Win32 backend and the broader resource/upload RHI remain pending.
 
 ## Evolution rules
 
@@ -96,20 +96,23 @@ The runtime opens a window, processes events, receives input, runs its loop and 
 
 Goal: initialize the GPU and establish a small abstraction based on real needs.
 
+Phase 2A is implemented for Linux with Xlib, Mesa-compatible Vulkan and a
+precompiled SPIR-V bootstrap shader path.
+
 ### Tasks
 
-- [ ] Create a Vulkan instance.
-- [ ] Enable validation layers in development builds.
-- [ ] Create a surface, select a GPU and query capabilities.
-- [ ] Create the device, queues and command pools.
-- [ ] Create the swapchain and basic synchronization.
+- [x] Create a Vulkan instance.
+- [x] Enable validation layers in development builds.
+- [x] Create a surface, select a GPU and query capabilities.
+- [x] Create the device, queues and command pools.
+- [x] Create the swapchain and basic synchronization.
 - [ ] Define the minimal RHI for devices, buffers, images, samplers and pipelines.
-- [ ] Create command lists, fences, semaphores and frames in flight.
+- [x] Create command lists, fences, semaphores and frames in flight.
 - [ ] Define deferred GPU resource destruction.
 - [ ] Create buffer and texture uploads through staging resources.
 - [ ] Add debug names and capture-tool integration.
-- [ ] Render a triangle.
-- [ ] Validate resize and surface-loss paths where applicable.
+- [x] Render a triangle.
+- [x] Validate resize and surface-loss paths where applicable.
 
 ### Completion criteria
 

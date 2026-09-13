@@ -20,6 +20,13 @@ struct WindowSize final {
     core::u32 height = 0;
 };
 
+struct NativeWindowHandles final {
+    std::uintptr_t display = 0;
+    std::uintptr_t window = 0;
+
+    [[nodiscard]] bool valid() const noexcept { return display != 0 && window != 0; }
+};
+
 using EventCallback = void (*)(const input::Event& event, void* user_data) noexcept;
 
 class Platform final {
@@ -43,6 +50,10 @@ public:
     [[nodiscard]] bool has_window() const noexcept { return window_created_; }
     [[nodiscard]] bool should_close() const noexcept { return should_close_; }
     [[nodiscard]] WindowSize window_size() const noexcept { return {width_, height_}; }
+    [[nodiscard]] NativeWindowHandles native_window_handles() const noexcept
+    {
+        return {native_display_, native_window_};
+    }
     [[nodiscard]] const input::InputState& input() const noexcept { return input_state_; }
 
 private:

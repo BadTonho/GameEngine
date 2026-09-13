@@ -13,6 +13,14 @@ enum class ErrorCode : u8 {
     display_unavailable,
     window_creation_failed,
     unsupported_platform,
+    vulkan_instance_failed,
+    vulkan_validation_unavailable,
+    vulkan_surface_failed,
+    vulkan_device_failed,
+    vulkan_swapchain_failed,
+    vulkan_frame_failed,
+    vulkan_surface_lost,
+    vulkan_validation_failed,
 };
 
 struct Status final {
@@ -44,6 +52,22 @@ struct Status final {
         return "window_creation_failed";
     case ErrorCode::unsupported_platform:
         return "unsupported_platform";
+    case ErrorCode::vulkan_instance_failed:
+        return "vulkan_instance_failed";
+    case ErrorCode::vulkan_validation_unavailable:
+        return "vulkan_validation_unavailable";
+    case ErrorCode::vulkan_surface_failed:
+        return "vulkan_surface_failed";
+    case ErrorCode::vulkan_device_failed:
+        return "vulkan_device_failed";
+    case ErrorCode::vulkan_swapchain_failed:
+        return "vulkan_swapchain_failed";
+    case ErrorCode::vulkan_frame_failed:
+        return "vulkan_frame_failed";
+    case ErrorCode::vulkan_surface_lost:
+        return "vulkan_surface_lost";
+    case ErrorCode::vulkan_validation_failed:
+        return "vulkan_validation_failed";
     }
 
     return "unknown";

@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.25)
 project(GameEngine VERSION 0.0.1 LANGUAGES CXX)
 
 option(GAMEENGINE_BUILD_TESTS "Build the GameEngine tests" ON)
+option(GAMEENGINE_BUILD_VULKAN "Build the Vulkan renderer" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -77,11 +78,43 @@ endif()
 
 gameengine_configure_target(gameengine_platform)
 
+add_library(gameengine_rhi INTERFACE)
+target_include_directories(gameengine_rhi
+    INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+)
+
+add_library(gameengine_renderer STATIC
+    src/engine/rhi/rhi.hpp
+)
+target_link_libraries(gameengine_renderer PUBLIC gameengine_rhi gameengine_platform)
+target_include_directories(gameengine_renderer
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+)
+
+if(GAMEENGINE_BUILD_VULKAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Vulkan REQUIRED)
+    target_sources(gameengine_renderer PRIVATE
+        src/engine/renderer/vulkan/renderer_vulkan.cpp
+        src/engine/renderer/vulkan/triangle_shaders.hpp
+        src/engine/renderer/vulkan/vulkan_utils.cpp
+        src/engine/renderer/vulkan/vulkan_utils.hpp
+    )
+    target_link_libraries(gameengine_renderer PRIVATE Vulkan::Vulkan)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_RENDERER_HAS_VULKAN=1)
+else()
+    target_sources(gameengine_renderer PRIVATE src/engine/renderer/vulkan/renderer_stub.cpp)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_RENDERER_HAS_VULKAN=0)
+endif()
+
+gameengine_configure_target(gameengine_renderer)
+
 add_executable(gameengine_runtime
     src/runtime/main.cpp
 )
 
-target_link_libraries(gameengine_runtime PRIVATE gameengine_core gameengine_platform)
+target_link_libraries(gameengine_runtime PRIVATE gameengine_core gameengine_platform gameengine_renderer)
 gameengine_configure_target(gameengine_runtime)
 
 if(GAMEENGINE_BUILD_TESTS)
@@ -95,6 +128,17 @@ if(GAMEENGINE_BUILD_TESTS)
     gameengine_configure_target(gameengine_tests)
 
     add_test(NAME gameengine_core COMMAND gameengine_tests)
+
+    add_executable(gameengine_rhi_tests
+        tests/rhi_tests.cpp
+    )
+    target_link_libraries(gameengine_rhi_tests PRIVATE gameengine_core gameengine_platform gameengine_renderer)
+    if(GAMEENGINE_BUILD_VULKAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_include_directories(gameengine_rhi_tests PRIVATE ${Vulkan_INCLUDE_DIR})
+    endif()
+    gameengine_configure_target(gameengine_rhi_tests)
+    add_test(NAME gameengine_rhi COMMAND gameengine_rhi_tests)
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         find_program(GAMEENGINE_XVFB_RUN xvfb-run)
 
@@ -103,6 +147,19 @@ if(GAMEENGINE_BUILD_TESTS)
         )
         target_link_libraries(gameengine_platform_tests PRIVATE gameengine_core gameengine_platform)
         gameengine_configure_target(gameengine_platform_tests)
+
+        if(GAMEENGINE_BUILD_VULKAN)
+            add_executable(gameengine_vulkan_tests
+                tests/vulkan_tests.cpp
+            )
+            target_link_libraries(gameengine_vulkan_tests PRIVATE
+                gameengine_core
+                gameengine_platform
+                gameengine_renderer
+            )
+            target_include_directories(gameengine_vulkan_tests PRIVATE ${Vulkan_INCLUDE_DIR})
+            gameengine_configure_target(gameengine_vulkan_tests)
+        endif()
 
         if(GAMEENGINE_XVFB_RUN)
             add_test(
@@ -113,9 +170,18 @@ if(GAMEENGINE_BUILD_TESTS)
                 NAME gameengine_platform_x11
                 COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_platform_tests>
             )
+            if(GAMEENGINE_BUILD_VULKAN)
+                add_test(
+                    NAME gameengine_vulkan_resize
+                    COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_vulkan_tests>
+                )
+            endif()
         else()
             add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
             add_test(NAME gameengine_platform_x11 COMMAND gameengine_platform_tests)
+            if(GAMEENGINE_BUILD_VULKAN)
+                add_test(NAME gameengine_vulkan_resize COMMAND gameengine_vulkan_tests)
+            endif()
         endif()
     else()
         add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)

@@ -33,8 +33,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install X11 dependencies
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libx11-dev xvfb
+      - name: Install Linux graphics dependencies
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libx11-dev libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers vulkan-tools xvfb
 
       - name: Configure
         run: cmake --preset linux-gcc-debug
@@ -53,7 +53,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Clang
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y clang libx11-dev xvfb
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y clang libx11-dev libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers vulkan-tools xvfb
 
       - name: Configure
         run: cmake --preset linux-clang-debug
@@ -71,8 +71,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install X11 dependencies
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libx11-dev xvfb
+      - name: Install Linux graphics dependencies
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libx11-dev libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers vulkan-tools xvfb
 
       - name: Configure
         run: cmake --preset linux-gcc-sanitizers
