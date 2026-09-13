@@ -1,56 +1,99 @@
 # GameEngine
 
-GameEngine is a public, modular C++ game engine designed to pursue high visual quality with efficient use of CPU, GPU, RAM, VRAM, storage and startup time.
+[![CI](https://github.com/BadTonho/GameEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/BadTonho/GameEngine/actions/workflows/ci.yml)
 
-The engine is currently in Phase 0: public foundation. The repository contains the initial CMake build, a minimal C++ runtime, and tests. Rendering, windowing, Vulkan and asset processing are planned for later phases.
+A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-## Project direction
+> **Status: early development — Phase 0.** The repository currently builds a minimal runtime and its tests. It is not ready to create a complete game yet.
 
-The project follows these principles:
+## Why this project exists
 
-- C++20 for the core and runtime;
-- a small C ABI for binary plugins and cross-language integration;
-- Rust for offline asset and project tooling;
-- optional Lua for gameplay scripting;
-- Slang for offline shader compilation;
-- Vulkan as the first graphics backend;
-- explicit ownership and measured resource costs;
-- separate runtime, editor and offline tooling;
-- optional features with cost proportional to their use.
+GameEngine is being designed around a simple principle: projects should pay for the systems they use. The long-term goal is to combine modern rendering quality with controlled RAM, CPU, GPU, VRAM, storage and startup costs.
 
-Read [Ideia.md](Ideia.md) for the long-term vision and [ROADMAP.md](ROADMAP.md) for the implementation plan.
+The project is intended to grow into:
 
-## Version
+- a lightweight and modular C++ runtime;
+- a scalable renderer with Vulkan as its first graphics backend;
+- an editor that remains separate from exported games;
+- offline tools for asset and project processing;
+- optional systems whose cost is explicit and proportional to their use;
+- a small C ABI for binary plugins and cross-language integration.
 
-The project is currently at version `0.0.1`. It is an early development foundation, and no public engine API is considered stable yet.
+The complete direction is documented in [Ideia.md](Ideia.md). The implementation sequence is tracked in [ROADMAP.md](ROADMAP.md).
 
-## Current requirements
+## Current status
+
+Phase 0 provides the public foundation needed for future engine work:
+
+- CMake 3.25+ project using C++20 without compiler extensions;
+- minimal `gameengine_core` static library;
+- `gameengine_runtime` executable with a clean startup and shutdown path;
+- `gameengine_tests` executable without an external test framework;
+- CTest integration with core and runtime smoke tests;
+- high-warning builds with warnings treated as errors;
+- Debug, Release and GCC sanitizer presets;
+- GitHub Actions for Windows/MSVC, Linux/GCC, Linux/Clang and ASan/UBSan.
+
+The following are intentionally not part of Phase 0:
+
+- windowing, input or platform event loops;
+- Vulkan, RHI or renderer code;
+- shaders and asset processing;
+- ECS, editor, Lua and Rust tooling;
+- physics, audio, networking or gameplay APIs;
+- a functional C ABI.
+
+## Technology direction
+
+| Area | Direction | Phase 0 status |
+| --- | --- | --- |
+| Runtime and core | C++20 | In use |
+| Build system | CMake 3.25+ | In use |
+| Tests | CTest, no external framework | In use |
+| Binary interoperability | Versioned C ABI | Planned |
+| Offline tooling | Rust | Planned |
+| Gameplay scripting | Optional Lua | Planned |
+| Shader source | Slang, compiled offline | Planned |
+| First graphics backend | Vulkan | Planned |
+
+Phase 0 has no third-party runtime dependencies. Vulkan, Slang, Rust and Lua are not required to configure or build the current repository.
+
+## Quick start
+
+### Requirements
 
 - Git;
 - CMake 3.25 or newer;
 - a C++20 compiler;
-- Windows: Visual Studio 2022 with the Desktop development with C++ workload;
+- Windows: Visual Studio 2022 with the **Desktop development with C++** workload;
 - Linux: GCC or Clang and a Make-compatible build tool.
 
-The current code does not require Vulkan, Slang, Rust or Lua.
+Clone the repository and enter its root directory:
 
-## Configure and build
+```sh
+git clone https://github.com/BadTonho/GameEngine.git
+cd GameEngine
+```
 
-List the available presets for the current host:
+List the presets available for the current host:
 
 ```sh
 cmake --list-presets
 ```
 
-Windows with Visual Studio:
+### Windows with MSVC
 
-```sh
+Run these commands from a Visual Studio Developer PowerShell or a shell where the MSVC toolchain is available:
+
+```powershell
 cmake --preset windows-msvc-debug
 cmake --build --preset windows-msvc-debug
 ctest --preset windows-msvc-debug
 ```
 
-Linux with GCC:
+For an optimized build, replace `windows-msvc-debug` with `windows-msvc-release` in all three commands.
+
+### Linux with GCC
 
 ```sh
 cmake --preset linux-gcc-debug
@@ -58,7 +101,9 @@ cmake --build --preset linux-gcc-debug
 ctest --preset linux-gcc-debug
 ```
 
-Linux with Clang:
+For an optimized build, replace `linux-gcc-debug` with `linux-gcc-release` in all three commands.
+
+### Linux with Clang
 
 ```sh
 cmake --preset linux-clang-debug
@@ -66,7 +111,11 @@ cmake --build --preset linux-clang-debug
 ctest --preset linux-clang-debug
 ```
 
-Linux with AddressSanitizer and UndefinedBehaviorSanitizer:
+For an optimized build, replace `linux-clang-debug` with `linux-clang-release` in all three commands.
+
+### Linux with sanitizers
+
+The sanitizer preset enables AddressSanitizer and UndefinedBehaviorSanitizer:
 
 ```sh
 cmake --preset linux-gcc-sanitizers
@@ -74,23 +123,76 @@ cmake --build --preset linux-gcc-sanitizers
 ctest --preset linux-gcc-sanitizers
 ```
 
-The runtime executable is created as `gameengine_runtime`. The test target is `gameengine_tests` and is registered with CTest.
+Presets are host-filtered. Windows shows the Windows presets, while Linux shows the Linux presets.
+
+## Preset matrix
+
+| Preset | Platform | Compiler | Configuration |
+| --- | --- | --- | --- |
+| `windows-msvc-debug` | Windows | MSVC | Debug |
+| `windows-msvc-release` | Windows | MSVC | Release |
+| `linux-gcc-debug` | Linux | GCC | Debug |
+| `linux-gcc-release` | Linux | GCC | Release |
+| `linux-clang-debug` | Linux | Clang | Debug |
+| `linux-clang-release` | Linux | Clang | Release |
+| `linux-gcc-sanitizers` | Linux | GCC | Debug + ASan/UBSan |
+
+## Build outputs and tests
+
+The runtime does not open a window or print output yet. A successful execution exits with code `0`.
+
+On Windows, the Debug executable is located at:
+
+```text
+build/windows-msvc-debug/Debug/gameengine_runtime.exe
+```
+
+On Linux, the GCC Debug executable is located at:
+
+```text
+build/linux-gcc-debug/gameengine_runtime
+```
+
+CTest currently runs two checks:
+
+1. `gameengine_core`: verifies the core initialization and shutdown lifecycle;
+2. `gameengine_runtime_smoke`: verifies that the runtime starts and terminates successfully.
+
+Build directories, compiler output, IDE files and local configuration are excluded by [.gitignore](.gitignore).
 
 ## Repository layout
 
 ```text
-src/       Runtime and engine source code
-tests/     Tests without an external testing framework
-docs/      Future architecture and user documentation
-tools/     Future offline tooling
-editor/    Future editor code
+Ideia.md                 Long-term architecture and project vision
+ROADMAP.md               Phases, milestones and acceptance criteria
+CMakeLists.txt           Official build definition
+CMakePresets.json        Supported local build configurations
+src/engine/core/         Core runtime library
+src/runtime/             Runtime entry point
+tests/                   Tests without an external framework
+.github/workflows/       Continuous integration
+docs/                    Future user and subsystem documentation
+tools/                   Future offline tooling
+editor/                  Future editor code
 ```
 
-Only directories containing source files are created while they are needed. This keeps the repository navigable and avoids empty or speculative structure.
+Only directories with real source files are created at this stage. Future directories are listed to explain the intended boundaries, not to imply that those systems already exist.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. All contributions must preserve the runtime/editor/tooling boundaries and must not add secrets or machine-specific data to the public repository.
+The project is being built deliberately and incrementally. Before opening an issue or pull request:
+
+1. read [Ideia.md](Ideia.md) and the current [ROADMAP.md](ROADMAP.md);
+2. check whether the proposed work belongs in the current phase;
+3. keep runtime, editor and offline tooling boundaries separate;
+4. run the relevant CMake build and CTest preset;
+5. keep the diff free of generated artifacts, credentials, personal data and machine-specific paths.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete contribution workflow and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
+
+## Version and compatibility
+
+The current version is `0.0.1`. The project is in early development and does not promise API or asset-format stability yet. Public compatibility contracts will be defined before a stable release.
 
 ## License
 
