@@ -22,7 +22,7 @@ Before editing code, the agent must:
 4. Check whether the requested functionality already exists.
 5. Read relevant documentation before introducing a new pattern.
 6. Read `Ideia.md` when the task affects architecture, language choice, rendering, memory, runtime structure, tooling or public APIs.
-7. Before and after every alteration, inspect the relevant new or changed files for sensitive information that must never reach the public repository.
+7. After completing alterations, inspect the relevant new or changed files and the final diff for sensitive information before the changes are ready for the user's commit.
 
 Do not make architectural assumptions without first checking the repository.
 
@@ -98,7 +98,7 @@ Do not replace working systems purely because another implementation is preferre
 
 Large refactors require a clear technical reason.
 
-Before considering a task complete, inspect the repository status and the full diff for sensitive information. Confirm that no secrets, credentials, personal data or machine-specific information was introduced or exposed. If suspicious content is found, stop and investigate instead of leaving it in the worktree.
+After completing a task and before the user commits, inspect the repository status and the full diff for sensitive information. Confirm that no secrets, credentials, personal data or machine-specific information was introduced or exposed. If suspicious content is found, stop and investigate instead of leaving it in the worktree.
 
 ---
 
@@ -604,7 +604,7 @@ Respect `.gitignore`.
 
 This repository is intended to be public. Treat every file that could be tracked or committed as publicly visible.
 
-Before editing and again before considering a task complete, inspect new and changed files for:
+After making changes and before the user commits, inspect new and changed files for:
 
 - passwords, API tokens, access keys, credentials and private keys;
 - certificates, `.env` values and authentication material;
@@ -819,7 +819,7 @@ Before considering a task complete, check as applicable:
 [ ] shader pipeline rules respected
 [ ] performance-sensitive changes measured when practical
 [ ] documentation updated when needed
-[ ] new and changed files and the final diff checked for sensitive information
+[ ] new and changed files and the final diff checked for sensitive information before user commit
 [ ] documentation is stored in the appropriate location and remains organized
 [ ] no unnecessary monolithic file or module was introduced
 [ ] no unrelated files changed
