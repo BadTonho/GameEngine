@@ -1300,6 +1300,8 @@ Uma biblioteca não entra apenas porque facilita desenvolvimento.
 
 # ROADMAP DE VALIDAÇÃO E EVOLUÇÃO
 
+O roadmap detalhado de tarefas, dependências e critérios de conclusão está em [`ROADMAP.md`](ROADMAP.md). Esta seção mantém apenas a visão resumida das etapas.
+
 As versões abaixo são marcos técnicos, não prazos de lançamento. A engine pode levar o tempo necessário para atingir qualidade, e cada marco poderá ser dividido em vários protótipos internos.
 
 Uma etapa só deve ser considerada concluída quando seu comportamento, seus custos e seus caminhos de erro forem compreendidos por meio de testes e medições. Decisões que ainda não foram validadas não devem ser tratadas como contratos permanentes da arquitetura.
