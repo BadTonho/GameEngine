@@ -22,6 +22,7 @@ Before editing code, the agent must:
 4. Check whether the requested functionality already exists.
 5. Read relevant documentation before introducing a new pattern.
 6. Read `Ideia.md` when the task affects architecture, language choice, rendering, memory, runtime structure, tooling or public APIs.
+7. Verify the exact target files and directories before editing, and confirm afterward that no unrelated files were changed.
 
 Do not make architectural assumptions without first checking the repository.
 
@@ -96,6 +97,8 @@ Avoid moving files unless the change requires it.
 Do not replace working systems purely because another implementation is preferred.
 
 Large refactors require a clear technical reason.
+
+Before considering a task complete, inspect the repository status and the diff for the exact target files. If files outside the requested scope were modified, stop and investigate instead of leaving unrelated changes in the worktree.
 
 ---
 
@@ -475,6 +478,15 @@ Do not copy the whole architecture into `AGENTS.md`.
 
 Architecture belongs in `Ideia.md` or the appropriate design document.
 
+Documentation must remain organized and easy to navigate:
+
+- place each document in the appropriate repository location;
+- keep architecture, roadmap, API, contribution and user documentation separated by purpose;
+- update an existing document instead of creating a duplicate when the subject already has an owner;
+- use consistent headings, terminology and links;
+- keep links and referenced paths valid;
+- do not scatter temporary notes or generated documentation through source directories.
+
 ---
 
 # 23. Testing
@@ -548,6 +560,12 @@ Before adding an abstraction, ask:
 6. Can the current problem be solved more directly?
 
 Avoid architecture astronautics.
+
+## Modularity and monoliths
+
+Avoid unnecessary monolithic files and modules. When a file or subsystem accumulates multiple independent responsibilities, separate it into cohesive units with clear ownership, lifecycle and dependencies whenever that improves comprehension, testing or build boundaries.
+
+Do not split code into arbitrary tiny files merely to increase the file count. Prefer modules organized around stable responsibilities, keep dependencies directed and minimize circular coupling. A larger unit is acceptable when its responsibilities are genuinely cohesive and the separation would add more complexity than value.
 
 ---
 
@@ -790,6 +808,9 @@ Before considering a task complete, check as applicable:
 [ ] shader pipeline rules respected
 [ ] performance-sensitive changes measured when practical
 [ ] documentation updated when needed
+[ ] target files and directories verified before and after editing
+[ ] documentation is stored in the appropriate location and remains organized
+[ ] no unnecessary monolithic file or module was introduced
 [ ] no unrelated files changed
 ```
 
