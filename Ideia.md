@@ -1,72 +1,66 @@
-# GAME ENGINE — PLANO INICIAL
+# GAME ENGINE — INITIAL VISION
 
-## Objetivo
+## Objective
 
-Criar uma game engine moderna, extremamente leve, rápida, modular e visualmente avançada.
+Create a modern, extremely lightweight, fast, modular and visually advanced game engine.
 
-A meta não é ser leve por possuir poucos recursos. A meta é entregar **qualidade visual de nível AAA com o menor custo possível de RAM, CPU, GPU, armazenamento e tempo de inicialização**.
+The goal is not to be lightweight by having few features. The goal is to deliver **AAA-level visual quality at the lowest practical cost in RAM, CPU, GPU, storage and startup time**.
 
-A engine deve conseguir escalar desde hardware modesto até máquinas high-end sem obrigar todos os projetos a carregar sistemas caros.
+The engine should scale from modest hardware to high-end machines without forcing every project to load expensive systems.
 
-A prioridade principal da engine será:
+The engine's main priorities are:
 
-* baixo uso de RAM;
-* baixo uso de CPU em idle;
-* inicialização extremamente rápida;
-* executáveis pequenos;
-* arquitetura moderna;
-* renderer moderno e escalável;
-* alta qualidade visual;
-* suporte a hardware moderno;
-* possibilidade de rodar em PCs fracos;
-* editor leve e responsivo;
-* sistemas completamente opcionais;
-* custo proporcional aos recursos realmente utilizados;
-* controle explícito de memória;
-* alta performance;
-* fácil utilização para desenvolvedores de jogos;
-* ferramentas pesadas fora do runtime sempre que possível.
+* low RAM usage;
+* low idle CPU usage;
+* extremely fast startup;
+* small executables;
+* modern architecture;
+* a modern and scalable renderer;
+* high visual quality;
+* support for modern hardware;
+* the ability to run on weak PCs;
+* a lightweight and responsive editor;
+* fully optional systems;
+* cost proportional to the resources actually used;
+* explicit memory control;
+* high performance;
+* ease of use for game developers;
+* heavy tools kept outside the runtime whenever possible.
 
-As duas filosofias centrais serão:
+The two central philosophies are:
 
 > You only pay for what you use.
 
 > Maximum visual quality per unit of hardware.
 
-Em português:
+If a game does not use physics, Lua, networking, ray tracing, volumetrics, dynamic GI, particles or another optional system, that code and its data should ideally not exist in the final executable. When complete removal is not technically possible, the residual cost must be small, explicit and measurable.
 
-> Você só paga pelo que usa.
+Graphics quality must be **scalable**, not unconditionally heavy.
 
-> Máxima qualidade visual pelo menor custo possível de hardware.
+## Scope and success criteria
 
-Se um jogo não usa física, Lua, networking, ray tracing, volumetria, GI dinâmica, partículas ou outro sistema opcional, esse código e seus dados idealmente não devem existir no executável final. Quando a remoção completa não for tecnicamente possível, o custo residual deve ser pequeno, explícito e mensurável.
+This document describes a long-term vision. It is not a launch deadline and does not require every system to be implemented at the same time.
 
-A qualidade gráfica deve ser **escalável**, não obrigatoriamente pesada.
+The initial validation focus is a real-time 3D game engine for desktop, starting with Windows and Linux, with scalable rendering paths. Other platforms, genres and features can be added as the architecture and tests justify them.
 
-## Escopo e critério de sucesso
+In this vision, “best possible” means maximizing the combination of:
 
-Este documento descreve uma visão de longo prazo. Ele não é um compromisso de prazo de lançamento nem exige que todos os sistemas sejam implementados ao mesmo tempo.
+* visual quality;
+* predictable performance;
+* RAM, VRAM, CPU and GPU efficiency;
+* stability and correctness;
+* ability to evolve;
+* simplicity for engine users.
 
-O foco inicial de validação será uma engine para jogos 3D em desktop, começando por Windows e Linux, com renderização em tempo real e caminhos gráficos escaláveis. Outras plataformas, gêneros e recursos podem ser adicionados conforme a arquitetura e os testes justificarem.
+These goals can conflict. Every important decision should state its trade-offs and be validated with prototypes, tests and measurements. The vision may remain ambitious even when an implementation is revised.
 
-Nesta visão, “melhor possível” significa maximizar a combinação de:
-
-* qualidade visual;
-* previsibilidade de performance;
-* eficiência de RAM, VRAM, CPU e GPU;
-* estabilidade e correção;
-* capacidade de evolução;
-* simplicidade para quem utiliza a engine.
-
-Esses objetivos podem entrar em conflito. Cada decisão importante deverá explicitar o trade-off e ser validada por protótipos, testes e medições. A visão pode permanecer ambiciosa mesmo quando a implementação de uma parte for revisada.
-
-# LINGUAGENS
+# LANGUAGES
 
 ## C++
 
-C++ será a principal linguagem da engine e do runtime.
+C++ is the primary language of the engine and runtime.
 
-Responsável por:
+It is responsible for:
 
 * Core
 * Memory Management
@@ -85,40 +79,42 @@ Responsável por:
 * Animation Runtime
 * Audio Runtime
 * Physics Integration
-* Networking Runtime futuramente
+* Networking Runtime in the future
 * Game Runtime
-* Plugins internos
+* Internal Plugins
 * Performance-critical code
 
-Regra:
+Rule:
 
-> Tudo que roda dentro do jogo deve preferencialmente ser escrito em C++.
+> Everything that runs inside the game should preferably be written in C++.
 
-Objetivos:
+Objectives:
 
-* nenhum garbage collector obrigatório no core;
-* nenhuma runtime pesada obrigatória;
-* ownership e lifetime explícitos;
-* poucas alocações;
-* executáveis pequenos;
-* acesso direto às APIs do sistema;
-* desempenho previsível;
-* fácil integração com C e APIs nativas;
-* uso de design orientado a dados quando isso melhorar o sistema.
+* no mandatory garbage collector in the core;
+* no mandatory heavy runtime;
+* explicit ownership and lifetime;
+* few allocations;
+* small executables;
+* direct access to system APIs;
+* predictable performance;
+* easy integration with C and native APIs;
+* data-oriented design whenever it improves the system.
 
-A versão do padrão C++, os compiladores suportados e a configuração de toolchain deverão ser **fixados/pinados** no repositório ou na configuração de build. Atualizações devem ser deliberadas e testadas, nunca automáticas.
+The C++ standard, supported compilers and toolchain configuration must be **pinned** in the repository or build configuration. Updates must be deliberate and tested, never automatic.
 
-# C
+C++ does not dictate an object-oriented architecture. The runtime should use data-oriented structures, RAII for scope-bound resources and explicit ownership where those choices improve correctness and performance.
 
-C será utilizado principalmente como ABI pública da engine.
+# C ABI
 
-Não será necessariamente usado para implementar grandes subsistemas.
+C is used primarily as the engine's public ABI.
 
-Objetivo:
+It is not necessarily used to implement large subsystems.
 
-Criar uma interface estável entre a engine e outras linguagens.
+Objective:
 
-Exemplo:
+Create a stable interface between the engine and other languages.
+
+Example:
 
 ```c
 typedef unsigned long long EngineEntity;
@@ -137,31 +133,31 @@ void engine_transform_set_position(
 );
 ```
 
-Internamente essas funções podem ser implementadas em C++.
+Internally, these functions may be implemented in C++.
 
-A C ABI poderá servir como uma fronteira de integração futura com:
+The C ABI may serve as a future integration boundary for:
 
-* C
-* C++
-* Zig (binding futuro, não runtime oficial)
-* Rust
-* C#
-* Lua
-* Python
-* outras linguagens
+* C++;
+* C;
+* Rust;
+* C#;
+* Lua;
+* Python;
+* Zig as a future binding, not as the official runtime language;
+* other languages.
 
-A C ABI, sozinha, não cria bindings automáticos. Cada linguagem que utilizar a engine precisará de um binding, gerador ou adaptador próprio. A ABI pública deverá permanecer pequena, estável e baseada em tipos simples.
+The C ABI alone does not create bindings automatically. Each language that uses the engine needs its own binding, generator or adapter. The public ABI must remain small, stable and based on simple types.
 
-## Regras da ABI pública
+## Public ABI rules
 
-* utilizar handles opacos em vez de expor estruturas internas;
-* definir claramente quem aloca, quem possui e quem libera cada recurso;
-* versionar a ABI e validar compatibilidade;
-* representar falhas com códigos de erro e contratos documentados;
-* evitar containers, strings, classes, templates, exceções e layouts internos de C++ na fronteira pública;
-* definir convenções para callbacks, threads e shutdown.
+* use opaque handles instead of exposing internal structures;
+* define who allocates, owns and releases each resource;
+* version the ABI and validate compatibility;
+* represent failures with error codes and documented contracts;
+* avoid containers, strings, classes, templates, exceptions and internal C++ layouts at the public boundary;
+* define conventions for callbacks, threads and shutdown.
 
-Arquitetura:
+Architecture:
 
 ```text
               ENGINE
@@ -180,11 +176,11 @@ Arquitetura:
 
 # RUST
 
-Rust será usado principalmente para ferramentas externas.
+Rust is used primarily for external tools.
 
-Essas ferramentas não precisam ser incluídas no jogo final.
+These tools do not need to be included in the final game.
 
-Possíveis ferramentas:
+Possible tools:
 
 ```text
 Tools/
@@ -199,7 +195,7 @@ Tools/
 └── ProjectTools/
 ```
 
-Exemplo de pipeline:
+Example pipeline:
 
 ```text
 player.glb
@@ -213,13 +209,13 @@ Rust Asset / Tool Pipeline
 
         ↓
 
-Importação
-Otimização
-Compressão
-Conversão
+Import
+Optimization
+Compression
+Conversion
 LOD
 Metadata
-Processamento
+Processing
 
         ↓
 
@@ -229,28 +225,28 @@ player_normal.texture
 walk.animation
 ```
 
-O runtime não deve precisar interpretar formatos pesados durante o jogo.
+The runtime should not need to interpret heavy formats during the game.
 
-O objetivo é carregar arquivos já preparados para a engine.
+The goal is to load files already prepared for the engine.
 
-Isso deve melhorar:
+This should improve:
 
 * startup;
 * loading;
 * RAM;
 * CPU;
-* tamanho do runtime;
-* simplicidade da engine.
+* runtime size;
+* engine simplicity.
 
 ---
 
 # LUA
 
-Lua será opcional.
+Lua is optional.
 
-Será utilizada principalmente para gameplay e scripting.
+It is used primarily for gameplay and scripting.
 
-Exemplo:
+Example:
 
 ```lua
 function start()
@@ -264,29 +260,29 @@ function update(dt)
 end
 ```
 
-Lua nunca será obrigatória.
+Lua is never mandatory.
 
-Exemplo:
+Example:
 
 ```text
-Projeto A
+Project A
 
 C++
 +
 Engine
 ```
 
-Resultado:
+Result:
 
 ```text
 Lua runtime:
 0 bytes
 ```
 
-Outro projeto:
+Another project:
 
 ```text
-Projeto B
+Project B
 
 C++
 +
@@ -295,24 +291,24 @@ Engine
 Lua
 ```
 
-Somente nesse caso Lua entra no executável.
+Only in this case does Lua enter the executable.
 
 ---
 
 # SLANG
 
-Slang será a linguagem padrão para shaders da engine.
+Slang is the engine's default shader language.
 
-Responsável por:
+It is responsible for:
 
 * vertex shaders;
 * fragment/pixel shaders;
 * compute shaders;
-* ray tracing shaders futuramente;
-* bibliotecas compartilhadas de código GPU;
-* especialização e geração de variantes de shader.
+* ray-tracing shaders in the future;
+* shared GPU-code libraries;
+* shader specialization and variant generation.
 
-Objetivo principal:
+Primary objective:
 
 ```text
                  Slang
@@ -326,33 +322,33 @@ Objetivo principal:
      Vulkan       D3D12      Metal
 ```
 
-A engine deve evitar manter versões completamente separadas do mesmo shader para Vulkan, Direct3D 12 e Metal sempre que Slang puder fornecer uma base compartilhada.
+The engine should avoid maintaining completely separate versions of the same shader for Vulkan, Direct3D 12 and Metal whenever Slang can provide a shared foundation.
 
-## Regra de compilação de shaders
+## Shader compilation rule
 
-Shaders devem ser compilados **offline** sempre que possível.
+Shaders should be compiled **offline** whenever possible.
 
-Pipeline preferido:
+Preferred pipeline:
 
 ```text
 Shader .slang
     ↓
 Shader Compiler / Toolchain
     ↓
-SPIR-V / DXIL / saída Metal
+SPIR-V / DXIL / Metal output
     ↓
 Shader Cache / Pipeline Cache
     ↓
 Runtime
 ```
 
-O compilador Slang e ferramentas de compilação de shader **não devem ser dependências obrigatórias do jogo final**.
+The Slang compiler and shader compilation tools **must not be mandatory dependencies of the final game**.
 
-Em builds de release, o runtime deve consumir shaders já compilados e preparados para a plataforma alvo.
+In release builds, the runtime should consume shaders already compiled and prepared for the target platform.
 
-Hot reload e compilação em desenvolvimento podem existir no editor, mas devem permanecer fora do runtime final sempre que possível.
+Hot reload and development compilation may exist in the editor, but should remain outside the final runtime whenever possible.
 
-# ARQUITETURA GERAL
+# GENERAL ARCHITECTURE
 
 ```text
                               GAME ENGINE
@@ -413,15 +409,15 @@ Hot reload e compilação em desenvolvimento podem existir no editor, mas devem 
                           Lua OPTIONAL
 ```
 
-Separação fundamental:
+Fundamental separation:
 
 ```text
-Editor / Toolchain ≠ Runtime final
+Editor / Toolchain ≠ Final Runtime
 ```
 
-O jogo exportado deve conter somente os módulos e dados necessários para sua execução.
+The exported game should contain only the modules and data necessary for execution.
 
-# ESTRUTURA DO PROJETO
+# PROJECT STRUCTURE
 
 ```text
 Engine/
@@ -527,17 +523,17 @@ Engine/
 
 # MEMORY SYSTEM
 
-A engine deve evitar malloc/free constante durante gameplay.
+The engine should avoid constant malloc/free activity during gameplay.
 
-Objetivo:
+Objective:
 
 ```text
-Alocações por frame:
+Allocations per frame:
 
-0 ou próximo de 0
+0 or close to 0
 ```
 
-Estrutura inicial:
+Initial structure:
 
 ```text
 Game Memory
@@ -558,30 +554,30 @@ Game Memory
 Frame Arena:
 
 ```text
-Frame começa
+Frame begins
 
 ████████████████████░░░░░░
 
-alocações sequenciais
+sequential allocations
 
 ██████████████████████████
 
-Frame termina
+Frame ends
 
 reset()
 
-░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░
 ```
 
-Sem milhares de malloc/free durante cada frame.
+Avoid thousands of malloc/free calls during every frame.
 
 ---
 
 # DATA-ORIENTED DESIGN
 
-Evitar arquiteturas extremamente orientadas a objetos.
+Avoid extremely object-oriented architectures.
 
-Evitar:
+Avoid:
 
 ```text
 GameObject
@@ -593,7 +589,7 @@ GameObject
 └── ...
 ```
 
-Preferir dados organizados:
+Prefer organized data:
 
 ```text
 Transforms
@@ -617,22 +613,22 @@ Physics Bodies
 [P][P][P][P][P]
 ```
 
-Objetivos:
+Objectives:
 
-* melhor CPU cache;
-* melhor SIMD;
-* processamento em batch;
-* melhor multithreading;
-* upload eficiente para GPU;
-* menor overhead por entidade.
+* better CPU cache use;
+* better SIMD;
+* batch processing;
+* better multithreading;
+* efficient GPU uploads;
+* lower overhead per entity.
 
 ---
 
 # ENTITY SYSTEM
 
-Entidades devem preferencialmente ser IDs.
+Entities should preferably be IDs.
 
-Exemplo:
+Example:
 
 ```text
 Entity
@@ -640,7 +636,7 @@ Entity
 64 bits
 ```
 
-Possível organização:
+Possible organization:
 
 ```text
 Entity ID
@@ -650,21 +646,21 @@ Entity ID
 └────────────────┴────────────────┘
 ```
 
-Isso permite detectar handles inválidos e entidades destruídas.
+This allows invalid handles and destroyed entities to be detected.
 
 ---
 
 # RENDERER
 
-O renderer é um dos sistemas centrais da engine.
+The renderer is one of the engine's central systems.
 
-A meta é alcançar **qualidade visual moderna/AAA sem transformar essa qualidade em custo obrigatório para todo projeto**.
+The goal is **modern/AAA visual quality without making that quality a mandatory cost for every project**.
 
-O renderer deve ser completamente desacoplado da API gráfica.
+The renderer must be completely decoupled from the graphics API.
 
-Não espalhar Vulkan, Direct3D 12 ou Metal pelo código da engine.
+Do not spread Vulkan, Direct3D 12 or Metal through the engine code.
 
-Evitar:
+Avoid:
 
 ```text
 Scene
@@ -672,7 +668,7 @@ Scene
 vkCmdDraw()
 ```
 
-Preferir:
+Prefer:
 
 ```text
 Scene
@@ -686,7 +682,7 @@ RHI
 Backend
 ```
 
-Estrutura:
+Structure:
 
 ```text
 Renderer API
@@ -703,9 +699,9 @@ RHI
 VK   DX12  Metal
 ```
 
-A qualidade visual deve ser escalável por níveis e módulos.
+Visual quality should scale through levels and modules.
 
-Exemplo conceitual:
+Conceptual example:
 
 ```text
 BASE
@@ -735,19 +731,19 @@ ULTRA / OPTIONAL
 └── Advanced Reconstruction/Upscaling
 ```
 
-Os sistemas avançados não devem contaminar o custo do renderer básico quando estiverem desativados.
+Advanced systems must not contaminate the cost of the basic renderer when disabled.
 
 # RHI
 
-RHI significa:
+RHI means:
 
 ```text
 Render Hardware Interface
 ```
 
-Ela será responsável por abstrair APIs gráficas.
+It is responsible for abstracting graphics APIs.
 
-Possíveis objetos:
+Possible objects:
 
 ```text
 GPUDevice
@@ -761,9 +757,9 @@ GPUSemaphore
 GPUSwapchain
 ```
 
-A engine utiliza esses objetos.
+The engine uses these objects.
 
-O backend converte para:
+The backend converts them to:
 
 ```text
 Vulkan
@@ -771,15 +767,15 @@ Direct3D 12
 Metal
 ```
 
-A RHI deverá representar conceitos realmente compartilhados entre os backends. Durante os primeiros protótipos, ela deve ser pequena e evoluir a partir das necessidades observadas no backend Vulkan. Não é necessário congelar uma abstração completa antes de existir um renderer funcional.
+The RHI should represent concepts genuinely shared between backends. During the first prototypes, it should be small and evolve from needs observed in the Vulkan backend. There is no need to freeze a complete abstraction before a functional renderer exists.
 
-Detalhes específicos de cada API, capacidades opcionais e limitações de hardware devem permanecer isolados no backend ou ser expostos por capacidades explícitas da RHI.
+Details specific to each API, optional capabilities and hardware limitations must remain isolated in the backend or be exposed as explicit RHI capabilities.
 
 ---
 
-# BACKENDS GRÁFICOS
+# GRAPHICS BACKENDS
 
-Prioridade:
+Priority:
 
 ```text
 1. Vulkan
@@ -787,13 +783,13 @@ Prioridade:
 3. Metal
 ```
 
-Inicialmente:
+Initially:
 
 ```text
 Vulkan
 ```
 
-Depois:
+Later:
 
 ```text
 Windows
@@ -817,111 +813,111 @@ Slang
   └── Metal target → Metal
 ```
 
-O backend gráfico e o formato final do shader devem poder mudar sem obrigar os sistemas de cena, materiais e gameplay a conhecer detalhes específicos da API.
+The graphics backend and final shader format must be able to change without requiring scene, material and gameplay systems to know API-specific details.
 
-# TECNOLOGIAS MODERNAS DE RENDERIZAÇÃO
+# MODERN RENDERING TECHNOLOGIES
 
-A engine poderá evoluir para suportar:
+The engine may evolve to support:
 
 * Vulkan;
 * Direct3D 12;
 * Metal;
-* Slang para shaders;
-* GPU Driven Rendering;
-* Bindless Resources;
-* Indirect Drawing;
-* Multi-Draw Indirect;
-* Compute Shaders;
-* Async Compute;
-* Render Graph;
-* GPU Frustum Culling;
-* GPU Occlusion Culling;
-* Hi-Z / hierarchical depth quando útil;
+* Slang for shaders;
+* GPU-driven rendering;
+* bindless resources;
+* indirect drawing;
+* multi-draw indirect;
+* compute shaders;
+* async compute;
+* render graph;
+* GPU frustum culling;
+* GPU occlusion culling;
+* Hi-Z / hierarchical depth when useful;
 * PBR;
-* Image Based Lighting;
+* image-based lighting;
 * Forward+;
-* Clustered Lighting;
+* clustered lighting;
 * HDR;
-* Tone Mapping;
-* Temporal Anti-Aliasing;
+* tone mapping;
+* temporal anti-aliasing;
 * temporal reconstruction;
 * upscaling;
-* Instancing;
+* instancing;
 * GPU particles;
-* Screen Space Reflections;
-* Ambient Occlusion;
-* Volumetric Fog;
-* Contact Shadows;
-* real-time GI futuramente;
-* ray tracing opcional;
-* virtualized geometry futuramente;
+* screen-space reflections;
+* ambient occlusion;
+* volumetric fog;
+* contact shadows;
+* real-time GI in the future;
+* optional ray tracing;
+* virtualized geometry in the future;
 * texture streaming;
 * mesh streaming;
 * asynchronous asset streaming.
 
-Essas tecnologias devem ser adicionadas progressivamente.
+These technologies should be added progressively.
 
-Tecnologia moderna não significa colocar tudo dentro da engine.
+Modern technology does not mean putting everything into the engine.
 
-Cada recurso deve justificar seu custo em:
+Every feature must justify its cost in:
 
 * CPU;
 * GPU;
 * VRAM;
 * RAM;
-* tamanho do executável;
-* complexidade;
-* tempo de build;
-* manutenção.
+* executable size;
+* complexity;
+* build time;
+* maintenance.
 
-## Princípio visual
+## Visual principle
 
-A pergunta principal não deve ser:
+The main question should not be:
 
-> Como colocar o maior número de efeitos?
+> How do we add the largest number of effects?
 
-A pergunta deve ser:
+The question should be:
 
-> Qual técnica entrega a maior melhoria visual pelo menor custo possível?
+> Which technique delivers the greatest visual improvement for the lowest possible cost?
 
-A engine deve buscar alta **qualidade visual por unidade de hardware**.
+The engine should seek high **visual quality per unit of hardware**.
 
-## Escalabilidade gráfica
+## Graphics scalability
 
-Um mesmo projeto deve poder utilizar caminhos diferentes dependendo do hardware.
+The same project should be able to use different paths depending on hardware.
 
-Exemplo:
+Example:
 
 ```text
-PC FRACO
+LOW-END
 ├── Baked Lighting
 ├── Probes
 ├── PBR
 ├── Shadow Maps
-└── efeitos leves
+└── lightweight effects
 
-PC MÉDIO
+MID-RANGE
 ├── PBR
 ├── Forward+ / Clustered
 ├── SSAO
 ├── SSR
 ├── TAA
-└── Volumetrics moderada
+└── moderate volumetrics
 
-PC HIGH-END
+HIGH-END
 ├── Real-time GI
-├── Ray Tracing opcional
+├── optional Ray Tracing
 ├── Advanced Reflections
 ├── High-end Volumetrics
 ├── Virtualized Geometry
 └── Advanced Upscaling/Reconstruction
 ```
 
-A engine deve permanecer a mesma. O custo muda conforme os recursos utilizados.
+The engine remains the same. The cost changes according to the features used.
 
 # PLATFORM LAYER
 
-A engine deverá ter uma camada própria para sistema operacional.
+The engine should have its own operating-system layer.
 
 ```text
 Platform
@@ -931,13 +927,13 @@ Platform
 │
 ├── Linux
 │   ├── Wayland
-│   └── X11 opcional
+│   └── X11 optional
 │
 └── macOS
     └── Cocoa
 ```
 
-API da engine:
+Engine API:
 
 ```text
 window_create()
@@ -957,13 +953,13 @@ thread_create()
 timer_get()
 ```
 
-O restante da engine não deve depender diretamente do sistema operacional.
+The rest of the engine should not depend directly on the operating system.
 
 ---
 
 # ASSET SYSTEM
 
-Arquivos originais:
+Original files:
 
 ```text
 PNG
@@ -977,25 +973,25 @@ SLANG
 etc.
 ```
 
-Não devem necessariamente ser utilizados diretamente durante gameplay.
+They do not necessarily need to be used directly during gameplay.
 
 Pipeline:
 
 ```text
-Arquivo original
+Original file
       ↓
 Asset Importer / Shader Compiler
       ↓
 Asset Compiler
       ↓
-Otimização / Compressão / Conversão
+Optimization / Compression / Conversion
       ↓
-Asset otimizado / Shader compilado
+Optimized asset / Compiled shader
       ↓
 Runtime
 ```
 
-Exemplo:
+Example:
 
 ```text
 dragon.glb
@@ -1017,13 +1013,13 @@ SPIR-V / DXIL / Metal target
 shader cache
 ```
 
-O runtime deve fazer o mínimo possível.
+The runtime should do as little as possible.
 
-Importação, conversão, compressão, compilação e geração de variantes devem ocorrer offline sempre que isso melhorar o runtime.
+Importing, conversion, compression, compilation and variant generation should happen offline whenever this improves the runtime.
 
 # EDITOR
 
-O editor deve ser separado completamente do runtime.
+The editor must be completely separate from the runtime.
 
 ```text
 Editor
@@ -1035,89 +1031,87 @@ Engine API
 Engine Runtime
 ```
 
-O jogo exportado não deve carregar:
+The exported game should not load:
 
 * editor;
 * inspector;
 * asset browser;
 * editor UI;
 * project manager;
-* importadores;
-* compilador Slang;
+* importers;
+* Slang compiler;
 * shader compiler;
 * asset compiler;
-* debug tools que não forem necessários.
+* debug tools that are not required.
 
-O editor deve continuar visualmente moderno e agradável, mas beleza da interface não pode justificar desperdício sistemático de memória ou CPU.
+The editor should remain visually modern and pleasant, but interface polish must not justify systematic waste of memory or CPU.
 
-A viewport do editor deve utilizar o mesmo renderer da engine para que a prévia represente corretamente o resultado final.
+The editor viewport should use the same engine renderer so that the preview represents the final result correctly.
 
-# META DE EDITOR
+# EDITOR TARGETS
 
-Projeto vazio:
+Empty project:
 
 ```text
 RAM:
 
-ideal:
+target:
 < 150 MB
 ```
 
 Startup:
 
 ```text
-ideal:
-< 1 segundo
+target:
+< 1 second
 ```
 
-Esses números são metas iniciais e podem mudar conforme testes reais. Toda medição deverá informar plataforma, hardware, configuração de build, cena, recursos carregados e critério utilizado. Uma meta só é útil quando puder ser reproduzida.
+These numbers are initial targets and may change according to real measurements.
 
 ---
 
-# META DE RUNTIME
+# RUNTIME TARGETS
 
-Projeto vazio:
+Empty project:
 
 ```text
 RAM:
 
-ideal:
+target:
 < 20 MB
 ```
 
 Startup:
 
 ```text
-ideal:
+target:
 < 100 ms
 ```
 
-Executable base:
+Base executable:
 
 ```text
-ideal:
+target:
 < 10 MB
 ```
 
-Esses valores devem ser tratados como targets de engenharia e não promessas. O custo de um projeto vazio deve ser separado do custo dos módulos e assets que o projeto escolher carregar.
+These values are engineering targets, not promises. The cost of an empty project must be separated from the cost of modules and assets that the project chooses to load.
 
----
+# MODULAR BUILD
 
-# BUILD MODULAR
+The build and packaging system will allow modules to be selected.
 
-O sistema de build e empacotamento permitirá escolher módulos.
-
-Exemplo:
+Example:
 
 ```text
-[✓] Renderer 3D
+[✓] 3D Renderer
 [✓] PBR
 [✓] Audio
 [✓] Physics
 [✓] Animation
 [✓] TAA
 
-[ ] Renderer 2D
+[ ] 2D Renderer
 [ ] Lua
 [ ] Networking
 [ ] Video
@@ -1128,13 +1122,13 @@ Exemplo:
 [ ] Virtualized Geometry
 ```
 
-Build final:
+Final build:
 
 ```text
 Game.exe
 
 Core
-Renderer3D
+3DRenderer
 PBR
 Audio
 Physics
@@ -1142,7 +1136,7 @@ Animation
 TAA
 ```
 
-Não incluído:
+Not included:
 
 ```text
 Lua
@@ -1159,43 +1153,43 @@ Editor
 Asset compiler
 ```
 
-O objetivo não é apenas desativar recursos em tempo de execução. Módulos opcionais devem ser removidos do build, link ou pacote final sempre que tecnicamente possível. Ainda assim, componentes compartilhados podem possuir algum custo residual; esse custo deve ser conhecido e medido.
+The goal is not merely to disable features at runtime. Optional modules should be removed from the build, link or final package whenever technically possible. Shared components may still have some residual cost; that cost must be known and measured.
 
-# PRINCÍPIOS
+# PRINCIPLES
 
 ```text
 Don't Pay For What You Don't Use
 ```
 
-Ou:
+Or:
 
 ```text
-Você só paga pelo que usa.
+You only pay for what you use.
 ```
 
-Segundo princípio:
+Second principle:
 
 ```text
 Maximum Visual Quality Per Unit of Hardware
 ```
 
-Ou:
+Or:
 
 ```text
-Máxima qualidade visual pelo menor custo possível.
+Maximum visual quality for the lowest possible cost.
 ```
 
-Essas serão regras centrais da arquitetura.
+These are central architectural rules.
 
-A engine não deve escolher entre ser bonita e ser leve.
+The engine should not have to choose between looking good and being lightweight.
 
-Ela deve buscar as duas coisas através de arquitetura, escalabilidade e modularidade.
+It should pursue both through architecture, scalability and modularity.
 
 # PERFORMANCE BUDGET
 
-Toda alteração importante deverá poder ser medida.
+Every important change should be measurable.
 
-Benchmarks automáticos:
+Automatic benchmarks:
 
 ```text
 Startup Time
@@ -1204,17 +1198,17 @@ RAM Idle
 
 Executable Size
 
-RAM / 1.000 Entities
+RAM / 1,000 Entities
 
-RAM / 10.000 Entities
+RAM / 10,000 Entities
 
-RAM / 100.000 Entities
+RAM / 100,000 Entities
 
-CPU / 1.000 Entities
+CPU / 1,000 Entities
 
-CPU / 10.000 Entities
+CPU / 10,000 Entities
 
-CPU / 100.000 Entities
+CPU / 100,000 Entities
 
 Frame Time
 
@@ -1233,9 +1227,9 @@ Build Time
 
 # PERFORMANCE REGRESSION
 
-O sistema de CI deverá futuramente detectar regressões.
+The CI system should detect regressions in the future.
 
-Exemplo:
+Example:
 
 ```text
 PERFORMANCE REGRESSION
@@ -1255,7 +1249,7 @@ STATUS:
 FAILED
 ```
 
-Outro:
+Another:
 
 ```text
 Startup
@@ -1275,13 +1269,13 @@ WARNING
 
 ---
 
-# DEPENDÊNCIAS
+# DEPENDENCIES
 
-Regra:
+Rule:
 
-> Nenhuma dependência é sagrada.
+> No dependency is sacred.
 
-Toda biblioteca deverá ser avaliada por:
+Every library should be evaluated by:
 
 ```text
 RAM
@@ -1294,21 +1288,21 @@ Maintainability
 Platform Support
 ```
 
-Uma biblioteca não entra apenas porque facilita desenvolvimento.
+A library should not be added only because it makes development easier.
 
 ---
 
-# ROADMAP DE VALIDAÇÃO E EVOLUÇÃO
+# VALIDATION AND EVOLUTION ROADMAP
 
-O roadmap detalhado de tarefas, dependências e critérios de conclusão está em [`ROADMAP.md`](ROADMAP.md). Esta seção mantém apenas a visão resumida das etapas.
+The detailed task roadmap, dependencies and completion criteria are in [`ROADMAP.md`](ROADMAP.md). This section keeps a summary of the stages.
 
-As versões abaixo são marcos técnicos, não prazos de lançamento. A engine pode levar o tempo necessário para atingir qualidade, e cada marco poderá ser dividido em vários protótipos internos.
+The versions below are technical milestones, not launch deadlines. The engine may take as long as necessary to reach quality, and each milestone may be split into several internal prototypes.
 
-Uma etapa só deve ser considerada concluída quando seu comportamento, seus custos e seus caminhos de erro forem compreendidos por meio de testes e medições. Decisões que ainda não foram validadas não devem ser tratadas como contratos permanentes da arquitetura.
+An iteration should be considered complete only when its behavior, costs and failure paths are understood through tests and measurements. Unvalidated decisions should not be treated as permanent architectural contracts.
 
 ## v0.0.1
 
-Somente C++ no runtime + Slang para o primeiro shader.
+C++ runtime only + Slang for the first shader.
 
 ```text
 Core
@@ -1317,29 +1311,29 @@ Platform
 Window
 Input
 Renderer
-RHI inicial
+Initial RHI
 Vulkan
-Shader pipeline mínimo
+Minimal shader pipeline
 ```
 
-Objetivo:
+Objective:
 
 ```text
-Abrir janela
-Inicializar GPU
-Compilar/preparar shader de desenvolvimento
-Carregar shader compilado
-Limpar tela
-Renderizar triângulo
-Receber input
-Fechar corretamente
+Open a window
+Initialize the GPU
+Compile/prepare a development shader
+Load a compiled shader
+Clear the screen
+Render a triangle
+Receive input
+Close correctly
 ```
 
-A primeira versão já deve estabelecer a separação entre código CPU/runtime e código GPU/shader.
+The first version should establish the separation between CPU/runtime code and GPU/shader code.
 
 # v0.0.2
 
-Adicionar:
+Add:
 
 ```text
 Entities
@@ -1349,28 +1343,28 @@ Camera
 Mesh
 Texture
 Basic Asset Loading
-Material básico
-PBR inicial
+Basic Material
+Initial PBR
 ```
 
-Objetivo:
+Objective:
 
 ```text
-Abrir engine
-Carregar modelo
-Criar câmera
-Aplicar material
-Iluminar cena básica
-Renderizar modelo
+Open the engine
+Load a model
+Create a camera
+Apply a material
+Light a basic scene
+Render the model
 ```
 
-A prioridade visual nesta fase é obter uma base PBR correta antes de efeitos complexos.
+The visual priority at this stage is to obtain a correct PBR foundation before complex effects.
 
 # v0.0.3
 
-O ECS entra nesta fase como uma decisão a ser validada pelo uso real e por benchmarks. O layout de dados, o modelo de queries e a estratégia de armazenamento podem ser revisados antes de serem considerados estáveis.
+ECS enters this phase as a decision to be validated by real use and benchmarks. The data layout, query model and storage strategy may be revised before being considered stable.
 
-Adicionar:
+Add:
 
 ```text
 ECS
@@ -1386,31 +1380,31 @@ Asset System
 C ABI
 ```
 
-Objetivo:
+Objective:
 
-Criar a primeira base visual realmente sólida da engine sem introduzir recursos AAA de alto custo antes da infraestrutura necessária.
+Create the engine's first genuinely solid visual foundation without introducing high-cost AAA features before the required infrastructure exists.
 
 # v0.0.4
 
-Adicionar ferramentas Rust:
+Add Rust tools:
 
 ```text
 Asset Compiler
 Shader Tooling
 Texture Compiler
 Model Importer
-Animation Compiler inicial
-Packager inicial
+Initial Animation Compiler
+Initial Packager
 ```
 
-O pipeline deve gerar dados prontos para consumo eficiente pelo runtime.
+The pipeline should generate data ready for efficient runtime consumption.
 
 # v0.0.5
 
-Adicionar:
+Add:
 
 ```text
-Editor básico
+Basic Editor
 
 Viewport
 Hierarchy
@@ -1418,68 +1412,69 @@ Inspector
 Asset Browser
 Console
 Profiler
-Material inspection
-Shader hot reload em desenvolvimento
+Material Inspection
+Development Shader Hot Reload
 ```
 
-O compilador e ferramentas de shader continuam componentes de desenvolvimento/editor, não do jogo final.
+The compiler and shader tools remain development/editor components, not part of the final game.
 
 # v0.1
 
-Este é o objetivo de uma primeira engine utilizável, não uma data. Os recursos podem ser lançados e estabilizados em marcos independentes.
+This is the target for a first usable engine, not a date. Features may be released and stabilized in independent milestones.
 
-Adicionar:
+Add:
 
 ```text
-Lua opcional
+Optional Lua
 Physics
 Audio
 Animation
 Project System
 Build / Export
-Forward+ ou Clustered Lighting
+Forward+ or Clustered Lighting
 TAA
 SSAO
-primeiros efeitos de pós-processamento
+Initial post-processing effects
 ```
 
-Objetivo:
+Objective:
 
 ```text
-Abrir editor
-Criar projeto
-Importar modelo
-Arrastar para cena
-Criar luz
-Criar câmera
-Criar material PBR
-Adicionar script
-Pressionar Play
-Exportar jogo
+Open the editor
+Create a project
+Import a model
+Drag it into a scene
+Create a light
+Create a camera
+Create a PBR material
+Add a script
+Press Play
+Export the game
 ```
 
-Quando isso funcionar corretamente, a engine já pode ser considerada funcional.
+When this works correctly, the engine may be considered functional.
 
-Recursos como GI dinâmica, ray tracing, virtualized geometry e volumetria avançada ficam para versões posteriores, depois de profiling e estabilidade da base.
+Features such as dynamic GI, ray tracing, virtualized geometry and advanced volumetrics remain for later versions, after profiling and base stability.
 
-# DECISÕES ABERTAS E EXPERIMENTOS
+# OPEN DECISIONS AND EXPERIMENTS
 
-Para preservar a qualidade da arquitetura, algumas decisões devem ser escolhidas com base em protótipos e medições, e não apenas por preferência:
+To preserve architectural quality, some decisions must be selected through prototypes and measurements rather than preference alone:
 
-* modelo de ECS e layout das queries;
-* estratégia de handles, ownership e lifetime de recursos;
-* limites e capacidades da RHI;
-* caminho principal de iluminação, como Forward+, Clustered ou Deferred;
-* combinação de allocators para dados permanentes, temporários e de streaming;
-* formato de assets, cache e política de streaming;
-* integração e custo real do Lua opcional;
-* uso de compute, async compute, GPU culling e outras técnicas avançadas.
+* ECS model and query layout;
+* resource handles, ownership and lifetime strategy;
+* RHI limits and capability model;
+* primary lighting path, such as Forward+, Clustered or Deferred;
+* allocator combination for permanent, temporary and streaming data;
+* asset format, cache and streaming policy;
+* integration and real cost of optional Lua;
+* use of compute, async compute, GPU culling and other advanced techniques;
+* supported C++ standard, compilers and sanitizers.
 
-Manter essas decisões abertas durante a fase de pesquisa não enfraquece a visão. Evita congelar abstrações antes de conhecer suas exigências reais.
+Keeping these decisions open during research does not weaken the vision. It prevents abstractions from being frozen before their real requirements are known.
 
-# FILOSOFIA FINAL
+# FINAL PHILOSOPHY
 
-A engine deve seguir os seguintes princípios:
+The engine should follow these principles:
 
 ```text
 LIGHTWEIGHT
@@ -1492,7 +1487,7 @@ MODULAR
 
 DATA ORIENTED
 
-NO GC IN CORE
+NO MANDATORY GC IN CORE
 
 LOW MEMORY
 
@@ -1521,15 +1516,15 @@ CROSS PLATFORM
 SIMPLE FOR DEVELOPERS
 ```
 
-A qualidade visual não deve depender de tornar todo projeto pesado.
+Visual quality should not depend on making every project heavy.
 
-Recursos caros devem possuir caminhos alternativos e/ou serem opcionais.
+Expensive features should have alternative paths and/or remain optional.
 
-# STACK OFICIAL
+# OFFICIAL STACK
 
 ```text
 Runtime / Core / Renderer:
-C++
+C++20
 
 Public ABI / Plugin Boundary:
 C ABI
@@ -1540,14 +1535,17 @@ C++
 Offline Tools:
 Rust
 
-Gameplay Native:
+Native Gameplay:
 C++
 
 Gameplay Scripting:
-Lua opcional
+Optional Lua
 
 GPU Shaders:
 Slang
+
+Build System:
+CMake + toolchain presets
 
 Primary Graphics API:
 Vulkan
@@ -1556,135 +1554,132 @@ Future Graphics APIs:
 Direct3D 12
 Metal
 
-Build System:
-CMake + presets de toolchain
-
 Platforms:
 Windows
 Linux
-macOS futuramente
+macOS in the future
 ```
 
-## Responsabilidade de cada linguagem
+## Responsibility of each language
 
 ```text
 C++
-└── tudo que precisa ser extremamente leve, previsível e próximo do runtime
+└── everything that must be lightweight, predictable and close to the runtime
 
 C ABI
-└── fronteira estável para plugins e interoperabilidade
+└── stable boundary for plugins and interoperability
 
 Rust
-└── ferramentas offline, compiladores, importadores e pipeline pesado
+└── offline tools, compilers, importers and heavy pipeline processing
 
 Lua
-└── scripting de gameplay opcional
+└── optional gameplay scripting
 
 Slang
-└── código executado na GPU e geração multiplataforma de shaders
+└── code executed on the GPU and multiplatform shader generation
 ```
 
-Nenhuma linguagem deve ser adicionada ao projeto apenas por preferência. Ela precisa resolver um problema concreto.
+No language should be added to the project merely by preference. It must solve a concrete problem.
 
-# REGRA MAIS IMPORTANTE
+# MOST IMPORTANT RULE
 
-Antes de adicionar qualquer recurso perguntar:
+Before adding any feature, ask:
 
 ```text
-1. Isso precisa existir?
+1. Does this need to exist?
 
-2. Quanto de RAM isso adiciona?
+2. How much RAM does it add?
 
-3. Quanto de CPU isso utiliza?
+3. How much CPU does it use?
 
-4. Quanto de GPU isso utiliza?
+4. How much GPU does it use?
 
-5. Quanto de VRAM isso utiliza?
+5. How much VRAM does it use?
 
-6. Quanto aumenta o executável?
+6. How much does it increase the executable?
 
-7. Quanto aumenta o startup?
+7. How much does it increase startup time?
 
-8. Pode ser opcional?
+8. Can it be optional?
 
-9. Pode ser removido completamente do build?
+9. Can it be completely removed from the build?
 
-10. Pode ser feito offline?
+10. Can it be done offline?
 
-11. Existe um caminho mais barato para hardware fraco?
+11. Is there a cheaper path for weak hardware?
 
-12. Quanto melhora a qualidade visual ou a experiência?
+12. How much does it improve visual quality or experience?
 
-13. Pode ser feito de forma mais simples?
+13. Can it be implemented more simply?
 ```
 
-Se a resposta não justificar o custo, o recurso deve ser reconsiderado.
+If the answers do not justify the cost, the feature should be reconsidered.
 
-Para recursos gráficos, avaliar sempre a relação:
+For graphics features, always evaluate the ratio:
 
 ```text
-melhoria visual
-───────────────
-custo total
+visual improvement
+──────────────────
+total cost
 ```
 
-A engine deve buscar maximizar essa relação.
+The engine should maximize this ratio.
 
-# VISÃO
+# VISION
 
-Criar uma game engine moderna capaz de produzir jogos visualmente impressionantes, inclusive com qualidade comparável a engines AAA, sem seguir a tendência de transformar todo projeto e todo editor em software pesado.
+Create a modern game engine capable of producing visually impressive games, including quality comparable to AAA engines, without following the trend of turning every project and editor into heavy software.
 
-O objetivo será permitir algo como:
+The goal is to enable something like:
 
 ```text
-Engine abre rapidamente.
+The engine opens quickly.
 
-Projeto abre rapidamente.
+The project opens quickly.
 
-Pouca RAM em idle.
+Low idle RAM.
 
-Runtime pequeno.
+Small runtime.
 
-Jogo começa rapidamente.
+The game starts quickly.
 
-Somente sistemas necessários são compilados ou empacotados.
+Only necessary systems are compiled or packaged.
 
-Shaders são preparados offline.
+Shaders are prepared offline.
 
-Hardware fraco consegue utilizar o editor e caminhos gráficos mais leves.
+Weak hardware can use the editor and lighter graphics paths.
 
-Hardware médio consegue atingir ótima qualidade visual com técnicas eficientes.
+Mid-range hardware can achieve excellent visual quality with efficient techniques.
 
-Hardware poderoso consegue ativar tecnologias gráficas avançadas.
+Powerful hardware can enable advanced graphics technologies.
 ```
 
-Visão de escalabilidade:
+Scalability vision:
 
 ```text
 LOW-END
    ↓
-boa qualidade visual
-baixo custo
+good visual quality
+low cost
 
 MID-RANGE
    ↓
-qualidade visual excelente
-técnicas modernas eficientes
+excellent visual quality
+efficient modern techniques
 
 HIGH-END
    ↓
-qualidade AAA
-GI / RT / volumetria / reconstrução avançada opcionais
+AAA quality
+optional GI / RT / volumetrics / advanced reconstruction
 ```
 
-A engine não deve ser leve porque possui poucos recursos.
+The engine should not be lightweight because it has few features.
 
-Ela deve ser leve porque sua arquitetura foi projetada para eficiência.
+It should be lightweight because its architecture was designed for efficiency.
 
-A engine não deve ser bonita porque desperdiça hardware.
+The engine should not be beautiful because it wastes hardware.
 
-Ela deve ser bonita porque o renderer utiliza técnicas modernas de forma inteligente.
+It should be beautiful because its renderer uses modern techniques intelligently.
 
-Objetivo final:
+Final objective:
 
-> A beleza de uma engine AAA com uma arquitetura construída desde o início para ser leve, escalável e modular.
+> The beauty of an AAA engine with an architecture built from the beginning to be lightweight, scalable and modular.

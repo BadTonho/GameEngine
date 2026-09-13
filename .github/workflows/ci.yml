@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-msvc:
+    name: Windows / MSVC / Debug
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset windows-msvc-debug
+
+      - name: Build
+        run: cmake --build --preset windows-msvc-debug
+
+      - name: Test
+        run: ctest --preset windows-msvc-debug
+
+  linux-gcc:
+    name: Linux / GCC / Debug
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset linux-gcc-debug
+
+      - name: Build
+        run: cmake --build --preset linux-gcc-debug
+
+      - name: Test
+        run: ctest --preset linux-gcc-debug
+
+  linux-clang:
+    name: Linux / Clang / Debug
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Clang
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y clang
+
+      - name: Configure
+        run: cmake --preset linux-clang-debug
+
+      - name: Build
+        run: cmake --build --preset linux-clang-debug
+
+      - name: Test
+        run: ctest --preset linux-clang-debug
+
+  linux-sanitizers:
+    name: Linux / GCC / AddressSanitizer and UndefinedBehaviorSanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset linux-gcc-sanitizers
+
+      - name: Build
+        run: cmake --build --preset linux-gcc-sanitizers
+
+      - name: Test
+        run: ctest --preset linux-gcc-sanitizers

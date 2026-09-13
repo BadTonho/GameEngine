@@ -1,300 +1,308 @@
-# Roadmap da Game Engine
+# GameEngine Roadmap
 
-Este documento transforma a visão de `Ideia.md` em uma sequência de trabalho. O objetivo é construir uma engine pública, moderna, eficiente e capaz de evoluir por muitos anos.
+This document turns the vision in `Ideia.md` into an execution sequence. The goal is to build a public, modern and efficient C++ game engine that can evolve for many years.
 
-O roadmap não define prazos. Cada fase é um marco técnico. Uma fase pode durar o tempo necessário, ser dividida em protótipos ou voltar para revisão quando os testes mostrarem que uma decisão estava errada.
+The roadmap does not define deadlines. Each phase is a technical milestone. A phase may take as long as necessary, be split into several prototypes, or return for revision when tests show that a decision was wrong.
 
-## Estado atual
+## Current status
 
-O repositório está na fase de planejamento. Ainda não existe implementação da engine, do runtime, do editor ou das ferramentas.
+The repository is in Phase 0. The initial public foundation, CMake build, minimal C++ runtime and local tests are implemented. The GitHub Actions workflow is prepared but still needs to run in the remote repository.
 
-## Regras de evolução
+## Evolution rules
 
-* validar decisões importantes com protótipos e medições;
-* não congelar abstrações antes de conhecer suas necessidades reais;
-* manter C++ como linguagem principal do runtime;
-* manter a C ABI pequena e estável;
-* manter Rust fora do runtime, limitado às ferramentas offline;
-* manter Lua opcional;
-* manter o editor e os importadores fora do jogo final;
-* fazer cada módulo opcional possuir uma fronteira de build clara;
-* não adicionar um recurso avançado sem definir seu custo, fallback e forma de teste;
-* avançar apenas quando o marco atual estiver reproduzível e depurável.
+- validate important decisions with prototypes and measurements;
+- do not freeze abstractions before their real requirements are known;
+- keep C++ as the primary runtime language;
+- keep the C ABI small and stable;
+- keep Rust outside the runtime and limited to offline tools;
+- keep Lua optional;
+- keep the editor and importers outside the final game;
+- give every optional module a clear build boundary;
+- do not add an advanced feature without defining its cost, fallback and test strategy;
+- advance only when the current milestone is reproducible and debuggable.
 
-## Fase 0 — Fundação pública do projeto
+## Phase 0 — Public foundation
 
-Objetivo: permitir que outra pessoa clone o repositório, entenda a proposta e consiga construir o projeto.
+Goal: allow another person to clone the repository, understand the project and build it.
 
-### Tarefas
+### Tasks
 
-- [ ] Definir a licença do projeto.
-- [ ] Criar `README.md` com a visão, o estado atual e o modo de compilação.
-- [ ] Criar `CONTRIBUTING.md`.
-- [ ] Definir o `CODE_OF_CONDUCT.md` e as regras de contribuição.
-- [ ] Definir a política de versões e compatibilidade.
-- [ ] Escolher a versão do padrão C++.
-- [ ] Definir compiladores e plataformas suportadas inicialmente.
-- [ ] Criar `CMakeLists.txt` e `CMakePresets.json`.
-- [ ] Separar configurações Debug, Release, Sanitizers e Profile.
-- [ ] Configurar warnings elevados, formatador e análise estática.
-- [ ] Criar CI para compilar e testar em Windows e Linux.
-- [ ] Definir a política de dependências, licenças e código de terceiros.
-- [ ] Definir a estrutura inicial de diretórios.
+- [x] Define the project license: MIT.
+- [x] Create `README.md` with the vision, current status and build instructions.
+- [x] Create `CONTRIBUTING.md`.
+- [x] Create `CODE_OF_CONDUCT.md` and contribution rules.
+- [x] Define the version and compatibility policy.
+- [x] Choose C++20 as the minimum language standard.
+- [x] Define the initial compiler and platform matrix.
+- [x] Create `CMakeLists.txt` and `CMakePresets.json`.
+- [x] Separate Debug, Release and Sanitizer configurations.
+- [x] Configure elevated warnings, formatting and static analysis files.
+- [x] Create GitHub Actions for Windows and Linux builds and tests.
+- [x] Define the dependency, license and third-party code policy.
+- [x] Define the initial directory structure without speculative empty modules.
 
-### Critério de conclusão
+### Completion criteria
 
-Um novo colaborador consegue clonar o projeto, configurar o compilador, construir um executável vazio e executar os testes sem depender de arquivos locais não documentados.
+A new contributor can clone the project, configure a compiler, build an empty executable and run the tests without undocumented local files or paths.
 
-## Fase 1 — Core e plataforma mínima
+### Validation status
 
-Objetivo: criar um runtime pequeno, previsível e corretamente encerrado.
+- [x] Windows/MSVC configure, build and CTest pass locally.
+- [ ] Linux/GCC configure, build and CTest pass locally or in CI.
+- [ ] Linux/Clang configure, build and CTest pass locally or in CI.
+- [ ] Linux AddressSanitizer and UndefinedBehaviorSanitizer pass in CI.
+- [ ] The public remote repository has completed its first CI run.
 
-### Tarefas
+## Phase 1 — Minimal core and platform
 
-- [ ] Definir tipos básicos, convenções de erro e resultados.
-- [ ] Criar logging, assertions e diagnóstico de desenvolvimento.
-- [ ] Definir ownership, lifetime e política de alocação.
-- [ ] Criar allocators necessários somente depois de definir seus usos.
-- [ ] Criar handles opacos e IDs com geração quando necessário.
-- [ ] Criar tipos matemáticos mínimos para a primeira cena.
-- [ ] Criar a camada de plataforma.
-- [ ] Criar janela e ciclo de eventos para Windows.
-- [ ] Adicionar suporte inicial a Linux sem espalhar condicionais pelo core.
-- [ ] Criar input de teclado e mouse.
-- [ ] Criar timing e loop principal.
-- [ ] Definir o caminho de shutdown e destruição de recursos.
-- [ ] Adicionar testes de memória, handles, timing e eventos.
+Goal: create a small, predictable runtime that shuts down correctly.
 
-### Critério de conclusão
+### Tasks
 
-O runtime abre uma janela, processa eventos, recebe input, executa o loop e fecha sem vazamentos ou recursos pendentes em Debug e Sanitizers.
+- [ ] Define basic types, error conventions and result values.
+- [ ] Create logging, assertions and development diagnostics.
+- [ ] Define ownership, lifetime and allocation policies.
+- [ ] Create allocators only after their use cases are defined.
+- [ ] Create opaque handles and generation-based IDs where needed.
+- [ ] Create the minimum math types for the first scene.
+- [ ] Create the platform layer.
+- [ ] Create the Windows window and event loop.
+- [ ] Add initial Linux support without spreading conditionals through the core.
+- [ ] Create keyboard and mouse input.
+- [ ] Create timing and the main loop.
+- [ ] Define shutdown and resource-destruction paths.
+- [ ] Add memory, handle, timing and event tests.
 
-## Fase 2 — Vulkan e RHI mínima
+### Completion criteria
 
-Objetivo: inicializar a GPU e estabelecer uma abstração pequena baseada em necessidades reais.
+The runtime opens a window, processes events, receives input, runs its loop and closes without leaks or pending resources in Debug and Sanitizer configurations.
 
-### Tarefas
+## Phase 2 — Vulkan and minimal RHI
 
-- [ ] Criar instância Vulkan.
-- [ ] Habilitar validation layers em builds de desenvolvimento.
-- [ ] Criar surface, selecionar GPU e consultar capabilities.
-- [ ] Criar device, queues e command pools.
-- [ ] Criar swapchain e sincronização básica.
-- [ ] Definir a RHI mínima para device, buffers, imagens, samplers e pipelines.
-- [ ] Criar command lists, fences, semaphores e frames in flight.
-- [ ] Definir destruição adiada de recursos GPU.
-- [ ] Criar upload de buffers e texturas por staging.
-- [ ] Adicionar debug names e integração com ferramentas de captura.
-- [ ] Renderizar um triângulo.
-- [ ] Validar o caminho de resize e perda de surface quando aplicável.
+Goal: initialize the GPU and establish a small abstraction based on real needs.
 
-### Critério de conclusão
+### Tasks
 
-Uma aplicação C++ abre uma janela, inicializa Vulkan, renderiza um triângulo, reage a resize e encerra sem erros das validation layers.
+- [ ] Create a Vulkan instance.
+- [ ] Enable validation layers in development builds.
+- [ ] Create a surface, select a GPU and query capabilities.
+- [ ] Create the device, queues and command pools.
+- [ ] Create the swapchain and basic synchronization.
+- [ ] Define the minimal RHI for devices, buffers, images, samplers and pipelines.
+- [ ] Create command lists, fences, semaphores and frames in flight.
+- [ ] Define deferred GPU resource destruction.
+- [ ] Create buffer and texture uploads through staging resources.
+- [ ] Add debug names and capture-tool integration.
+- [ ] Render a triangle.
+- [ ] Validate resize and surface-loss paths where applicable.
 
-## Fase 3 — Pipeline de shaders
+### Completion criteria
 
-Objetivo: tornar shaders reproduzíveis, multiplataforma e independentes do compilador no runtime final.
+A C++ application opens a window, initializes Vulkan, renders a triangle, reacts to resize and exits without validation-layer errors.
 
-### Tarefas
+## Phase 3 — Shader pipeline
 
-- [ ] Fixar a versão da toolchain Slang usada pelo projeto.
-- [ ] Definir convenções de módulos, entry points, stages e profiles.
-- [ ] Compilar shaders Slang para SPIR-V no pipeline offline.
-- [ ] Definir layout de recursos entre C++ e GPU.
-- [ ] Gerar ou validar reflection de shaders.
-- [ ] Criar identificação determinística de shader, target e variante.
-- [ ] Criar shader cache e pipeline cache.
-- [ ] Separar artefatos Debug e Release.
-- [ ] Produzir diagnósticos úteis para erros de compilação.
-- [ ] Definir como capabilities Vulkan selecionam variantes.
-- [ ] Manter hot reload restrito ao desenvolvimento/editor.
-- [ ] Garantir que o jogo exportado não dependa do compilador Slang.
+Goal: make shaders reproducible, portable and independent of the compiler in the final runtime.
 
-### Critério de conclusão
+### Tasks
 
-Um shader Slang é compilado offline, validado, carregado pelo runtime e usado para renderizar sem exigir o compilador no executável final.
+- [ ] Pin the Slang toolchain version used by the project.
+- [ ] Define module, entry-point, stage and profile conventions.
+- [ ] Compile Slang shaders to SPIR-V in the offline pipeline.
+- [ ] Define resource layouts between C++ and the GPU.
+- [ ] Generate or validate shader reflection data.
+- [ ] Create deterministic identifiers for shaders, targets and variants.
+- [ ] Create a shader cache and pipeline cache.
+- [ ] Separate Debug and Release artifacts.
+- [ ] Produce useful diagnostics for compilation failures.
+- [ ] Define how Vulkan capabilities select variants.
+- [ ] Keep hot reload restricted to development/editor builds.
+- [ ] Ensure exported games do not depend on the Slang compiler.
 
-## Fase 4 — Primeira cena 3D
+### Completion criteria
 
-Objetivo: sair do triângulo e renderizar uma cena pequena com qualidade visual correta.
+A Slang shader is compiled offline, validated, loaded by the runtime and used for rendering without requiring the compiler in the final executable.
 
-### Tarefas
-
-- [ ] Criar câmera e transformações.
-- [ ] Criar vertex/index buffers.
-- [ ] Carregar uma mesh preparada.
-- [ ] Carregar textura e sampler.
-- [ ] Criar material básico.
-- [ ] Criar depth buffer e depth testing.
-- [ ] Criar iluminação básica.
-- [ ] Implementar PBR inicial.
-- [ ] Implementar HDR e tone mapping.
-- [ ] Criar uma cena de referência pequena.
-- [ ] Medir CPU, GPU, RAM, VRAM, draw calls e startup.
-- [ ] Adicionar uma captura de referência para detectar regressões visuais.
+## Phase 4 — First 3D scene
 
-### Critério de conclusão
+Goal: move beyond the triangle and render a small scene with correct visual foundations.
 
-Uma cena de referência carrega, exibe mesh texturizada, câmera, material e iluminação básica em Vulkan com resultados visuais e métricas reproduzíveis.
+### Tasks
 
-## Fase 5 — Formato de assets e ferramentas offline
+- [ ] Create a camera and transformations.
+- [ ] Create vertex and index buffers.
+- [ ] Load a prepared mesh.
+- [ ] Load a texture and sampler.
+- [ ] Create a basic material.
+- [ ] Create a depth buffer and depth testing.
+- [ ] Create basic lighting.
+- [ ] Implement initial PBR.
+- [ ] Implement HDR and tone mapping.
+- [ ] Create a small reference scene.
+- [ ] Measure CPU, GPU, RAM, VRAM, draw calls and startup.
+- [ ] Add a reference capture for visual regression detection.
 
-Objetivo: fazer o runtime consumir dados preparados, compactos e validados.
+### Completion criteria
 
-### Tarefas
+A reference scene loads and displays a textured mesh, camera, material and basic lighting in Vulkan with reproducible visual results and metrics.
 
-- [ ] Definir formatos binários versionados para meshes, texturas, materiais e cenas.
-- [ ] Definir validação de tamanhos, offsets, contagens, versões e referências.
-- [ ] Criar workspace Rust para ferramentas offline.
-- [ ] Criar importador inicial de glTF.
-- [ ] Criar compilador de texturas.
-- [ ] Criar compilador de meshes e dados de vértices.
-- [ ] Criar compilador de materiais e dependências.
-- [ ] Criar packager para o formato final do jogo.
-- [ ] Criar cache incremental de importação.
-- [ ] Definir política de compressão e alinhamento.
-- [ ] Criar mensagens de erro com arquivo e recurso de origem.
-- [ ] Testar assets malformados como entrada não confiável.
-- [ ] Adicionar hot reload apenas para o fluxo de desenvolvimento.
+## Phase 5 — Asset formats and offline tools
 
-### Critério de conclusão
+Goal: make the runtime consume prepared, compact and validated data.
 
-Um asset original é importado offline, convertido para o formato da engine, validado, empacotado e carregado pelo runtime sem interpretar o formato pesado original.
+### Tasks
 
-## Fase 6 — Cena, entidades e dados
+- [ ] Define versioned binary formats for meshes, textures, materials and scenes.
+- [ ] Validate sizes, offsets, counts, versions and references.
+- [ ] Create a Rust workspace for offline tools.
+- [ ] Create an initial glTF importer.
+- [ ] Create a texture compiler.
+- [ ] Create a mesh and vertex-data compiler.
+- [ ] Create a material and dependency compiler.
+- [ ] Create a packager for the final game format.
+- [ ] Create an incremental import cache.
+- [ ] Define compression and alignment policies.
+- [ ] Produce errors that include the source file and resource.
+- [ ] Test malformed assets as untrusted input.
+- [ ] Add hot reload only to the development workflow.
 
-Objetivo: criar a base de dados da cena sem comprometer o design com uma decisão não medida.
+### Completion criteria
 
-### Tarefas
+An original asset is imported offline, converted to the engine format, validated, packaged and loaded by the runtime without interpreting the original heavy format.
 
-- [ ] Definir entidade como handle seguro contra reutilização inválida.
-- [ ] Implementar transform e hierarquia.
-- [ ] Definir armazenamento de componentes.
-- [ ] Prototipar alternativas de ECS quando necessário.
-- [ ] Medir iteração, criação, destruição e queries.
-- [ ] Definir sistema de scene serialization.
-- [ ] Criar componentes de câmera, mesh, material e luz.
-- [ ] Definir dependências entre sistemas.
-- [ ] Criar testes de validade, geração, hierarquia e serialização.
-- [ ] Comparar RAM e CPU em cenas com diferentes quantidades de entidades.
+## Phase 6 — Scenes, entities and data
 
-### Critério de conclusão
+Goal: create the scene data foundation without committing to an unmeasured design.
 
-Uma cena pode ser criada, salva, carregada e atualizada com dados organizados, handles válidos e benchmarks que justifiquem o modelo escolhido.
+### Tasks
 
-## Fase 7 — Renderer escalável
+- [ ] Define entities as handles protected against invalid reuse.
+- [ ] Implement transforms and hierarchy.
+- [ ] Define component storage.
+- [ ] Prototype ECS alternatives when needed.
+- [ ] Measure iteration, creation, destruction and queries.
+- [ ] Define scene serialization.
+- [ ] Create camera, mesh, material and light components.
+- [ ] Define dependencies between systems.
+- [ ] Add validity, generation, hierarchy and serialization tests.
+- [ ] Compare RAM and CPU across scenes with different entity counts.
 
-Objetivo: construir a arquitetura de renderização que sustenta qualidade alta sem impor todos os custos a todos os projetos.
+### Completion criteria
 
-### Tarefas
+A scene can be created, saved, loaded and updated with organized data, valid handles and benchmarks that justify the selected model.
 
-- [ ] Definir passes e dependências reais antes de congelar o render graph.
-- [ ] Implementar o caminho de iluminação escolhido com base em benchmarks.
-- [ ] Implementar IBL e sombras.
-- [ ] Implementar instancing.
-- [ ] Implementar frustum culling.
-- [ ] Avaliar GPU culling e indirect drawing.
-- [ ] Avaliar Forward+, Clustered ou Deferred para diferentes classes de cena.
-- [ ] Criar níveis de qualidade e fallbacks.
-- [ ] Adicionar GPU timestamps e relatório de passes.
-- [ ] Controlar uso de VRAM e lifetime de recursos temporários.
-- [ ] Verificar que recursos avançados não aumentam o custo do caminho básico quando ausentes.
+## Phase 7 — Scalable renderer
 
-### Critério de conclusão
+Goal: build the rendering architecture that supports high quality without imposing every cost on every project.
 
-O renderer suporta uma cena maior, possui caminhos gráficos escaláveis e apresenta custos por passe medidos em hardware de referência.
+### Tasks
 
-## Fase 8 — Editor separado
+- [ ] Define real pass dependencies before freezing the render graph.
+- [ ] Implement the chosen lighting path based on benchmarks.
+- [ ] Implement IBL and shadows.
+- [ ] Implement instancing.
+- [ ] Implement frustum culling.
+- [ ] Evaluate GPU culling and indirect drawing.
+- [ ] Evaluate Forward+, Clustered or Deferred for different scene classes.
+- [ ] Create quality levels and fallbacks.
+- [ ] Add GPU timestamps and per-pass reports.
+- [ ] Control VRAM use and temporary-resource lifetime.
+- [ ] Verify that advanced resources do not increase the basic-path cost when absent.
 
-Objetivo: oferecer uma ferramenta pública útil sem contaminar o runtime exportado.
+### Completion criteria
 
-### Tarefas
+The renderer supports a larger scene, provides scalable graphics paths and reports measured per-pass costs on reference hardware.
 
-- [ ] Definir formato de projeto.
-- [ ] Criar inicialização separada para editor e jogo.
-- [ ] Reutilizar o renderer do runtime na viewport.
-- [ ] Criar viewport.
-- [ ] Criar hierarchy.
-- [ ] Criar inspector.
-- [ ] Criar asset browser.
-- [ ] Criar console e diagnóstico.
-- [ ] Criar profiler básico.
-- [ ] Criar operações de salvar, carregar e desfazer quando necessário.
-- [ ] Separar módulos Editor e Runtime no build.
-- [ ] Medir RAM e startup do editor com projeto vazio.
+## Phase 8 — Separate editor
 
-### Critério de conclusão
+Goal: provide a useful public tool without contaminating the exported runtime.
 
-Um usuário consegue criar um projeto, abrir uma cena, adicionar objetos, ajustar propriedades, salvar e visualizar o resultado usando o renderer da engine.
+### Tasks
 
-## Fase 9 — Módulos opcionais de runtime
+- [ ] Define the project format.
+- [ ] Create separate editor and game initialization.
+- [ ] Reuse the runtime renderer in the viewport.
+- [ ] Create the viewport.
+- [ ] Create the hierarchy.
+- [ ] Create the inspector.
+- [ ] Create the asset browser.
+- [ ] Create the console and diagnostics.
+- [ ] Create a basic profiler.
+- [ ] Create save, load and undo operations when needed.
+- [ ] Separate Editor and Runtime modules in the build.
+- [ ] Measure editor RAM and startup with an empty project.
 
-Objetivo: adicionar recursos de produção sem tornar todos os jogos dependentes deles.
+### Completion criteria
 
-Cada módulo deve possuir API, build target, testes, documentação, custo medido e caminho de remoção.
+A user can create a project, open a scene, add objects, edit properties, save and view the result through the engine renderer.
 
-### Ordem sugerida
+## Phase 9 — Optional runtime modules
 
-- [ ] Animação.
-- [ ] Áudio.
-- [ ] Integração de física.
-- [ ] Lua opcional para scripting.
+Goal: add production features without making every game depend on them.
+
+Each module must have an API, build target, tests, documentation, measured cost and removal path.
+
+### Suggested order
+
+- [ ] Animation.
+- [ ] Audio.
+- [ ] Physics integration.
+- [ ] Optional Lua gameplay scripting.
 - [ ] Navigation.
 - [ ] Networking.
-- [ ] Vídeo e outros módulos específicos quando houver necessidade real.
+- [ ] Video and other specific modules when there is a real need.
 
-### Critério de conclusão
+### Completion criteria
 
-Um projeto consegue selecionar os módulos necessários no build e no empacotamento, sem carregar editor, importadores ou módulos opcionais não utilizados.
+A project can select the required modules in its build and packaging without loading unused optional modules, editor code or importers.
 
-## Fase 10 — Qualidade, segurança e performance contínuas
+## Phase 10 — Continuous quality, security and performance
 
-Objetivo: impedir que crescimento da engine destrua seus princípios originais.
+Goal: prevent engine growth from destroying its original principles.
 
-### Tarefas
+### Tasks
 
-- [ ] Criar cenas e workloads de benchmark versionados.
-- [ ] Medir startup, RAM, VRAM, CPU, GPU, draw calls, loading e tamanho do executável.
-- [ ] Criar baseline e detecção de regressão.
-- [ ] Executar Sanitizers e análise estática no CI.
-- [ ] Testar shutdown e destruição repetidamente.
-- [ ] Fuzzar parsers e formatos de assets.
-- [ ] Testar handles, ownership e referências após destruição.
-- [ ] Integrar validation layers e debug markers.
-- [ ] Documentar limitações conhecidas por plataforma e GPU.
-- [ ] Criar perfis Low, Medium e High com fallbacks explícitos.
-- [ ] Medir antes e depois de otimizações importantes.
+- [ ] Create versioned benchmark scenes and workloads.
+- [ ] Measure startup, RAM, VRAM, CPU, GPU, draw calls, loading and executable size.
+- [ ] Create a baseline and regression detection.
+- [ ] Run Sanitizers and static analysis in CI.
+- [ ] Repeatedly test shutdown and destruction.
+- [ ] Fuzz parsers and asset formats.
+- [ ] Test handles, ownership and references after destruction.
+- [ ] Integrate validation layers and debug markers.
+- [ ] Document platform and GPU limitations.
+- [ ] Create Low, Medium and High profiles with explicit fallbacks.
+- [ ] Measure before and after important optimizations.
 
-### Critério de conclusão
+### Completion criteria
 
-Cada mudança relevante possui evidência de correção, custo e impacto. Regressões de performance ou memória são detectadas antes de chegar a uma release.
+Every meaningful change has evidence of correctness, cost and impact. Performance and memory regressions are detected before a release.
 
-## Fase 11 — Plataformas e backends adicionais
+## Phase 11 — Additional platforms and backends
 
-Objetivo: expandir a engine sem enfraquecer o backend Vulkan inicial.
+Goal: expand the engine without weakening the initial Vulkan backend.
 
-### Tarefas
+### Tasks
 
-- [ ] Estabilizar o contrato da RHI a partir do uso real em Vulkan.
-- [ ] Definir matriz de capabilities por backend.
-- [ ] Implementar D3D12 depois que o renderer comum estiver estável.
-- [ ] Validar shaders Slang e layouts em DXIL.
-- [ ] Implementar suporte Metal quando o caminho de toolchain e capabilities estiver maduro.
-- [ ] Validar o Metal target e manter exceções específicas isoladas.
-- [ ] Adicionar cada plataforma ao CI e aos benchmarks correspondentes.
+- [ ] Stabilize the RHI contract from real Vulkan use.
+- [ ] Define a capabilities matrix for each backend.
+- [ ] Implement D3D12 after the common renderer is stable.
+- [ ] Validate Slang shaders and layouts in DXIL.
+- [ ] Implement Metal support when its toolchain and capabilities path is mature.
+- [ ] Validate the Metal target and keep platform-specific exceptions isolated.
+- [ ] Add each platform to CI and its corresponding benchmarks.
 
-### Critério de conclusão
+### Completion criteria
 
-Um mesmo projeto pode usar mais de um backend sem que cena, assets, gameplay ou API pública conheçam detalhes da API gráfica.
+The same project can use more than one backend without scene, asset, gameplay or public API code knowing graphics-API details.
 
-## Fase 12 — Recursos gráficos avançados
+## Phase 12 — Advanced graphics features
 
-Objetivo: adicionar qualidade visual avançada somente quando a base estiver estável e o custo puder ser controlado.
+Goal: add advanced visual quality only after the foundation is stable and costs can be controlled.
 
-### Ordem de avaliação
+### Evaluation order
 
-- [ ] TAA e reconstrução temporal.
+- [ ] TAA and temporal reconstruction.
 - [ ] Upscaling.
 - [ ] SSAO.
 - [ ] SSR.
@@ -305,43 +313,43 @@ Objetivo: adicionar qualidade visual avançada somente quando a base estiver est
 - [ ] Ray tracing.
 - [ ] Virtualized geometry.
 
-Cada recurso deve incluir:
+Each feature must include:
 
-- [ ] custo CPU/GPU/RAM/VRAM;
-- [ ] impacto no startup e no tamanho do build;
-- [ ] fallback para hardware mais fraco;
-- [ ] testes visuais e de estabilidade;
-- [ ] possibilidade de remoção do build quando não utilizado.
+- [ ] CPU/GPU/RAM/VRAM cost;
+- [ ] startup and build-size impact;
+- [ ] a fallback for weaker hardware;
+- [ ] visual and stability tests;
+- [ ] a way to remove it from the build when unused.
 
-## Fase 13 — Ecossistema público e releases
+## Phase 13 — Public ecosystem and releases
 
-Objetivo: transformar a engine em um projeto confiável para usuários e contribuidores externos.
+Goal: turn the engine into a reliable project for external users and contributors.
 
-### Tarefas
+### Tasks
 
-- [ ] Publicar documentação de instalação, arquitetura e uso.
-- [ ] Publicar exemplos pequenos e completos.
-- [ ] Publicar templates de projetos.
-- [ ] Documentar C ABI e SDK C++.
-- [ ] Criar política de compatibilidade e depreciação.
-- [ ] Criar changelog e notas de release.
-- [ ] Distribuir binários e ferramentas de forma reproduzível.
-- [ ] Definir processo de revisão de pull requests.
-- [ ] Criar issues para iniciantes e áreas de contribuição.
-- [ ] Documentar como criar plugins.
-- [ ] Criar testes de compatibilidade da API pública.
-- [ ] Publicar benchmarks com metodologia, não apenas números.
+- [ ] Publish installation, architecture and usage documentation.
+- [ ] Publish small, complete examples.
+- [ ] Publish project templates.
+- [ ] Document the C ABI and C++ SDK.
+- [ ] Create compatibility and deprecation policies.
+- [ ] Create a changelog and release notes.
+- [ ] Distribute binaries and tools reproducibly.
+- [ ] Define pull-request review rules.
+- [ ] Create beginner issues and contribution areas.
+- [ ] Document plugin creation.
+- [ ] Create public API compatibility tests.
+- [ ] Publish benchmarks with methodology, not numbers alone.
 
-### Critério de conclusão
+### Completion criteria
 
-Uma pessoa externa consegue instalar a engine, seguir um exemplo, criar um projeto, entender a arquitetura, contribuir com código e atualizar para uma nova versão com regras documentadas.
+An external person can install the engine, follow an example, create a project, understand the architecture, contribute code and update to a new version using documented rules.
 
-## Primeiro marco concreto
+## First concrete milestone
 
-O primeiro objetivo de implementação é concluir a Fase 0 e iniciar a Fase 1:
+The first implementation goal is the remaining validation of Phase 0:
 
 ```text
-clone
+clean clone
   ↓
 CMake configure
   ↓
@@ -349,12 +357,12 @@ C++ compile
   ↓
 empty runtime
   ↓
-window + events + input
+CTest
   ↓
-tests + sanitizers
+sanitizers and CI
 ```
 
-Depois disso, o próximo marco visual é:
+After that, the next visual milestone is:
 
 ```text
 window
@@ -370,4 +378,4 @@ mesh + texture + camera
 PBR scene
 ```
 
-Esse caminho cria uma base real para avaliar as decisões seguintes sem abandonar a visão completa da engine.
+This path creates a real foundation for evaluating later decisions without abandoning the complete engine vision.
