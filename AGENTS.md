@@ -1,1674 +1,802 @@
 # AGENTS.md
 
-## Project Mission
+## Purpose
 
-This project is a modern, extremely lightweight, high-performance and modular game engine.
+This file defines how AI coding agents must behave when working in this repository.
 
-The primary goal is not to maximize the number of features.
+The project architecture, goals, technology choices and long-term vision are documented in `Ideia.md`.
 
-The primary goal is to provide modern game-engine capabilities while minimizing:
+Agents must read `Ideia.md` before making architectural decisions.
 
-* RAM usage
-* CPU overhead
-* startup time
-* executable size
-* unnecessary allocations
-* dependencies
-* runtime complexity
-* build overhead
-
-The engine must remain usable on low-end hardware while still supporting modern rendering and engine technologies.
-
-The visual target is AAA-class rendering quality when the hardware and project configuration allow it, while preserving aggressive scalability for low-end and mid-range hardware.
-
-The engine must pursue:
-
-> Maximum visual quality per unit of hardware.
-
-The main architectural principle is:
-
-> You do not pay for what you do not use.
-
-Optional systems must be removable from the final build whenever technically possible.
+This file is not the engine design document.
 
 ---
 
-# Official Technology Stack
+# 1. Read Before Changing
 
-```text
-Runtime / Core / Renderer: Zig
-Public ABI / interoperability: C ABI
-Offline tools: Rust
-Gameplay scripting: Lua (optional)
-Shader source language: Slang
-Initial graphics backend: Vulkan
-Future graphics backends: Direct3D 12, Metal
-```
+Before editing code, the agent must:
 
+1. Inspect the relevant existing files.
+2. Understand the current subsystem boundaries.
+3. Check existing naming and coding conventions.
+4. Check whether the requested functionality already exists.
+5. Read relevant documentation before introducing a new pattern.
+6. Read `Ideia.md` when the task affects architecture, language choice, rendering, memory, runtime structure, tooling or public APIs.
 
-## Runtime
-
-Primary language:
-
-```text
-Zig
-```
-
-Zig should be used by default for runtime systems.
-
-Examples:
-
-* Core
-* Memory
-* Platform
-* Window
-* Input
-* Filesystem
-* Jobs
-* Threading
-* Renderer
-* RHI
-* Scene
-* ECS
-* Assets runtime
-* Animation runtime
-* Audio integration
-* Physics integration
-* Networking runtime
-* Game runtime
-
-Do not introduce another runtime language without a strong technical reason.
+Do not make architectural assumptions without first checking the repository.
 
 ---
 
-## Public ABI
+# 2. Follow the Existing Project Direction
 
-Use:
+Do not redesign the project unless the user explicitly requests it.
 
-```text
-C ABI
-```
+The agent must preserve the architecture defined by the repository and `Ideia.md`.
 
-The public binary interface should remain simple and language-independent whenever possible.
+In particular, do not silently replace or change:
 
-Do not expose internal Zig implementation details through the public ABI.
+- Zig as the primary runtime language
+- C ABI as the interoperability boundary
+- Rust as the preferred language for offline tooling
+- Lua as optional gameplay scripting
+- Slang as the preferred shader source language
+- Vulkan as the initial graphics backend
+- the modular runtime philosophy
+- the lightweight-engine philosophy
+- the separation between runtime, editor and offline tools
+
+If an alternative is technically better, explain it first instead of silently implementing it.
+
+---
+
+# 3. Do Not Invent Requirements
+
+Implement the task requested by the user.
+
+Do not add unrelated systems because they may be useful later.
+
+Do not implement speculative features.
+
+Do not create APIs for hypothetical future use unless they are necessary for the current task.
 
 Prefer:
 
-```c
-typedef uint64_t EngineEntity;
-
-EngineEntity engine_entity_create(void);
-void engine_entity_destroy(EngineEntity entity);
+```text
+requested feature
++
+minimum supporting architecture
 ```
 
-Avoid exposing:
-
-* language-specific containers
-* internal pointers
-* compiler-specific structures
-* implementation-specific ownership
-* unstable layouts
-
-The C ABI exists to allow future interoperability with:
-
-* C
-* C++
-* Zig
-* Rust
-* C#
-* Lua
-* other languages
-
----
-
-# Rust Usage
-
-Rust is primarily intended for offline tools and development infrastructure.
-
-Preferred Rust use cases:
-
-* Asset compiler
-* Shader compiler / Slang toolchain integration
-* Texture compiler
-* Model importer
-* Animation compiler
-* Asset database
-* Packaging tools
-* Build tools
-* Project tools
-* Development utilities
-
-Do not add Rust to the game runtime unless there is a clear measurable advantage.
-
-Runtime simplicity has priority.
-
----
-
-# Lua Usage
-
-Lua is optional.
-
-Lua may be used for gameplay scripting.
-
-Lua must never become a mandatory dependency of the engine runtime.
-
-Projects that do not use Lua should not include the Lua runtime in the final executable.
-
----
-
-# Shader Language
-
-Primary shader language:
+Avoid:
 
 ```text
-Slang
-```
-
-Slang is the preferred source language for GPU shaders.
-
-The shader toolchain should compile shaders offline whenever practical.
-
-Preferred model:
-
-```text
-Slang source
-    ↓
-Offline shader compilation
-    ↓
-Backend-specific output
-    ├── SPIR-V → Vulkan
-    ├── DXIL   → Direct3D 12
-    └── Metal-compatible output → Metal
-```
-
-The final game runtime should not depend on the Slang compiler unless a project explicitly requires runtime shader compilation.
-
-Prefer precompiled shader artifacts, pipeline metadata, reflection data and cached variants.
-
-Runtime shader compilation should be treated as an exceptional feature, not the default path.
-
-Shader systems must consider:
-
-- binary size
-- startup time
-- shader cache size
-- pipeline creation cost
-- permutation explosion
-- compilation latency
-- platform portability
-- GPU feature compatibility
-
-Do not create shader permutations blindly.
-
-Prefer specialization, data-driven material systems, dynamic branching where appropriate, and offline pruning of unused variants.
-
----
-
-# Core Philosophy
-
-Every implementation should optimize for:
-
-```text
-low memory usage
-low CPU overhead
-low startup time
-small binaries
-predictable performance
-modularity
-explicit resource ownership
-simple architecture
-minimal dependencies
-fast iteration
-maximum visual quality per unit of hardware
-scalable rendering quality
-```
-
-Do not optimize only for developer convenience if it causes permanent runtime overhead.
-
----
-
-# Zero-Cost Optional Features
-
-Features must be modular whenever reasonably possible.
-
-Examples:
-
-```text
-Physics
-Audio
-Lua
-Networking
-Navigation
-Video
-Ray Tracing
-2D Renderer
-3D Renderer
-Editor-only systems
-Debug systems
-```
-
-If a project does not use a module, prefer removing it entirely from the build.
-
-Do not merely disable unused systems at runtime when they can be excluded at compile time.
-
-Preferred:
-
-```text
-Feature not used
-↓
-Feature not compiled
-↓
-Feature contributes approximately zero runtime cost
+requested feature
++
+large generic framework
++
+future abstractions
++
+unrequested systems
 ```
 
 ---
 
-# Runtime vs Editor
+# 4. Prefer Small, Reviewable Changes
 
-The editor and runtime must remain separated.
+Make the smallest coherent change that correctly solves the task.
 
-The exported game must not contain editor systems unless explicitly required.
+Avoid rewriting unrelated files.
 
-Editor-only functionality includes:
+Avoid mass formatting unrelated code.
 
-* Inspector
-* Hierarchy UI
-* Asset Browser
-* Editor Viewport UI
-* Project Manager
-* Import interfaces
-* Debug editor panels
-* Development consoles
-* Editor-specific metadata
-* Asset conversion tools
+Avoid renaming unrelated symbols.
 
-Do not introduce editor dependencies into the runtime.
+Avoid moving files unless the change requires it.
+
+Do not replace working systems purely because another implementation is preferred.
+
+Large refactors require a clear technical reason.
 
 ---
 
-# Runtime vs Offline Tools
+# 5. Preserve User Work
 
-Expensive work should preferably happen before runtime.
+Never intentionally discard user-written code unless explicitly requested.
 
-Prefer:
+Before replacing an implementation:
 
-```text
-Source Asset
-↓
-Offline Compiler
-↓
-Optimized Engine Asset
-↓
-Runtime
-```
+- understand why it exists;
+- preserve behavior that is still required;
+- check references and call sites;
+- preserve public contracts unless a breaking change is requested.
 
-instead of:
+Do not overwrite unrelated changes.
 
-```text
-Source Asset
-↓
-Heavy processing during game startup
-```
-
-The runtime should consume data that is already prepared for efficient loading.
+Do not revert code simply because it differs from your preferred style.
 
 ---
 
-# Memory Rules
+# 6. Correctness First
 
-Memory management must be explicit.
-
-Avoid unnecessary heap allocation.
-
-Do not allocate every frame unless necessary.
-
-Target:
-
-```text
-0 dynamic heap allocations during normal frame execution
-```
-
-This is a target, not an absolute rule.
-
-If an allocation is necessary, understand and document why.
-
-Prefer:
-
-* arenas
-* pools
-* fixed-capacity structures where appropriate
-* frame allocators
-* scratch allocators
-* contiguous storage
-* reuse of existing allocations
-
-Avoid repeated:
-
-```text
-allocate
-free
-allocate
-free
-```
-
-inside hot paths.
-
----
-
-# Allocation Ownership
-
-Every significant allocation must have clear ownership.
-
-It should be obvious:
-
-* who allocated memory
-* who owns it
-* when it becomes invalid
-* who releases it
-* whether it can move
-* whether references remain stable
-
-Avoid ambiguous ownership.
-
----
-
-# Frame Allocators
-
-Temporary per-frame data should prefer frame/scratch allocators.
-
-Typical structure:
-
-```text
-Permanent Arena
-Engine Arena
-Scene Arena
-Asset Arena
-Frame Arena A
-Frame Arena B
-```
-
-Frame memory should be reusable rather than repeatedly allocated and freed.
-
----
-
-# Data-Oriented Design
-
-Prefer data-oriented structures for performance-critical systems.
-
-Prefer contiguous data:
-
-```text
-Transforms:
-[T][T][T][T][T][T]
-
-Velocities:
-[V][V][V][V]
-
-Renderables:
-[R][R][R][R]
-
-Lights:
-[L][L][L]
-```
-
-over deeply nested object graphs where the latter provides no meaningful benefit.
-
-Consider:
-
-* CPU cache locality
-* SIMD
-* batching
-* predictable iteration
-* multithreading
-* GPU uploads
-* memory footprint
-
-Do not use ECS or DOD blindly.
-
-Use them where they provide measurable architectural or performance benefits.
-
----
-
-# Entities
-
-Entities should preferably be lightweight IDs or handles.
-
-Do not make entities large owning objects.
-
-A preferred design is a generational handle.
-
-Example:
-
-```text
-Entity ID
-
-Generation | Index
-```
-
-Destroyed entities should not leave silently valid stale handles.
-
----
-
-# Hot Paths
-
-Hot paths require special care.
-
-Examples:
-
-* frame update
-* rendering
-* entity iteration
-* animation
-* physics synchronization
-* visibility
-* asset streaming
-* job scheduling
-
-Inside hot paths:
-
-* avoid unnecessary allocation
-* avoid unnecessary indirection
-* avoid unnecessary locks
-* avoid unnecessary virtual dispatch
-* avoid repeated string processing
-* avoid filesystem access
-* avoid logging spam
-* avoid hidden copies
-
-Performance-critical decisions should be benchmarked.
-
----
-
-# Renderer Architecture
-
-Do not spread Vulkan, Direct3D or Metal calls throughout the engine.
-
-Use a rendering abstraction.
-
-Preferred architecture:
-
-```text
-Scene
-↓
-Renderer
-↓
-Render Graph
-↓
-RHI
-↓
-Graphics Backend
-```
-
-Graphics backends may include:
-
-```text
-Vulkan
-Direct3D 12
-Metal
-```
-
-The rest of the engine should not depend directly on a specific graphics API.
-
----
-
-# RHI
-
-The Render Hardware Interface should expose engine concepts such as:
-
-```text
-GPUDevice
-GPUBuffer
-GPUTexture
-GPUSampler
-GPUShader
-GPUPipeline
-GPUCommandList
-GPUFence
-GPUSemaphore
-GPUSwapchain
-```
-
-Keep the RHI:
-
-* small
-* explicit
-* predictable
-* low overhead
-
-Do not attempt to hide every difference between graphics APIs.
-
-Abstract what is useful, not everything.
-
----
-
-# Graphics Priorities
-
-Initial graphics backend:
-
-```text
-Vulkan
-```
-
-Possible future backends:
-
-```text
-Direct3D 12
-Metal
-```
-
-Modern rendering features may include:
-
-* physically based rendering (PBR)
-* HDR
-* image-based lighting (IBL)
-* Forward+
-* clustered lighting
-* GPU-driven rendering
-* indirect drawing
-* bindless resources
-* compute shaders
-* async compute
-* render graphs
-* GPU frustum culling
-* GPU occlusion culling
-* temporal anti-aliasing
-* temporal upscaling
-* screen-space ambient occlusion
-* screen-space reflections
-* volumetric fog
-* high-quality shadow systems
-* GPU particles
-* texture streaming
-* mesh streaming
-* asynchronous asset streaming
-* real-time global illumination
-* ray-traced reflections
-* ray-traced shadows
-* virtualized geometry
-* advanced volumetrics
-
-Do not implement a feature merely because it is considered modern.
-
-Visual quality does not justify permanent runtime cost.
-
-High-end features should be modular, scalable and removable when unused.
-
-Every feature must justify:
-
-* complexity
-* memory cost
-* CPU cost
-* GPU cost
-* maintenance cost
-* usefulness
-
----
-
-# Rendering Scalability
-
-The renderer must support graceful scaling across hardware classes.
-
-Target philosophy:
-
-```text
-Low-end hardware
-    ↓
-Good visual quality
-Low memory usage
-Low GPU cost
-
-Mid-range hardware
-    ↓
-High visual quality
-Balanced effects
-Stable frame times
-
-High-end hardware
-    ↓
-AAA-class visual quality
-Advanced lighting
-Advanced reflections
-High-end geometry and volumetrics
-```
-
-Do not design the renderer around a single quality level.
-
-Expensive features should expose cheaper alternatives whenever practical.
-
-Examples:
-
-```text
-Global Illumination:
-Off
-Baked
-Probe-based
-Screen-space / hybrid
-Real-time
-Ray traced
-
-Reflections:
-Off
-Probe-based
-SSR
-Hybrid
-Ray traced
-
-Shadows:
-Basic
-Cascaded
-High quality
-Virtual / advanced
-Ray traced
-```
-
-The low-end path must be a first-class supported path, not an afterthought.
-
-The high-end path must not force its memory, CPU or GPU overhead onto lower quality levels.
-
----
-
-# Visual Quality Rules
-
-The engine is not intended to be visually minimal.
-
-It should be capable of producing modern, high-end visuals while remaining efficient.
-
-When evaluating a visual feature, consider:
-
-1. Visual improvement
-2. GPU cost
-3. CPU cost
-4. VRAM cost
-5. RAM cost
-6. startup impact
-7. shader complexity
-8. scalability
-9. ability to disable it completely
-10. whether a cheaper approximation exists
-
-Prefer techniques that provide the largest perceptual improvement for the smallest hardware cost.
-
-Rendering decisions should optimize:
-
-> image quality / hardware cost
-
-not merely maximum image quality.
-
----
-
-# Platform Layer
-
-Operating-system-specific code must be isolated.
-
-Preferred structure:
-
-```text
-platform/
-├── windows/
-├── linux/
-└── macos/
-```
-
-Possible implementations:
-
-```text
-Windows → Win32
-Linux → Wayland
-Linux compatibility → X11 when required
-macOS → Cocoa
-```
-
-The rest of the engine should use a platform-independent internal API.
-
----
-
-# Dependencies
-
-Dependencies must be treated as costs.
-
-Before adding a dependency, evaluate:
-
-* binary size
-* runtime memory
-* startup cost
-* CPU overhead
-* transitive dependencies
-* compilation time
-* platform support
-* maintenance status
-* API stability
-* licensing
-* whether only a small portion of it is required
-
-Do not add a large dependency to solve a small problem without considering alternatives.
-
-No dependency is sacred.
-
----
-
-# Dependency Removal
-
-Whenever reasonable, systems should be designed so dependencies can later be replaced.
-
-Avoid spreading third-party APIs throughout the entire codebase.
-
-Wrap external libraries behind internal interfaces when doing so provides meaningful isolation.
-
----
-
-# Simplicity
-
-Prefer simple solutions over clever solutions.
-
-Avoid unnecessary abstraction layers.
-
-Avoid architecture designed for hypothetical future requirements.
-
-Do not create a generic framework when the engine currently needs one concrete implementation.
-
-Build the simplest architecture that preserves the important long-term boundaries.
-
----
-
-# Premature Optimization
-
-The project is performance-oriented, but performance decisions should still be based on evidence.
-
-Do not destroy code clarity for insignificant theoretical optimizations.
-
-Measure when possible.
-
-Optimize:
-
-```text
-measured bottlenecks
-architectural overhead
-memory usage
-critical loops
-startup
-loading
-binary size
-```
-
-not imaginary problems.
-
----
-
-# Benchmarking
-
-Performance is a feature.
-
-Important systems should have benchmarks whenever practical.
-
-Track:
-
-* runtime RAM
-* editor RAM
-* startup time
-* executable size
-* scene loading time
-* asset loading time
-* frame time
-* CPU time
-* GPU time
-* VRAM usage
-* shader/pipeline creation time
-* visible geometry throughput
-* culling efficiency
-* entity update performance
-* allocations per frame
-* build time
-
-Suggested entity benchmarks:
-
-```text
-1,000 entities
-10,000 entities
-100,000 entities
-1,000,000 entities when relevant
-```
-
----
-
-# Performance Regressions
-
-Do not accept significant performance regressions without understanding them.
-
-When changing critical systems, compare before and after when possible.
-
-Example:
-
-```text
-Before:
-31.4 MB
-
-After:
-38.7 MB
-
-Regression:
-+23.2%
-```
-
-A regression like this requires investigation or justification.
-
----
-
-# Performance Budgets
-
-Initial targets may include:
-
-```text
-Empty Runtime RAM:
-< 20 MB
-
-Empty Runtime Startup:
-< 100 ms
-
-Base Runtime Executable:
-< 10 MB
-
-Empty Editor RAM:
-< 150 MB
-
-Editor Startup:
-< 1 second
-```
-
-These are engineering targets, not guaranteed specifications.
-
-Do not fake optimizations merely to meet a target.
-
-Real-world usefulness comes first.
-
----
-
-# Logging
-
-Logging must not introduce significant hot-path overhead.
-
-Avoid formatting expensive log messages that will not be emitted.
-
-Logging levels should include concepts similar to:
-
-```text
-trace
-debug
-info
-warning
-error
-fatal
-```
-
-Release builds should be able to remove unnecessary logging.
-
----
-
-# Error Handling
-
-Errors must be handled explicitly.
-
-Do not silently ignore failures.
-
-Avoid crashing for recoverable runtime situations.
-
-For programmer errors and broken invariants, assertions are acceptable.
-
-Separate:
-
-```text
-user/data errors
-recoverable runtime errors
-programmer errors
-fatal engine errors
-```
-
----
-
-# Assertions
-
-Assertions are encouraged for internal invariants.
-
-Examples:
-
-```text
-invalid handle
-out-of-range internal index
-broken ownership
-impossible renderer state
-corrupted resource state
-```
-
-Assertions must not replace proper handling of normal user-generated errors.
-
----
-
-# Strings
-
-Avoid unnecessary string manipulation in performance-sensitive runtime code.
-
-Prefer:
-
-* IDs
-* handles
-* hashes when appropriate
-* interned strings when appropriate
-
-Do not prematurely hash everything.
-
-Collisions must be handled safely if hashes are used as identifiers.
-
----
-
-# File Formats
-
-Runtime formats should favor:
-
-* fast loading
-* minimal parsing
-* alignment suitable for runtime structures
-* versioning
-* validation
-* forward evolution
-
-Do not depend on raw development formats forever.
-
----
-
-# Asset IDs
-
-Runtime assets should use stable handles or IDs rather than relying entirely on filesystem paths.
-
-Paths are useful during development, but runtime systems should be designed for efficient asset lookup.
-
----
-
-# Asset Loading
-
-Asset loading should support asynchronous operation where beneficial.
-
-Do not block the entire main thread for operations that can safely happen elsewhere.
-
-However, do not create asynchronous complexity when the operation is trivial.
-
----
-
-# Multithreading
-
-The engine should be designed with multithreading in mind.
-
-Potential parallel systems include:
-
-* asset loading
-* asset processing
-* animation
-* visibility
-* physics
-* rendering preparation
-* background streaming
-* scene processing
-
-Avoid excessive fine-grained synchronization.
-
-Prefer jobs with clear ownership and dependencies.
-
----
-
-# Job System
-
-The job system should be lightweight.
-
-Avoid creating operating-system threads per task.
-
-Prefer a worker pool.
-
-Important properties:
-
-* low scheduling overhead
-* predictable synchronization
-* ability to express dependencies
-* minimal allocation
-* good debugging support
-
----
-
-# Locking
-
-Avoid global locks.
-
-Avoid holding locks across expensive operations.
-
-Prefer:
-
-* immutable data
-* ownership transfer
-* job dependencies
-* double buffering
-* per-thread storage
-* lock-free techniques only when justified
-
-Do not use lock-free programming merely because it sounds faster.
-
----
-
-# Cache Locality
-
-Consider cache locality when designing performance-critical structures.
-
-Avoid pointer chasing when contiguous structures can solve the problem.
-
-Measure when architectural tradeoffs are uncertain.
-
----
-
-# SIMD
-
-SIMD may be used where it provides measurable benefits.
-
-Do not manually vectorize everything.
-
-Prefer clean data layouts that naturally allow the compiler or specialized routines to vectorize important loops.
-
----
-
-# Editor Philosophy
-
-The editor itself must also remain lightweight.
-
-Do not assume editor performance is irrelevant because it is a development tool.
-
-Optimize:
-
-* idle RAM
-* startup
-* viewport responsiveness
-* asset browser scalability
-* project loading
-* scene editing
-* UI redraw
-* background tasks
-
-The editor should remain usable on modest computers.
-
----
-
-# User Experience
-
-Lightweight does not mean difficult to use.
-
-The engine should be simple for game developers.
-
-Do not expose internal low-level complexity when a clean high-level API can provide the same performance.
-
-The user-facing API should prioritize:
-
-* clarity
-* consistency
-* discoverability
-* predictable behavior
-
----
-
-# Internal vs Public API
-
-Internal APIs may change aggressively during early development.
-
-Public APIs should be introduced carefully.
-
-Do not promise API stability too early.
-
-Once something becomes officially public, breaking changes should require deliberate consideration.
-
----
-
-# API Design
-
-Prefer APIs that make ownership and cost visible.
-
-Avoid APIs that hide expensive work.
-
-If an operation can:
-
-* allocate
-* block
-* access disk
-* synchronize threads
-* upload GPU data
-
-that behavior should be reasonably clear from the API or documentation.
-
----
-
-# Naming
-
-Use clear and descriptive names.
-
-Do not use unnecessarily abbreviated names.
-
-Acceptable common abbreviations include:
-
-```text
-GPU
-CPU
-RHI
-ECS
-API
-ABI
-ID
-IO
-UI
-```
-
-Prefer consistency over personal naming style.
-
----
-
-# Comments
-
-Comments should explain:
-
-* why something exists
-* important invariants
-* non-obvious performance decisions
-* platform limitations
-* unusual algorithms
-* ownership assumptions
-
-Do not write comments that merely repeat the code.
-
-Bad:
-
-```text
-increment index
-```
-
-Good:
-
-```text
-Generation increments when a slot is reused so stale entity handles
-cannot reference the new entity occupying the same index.
-```
-
----
-
-# Documentation
-
-Architecturally important systems must have documentation.
-
-Document at minimum:
-
-* purpose
-* ownership
-* lifecycle
-* threading assumptions
-* memory behavior
-* public interfaces
-* major constraints
-
----
-
-# Source Layout
-
-Keep subsystem boundaries clear.
-
-Preferred structure:
-
-```text
-engine/
-├── core/
-├── platform/
-├── window/
-├── input/
-├── filesystem/
-├── renderer/
-├── scene/
-├── ecs/
-├── assets/
-├── animation/
-├── audio/
-├── physics/
-├── scripting/
-└── runtime/
-```
-
-Do not create arbitrary cross-dependencies between subsystems.
-
----
-
-# Module Dependencies
-
-Prefer one-directional dependencies.
-
-Avoid circular dependencies.
-
-Example:
-
-```text
-Core
-↑
-Platform
-↑
-Renderer
-↑
-Scene
-```
-
-is easier to reason about than every subsystem directly importing every other subsystem.
-
-When circular architecture appears necessary, reconsider the ownership boundary.
-
----
-
-# Build Configuration
-
-Support at minimum concepts equivalent to:
-
-```text
-Debug
-Development
-Release
-```
-
-Debug:
-
-* assertions
-* validation
-* extensive diagnostics
-
-Development:
-
-* useful diagnostics
-* profiling
-* reasonable optimization
-
-Release:
-
-* optimization
-* minimal diagnostics
-* unnecessary systems stripped
-* editor-only code stripped
-* offline asset tools stripped
-* Slang compiler stripped unless runtime shader compilation is explicitly enabled
-
----
-
-# Debug Code
-
-Debug tools must be removable from release builds.
-
-Examples:
-
-* debug overlays
-* validation layers
-* profiling labels
-* verbose logs
-* debug visualizers
-
-Do not make release games permanently pay for development-only systems.
-
----
-
-# Profiling
-
-Performance-critical systems should be designed to support profiling.
-
-CPU and GPU markers should be available without permanently adding significant overhead to production builds.
-
----
-
-# Tests
-
-Core systems should have automated tests where practical.
-
-Important test targets include:
-
-* allocators
-* containers
-* entity handles
-* serialization
-* asset formats
-* math
-* resource lifecycle
-* job synchronization
-* filesystem utilities
-* shader reflection metadata
-* shader cache compatibility
-* material/shader interface validation
-
----
-
-# Correctness Before Optimization
-
-Never knowingly introduce memory corruption, undefined behavior or race conditions merely to improve benchmark numbers.
-
-Priority:
-
-```text
-Correctness
-↓
-Architecture
-↓
-Measurement
-↓
-Optimization
-```
-
----
-
-# Cross-Platform Rules
-
-Do not introduce unnecessary platform assumptions into shared code.
-
-Platform-specific behavior belongs inside platform-specific modules.
-
-When behavior differs between operating systems, expose a clean internal abstraction rather than spreading conditional compilation everywhere.
-
----
-
-# Security and Input Validation
-
-External files must be treated as untrusted input.
-
-Asset importers and runtime loaders must validate:
-
-* sizes
-* offsets
-* versions
-* counts
-* boundaries
-* integer overflow
-* malformed data
-
-Do not assume asset files are valid.
-
----
-
-# No Hidden Work
-
-Avoid APIs that unexpectedly perform large amounts of work.
-
-Examples of hidden work to avoid:
-
-```text
-implicit disk access
-implicit GPU synchronization
-implicit heap allocation
-implicit copies of large resources
-implicit resource compilation
-```
-
-Expensive operations should be explicit when practical.
-
----
-
-# No Feature Creep
-
-Before implementing a new major system, ask:
-
-1. Is this necessary for the current engine goals?
-2. Does it belong in the engine core?
-3. Can it be a module?
-4. Can it be a plugin?
-5. Can it be an offline tool?
-6. Can it be implemented later?
-7. What is its runtime cost?
-8. What is its memory cost?
-9. What dependency does it introduce?
-10. Does a simpler implementation solve the actual problem?
-
----
-
-# Before Adding a Dependency
-
-Ask:
-
-1. What exact problem does it solve?
-2. How much code from the dependency is actually needed?
-3. What does it add to binary size?
-4. What does it add to memory?
-5. Does it allocate internally?
-6. Does it create threads?
-7. Does it have a runtime?
-8. What dependencies does it bring?
-9. Is it actively maintained?
-10. Can it be replaced later?
-
----
-
-# Before Adding an Abstraction
-
-Ask:
-
-1. Is there currently more than one implementation?
-2. Is another implementation actually planned?
-3. Does the abstraction hide important performance characteristics?
-4. Does it add indirect calls?
-5. Does it make ownership harder to understand?
-6. Is the abstraction simpler than the code it replaces?
-
----
-
-# When Modifying Performance-Critical Code
-
-Before finalizing:
-
-1. Confirm correctness.
-2. Compile the relevant target.
-3. Run available tests.
-4. Run relevant benchmarks when practical.
-5. Check allocations.
-6. Check memory impact.
-7. Check binary impact when significant.
-8. Compare with the previous implementation when possible.
-
----
-
-# Agent Rules
-
-When working on this repository, agents must:
-
-* inspect existing architecture before creating new systems;
-* reuse existing conventions;
-* avoid unnecessary dependencies;
-* avoid unnecessary new abstraction layers;
-* keep runtime code lightweight;
-* keep editor code out of runtime modules;
-* keep offline processing out of runtime whenever practical;
-* preserve module boundaries;
-* avoid circular dependencies;
-* consider memory ownership explicitly;
-* consider threading implications;
-* consider binary-size implications;
-* consider startup implications;
-* benchmark performance-sensitive changes when possible;
-* treat visual quality as a performance-budgeted feature;
-* keep shader compilation offline by default;
-* use Slang as the default shader source language unless a backend-specific exception is justified;
-* prevent unnecessary shader permutation growth;
-* preserve scalable rendering paths for low-end, mid-range and high-end hardware;
-* add tests for important logic;
-* document non-obvious architectural decisions.
-
----
-
-# Agent Must Not
-
-Agents must not:
-
-* replace working systems purely based on personal preference;
-* add C++, C#, Java, Python or another runtime language without a concrete architectural reason;
-* add large frameworks for convenience;
-* make Lua mandatory;
-* mix editor and runtime code;
-* introduce garbage collection into the engine core;
-* add background threads without documenting ownership and shutdown;
-* allocate memory every frame unnecessarily;
-* use global mutable state without strong justification;
-* hide major runtime costs behind innocent-looking APIs;
-* introduce platform-specific code into common modules unnecessarily;
-* optimize by guessing when measurement is available;
-* sacrifice correctness for benchmark results;
-* implement speculative features unrelated to current milestones;
-* make the Slang compiler a mandatory runtime dependency;
-* add high-end rendering features that permanently penalize low-end configurations;
-* duplicate Vulkan, D3D12 and Metal shader source unnecessarily when shared Slang code can express the feature;
-* create uncontrolled shader permutation explosions.
-
----
-
-# Agent Decision Priority
-
-When multiple solutions are valid, prefer in this order:
+Priority order:
 
 ```text
 1. Correctness
-2. Simplicity
-3. Low runtime overhead
-4. Low memory usage
-5. Clear ownership
-6. Modularity
+2. Safety
+3. Clear ownership
+4. Simplicity
+5. Performance
+6. Memory efficiency
 7. Maintainability
-8. Small binary size
-9. Fast startup
-10. Maximum visual quality per unit of hardware
-11. Developer convenience
+8. Binary size
+9. Startup time
+10. Convenience
 ```
 
-Developer convenience is important, but it must not silently compromise the central goals of the engine.
+Performance is important, but never knowingly introduce:
+
+- memory corruption;
+- invalid lifetimes;
+- data races;
+- undefined behavior;
+- broken synchronization;
+- invalid GPU resource usage;
+
+just to improve performance.
 
 ---
 
-# Current Development Strategy
+# 7. Keep the Runtime Lightweight
 
-Do not attempt to build the entire engine at once.
+When modifying runtime code, consider:
 
-Initial development order:
+- RAM usage
+- CPU overhead
+- allocations
+- startup cost
+- binary size
+- dependencies
+- synchronization
+- cache locality
+- GPU overhead
 
-```text
-v0.0.1
+Do not introduce permanent runtime cost for an optional feature when the feature can be compiled out.
 
-Core
-Memory
-Platform
-Window
-Input
-Vulkan Renderer
-Slang shader pipeline
-```
-
-Target:
-
-```text
-create window
-initialize GPU
-clear screen
-render triangle
-receive input
-shutdown cleanly
-```
-
-Then:
-
-```text
-v0.0.2
-
-Entities
-Scene
-Transform
-Camera
-Mesh
-Texture
-Basic Assets
-```
-
-Then:
-
-```text
-v0.0.3
-
-ECS
-Materials
-Slang shader system
-PBR foundation
-HDR foundation
-Lighting
-Asset System
-C ABI
-```
-
-Then:
-
-```text
-v0.0.4
-
-Rust offline tools
-Asset compiler
-Texture compiler
-Slang shader compiler integration
-Shader cache / reflection pipeline
-Model importer
-```
-
-Then:
-
-```text
-v0.0.5
-
-Basic Editor
-```
-
-Then:
-
-```text
-v0.1
-
-Lua
-Physics
-Audio
-Animation
-Project System
-Build / Export
-```
-
-Do not skip foundational architecture to prematurely build editor features.
+Prefer compile-time exclusion over runtime disabling where practical.
 
 ---
 
-# Definition of Done
+# 8. No Hidden Expensive Work
 
-A change is not considered complete merely because it compiles.
+Avoid APIs that hide expensive operations.
 
-For important changes, verify as applicable:
+Do not silently perform major operations such as:
+
+- disk access;
+- blocking waits;
+- GPU synchronization;
+- large memory allocation;
+- resource compilation;
+- large data copies;
+- thread creation;
+- shader compilation;
+
+inside apparently cheap functions.
+
+Expensive behavior should be explicit or clearly documented.
+
+---
+
+# 9. Memory Rules
+
+Runtime memory ownership must be explicit.
+
+When adding or modifying allocations, determine:
+
+- who allocates;
+- who owns;
+- who frees;
+- lifetime;
+- whether memory can move;
+- whether references remain valid;
+- whether allocation occurs in a hot path.
+
+Avoid unnecessary heap allocations.
+
+Avoid allocating every frame unless required.
+
+Prefer existing project allocators and memory systems.
+
+Do not introduce a new allocator abstraction when the existing one is sufficient.
+
+---
+
+# 10. Hot Path Rules
+
+Treat the following as potentially performance-critical:
+
+- frame update;
+- render submission;
+- culling;
+- entity/component iteration;
+- animation;
+- physics synchronization;
+- job scheduling;
+- asset streaming;
+- GPU upload preparation.
+
+Inside hot paths, avoid unnecessary:
+
+- allocations;
+- locks;
+- string operations;
+- filesystem access;
+- logging;
+- pointer chasing;
+- copies;
+- virtual/indirect calls;
+- synchronization.
+
+Do not claim an optimization is faster without measurement when measurement is practical.
+
+---
+
+# 11. Rendering Rules
+
+Keep graphics API code behind the rendering backend / RHI boundary.
+
+Do not spread Vulkan, Direct3D 12 or Metal calls across unrelated engine systems.
+
+Shared renderer code should depend on engine abstractions, not backend-specific implementation details.
+
+Backend-specific exceptions must remain isolated.
+
+---
+
+# 12. Shader Rules
+
+Use Slang as the default shader source language unless there is a clear backend-specific reason not to.
+
+Prefer offline shader compilation.
+
+Do not make the Slang compiler a required dependency of exported games unless runtime shader compilation is explicitly enabled.
+
+Avoid uncontrolled shader permutation growth.
+
+Before adding a shader variant, consider whether the behavior can be expressed with:
+
+- specialization;
+- material data;
+- runtime branching;
+- feature flags;
+- offline permutation pruning.
+
+Do not duplicate shader implementations for Vulkan, D3D12 and Metal when shared Slang code can reasonably support them.
+
+---
+
+# 13. Runtime / Editor Separation
+
+Do not introduce editor dependencies into runtime modules.
+
+Editor-only features belong in editor code.
+
+Examples:
+
+- hierarchy UI;
+- inspector;
+- asset browser;
+- editor viewport controls;
+- project manager;
+- development panels;
+- import interfaces.
+
+Exported games must not carry editor systems unless explicitly required.
+
+---
+
+# 14. Runtime / Tooling Separation
+
+Heavy asset processing should normally happen offline.
+
+Prefer:
 
 ```text
-compiles
-runs
-tests pass
-no obvious memory leaks
-no invalid resource lifetime
-shutdown works correctly
-error paths work
-performance remains acceptable
-module boundaries remain clean
-documentation is updated
+source asset
+↓
+offline tool
+↓
+optimized engine asset
+↓
+runtime
+```
+
+Do not move importers, converters, compressors or heavy compilers into the runtime without a strong reason.
+
+Rust tooling must not become a runtime dependency by accident.
+
+---
+
+# 15. Dependency Rules
+
+Do not add a dependency automatically because it makes implementation easier.
+
+Before adding a dependency, evaluate:
+
+- why it is needed;
+- binary-size impact;
+- memory impact;
+- runtime overhead;
+- transitive dependencies;
+- build-time impact;
+- platform support;
+- licensing;
+- maintenance status;
+- replacement difficulty.
+
+Prefer existing dependencies when they already solve the problem.
+
+Do not add a large library to use a tiny feature without considering a smaller solution.
+
+---
+
+# 16. Public API Rules
+
+Treat public APIs as expensive commitments.
+
+Before changing public API or C ABI:
+
+1. Check existing users.
+2. Avoid unnecessary breaking changes.
+3. Keep ownership clear.
+4. Keep ABI types simple.
+5. Avoid leaking internal Zig implementation details.
+6. Avoid unstable memory layouts.
+7. Document behavior and lifetime.
+
+Do not expose internal containers or implementation-specific pointers through the public ABI unless explicitly required.
+
+---
+
+# 17. Error Handling
+
+Do not silently ignore errors.
+
+Distinguish between:
+
+- invalid user/data input;
+- recoverable runtime failure;
+- programmer error;
+- broken internal invariant;
+- fatal engine failure.
+
+Assertions are acceptable for impossible internal states.
+
+Assertions must not replace proper handling of expected runtime failures.
+
+---
+
+# 18. Logging
+
+Do not add noisy logs to hot paths.
+
+Use appropriate log levels.
+
+Do not perform expensive formatting for disabled logs when avoidable.
+
+Debug logging must be removable or inexpensive in release builds.
+
+---
+
+# 19. Threading
+
+Do not create background threads casually.
+
+When adding threading, define:
+
+- ownership;
+- startup;
+- shutdown;
+- synchronization;
+- data access;
+- failure behavior.
+
+Prefer the engine job system or existing worker pool when appropriate.
+
+Avoid global locks.
+
+Do not use lock-free programming simply because it sounds faster.
+
+---
+
+# 20. Platform Code
+
+Keep platform-specific code isolated.
+
+Do not spread operating-system conditionals throughout shared modules.
+
+Prefer:
+
+```text
+shared code
+↓
+platform abstraction
+↓
+Windows / Linux / macOS implementation
+```
+
+Only use direct platform APIs outside the platform layer when there is a documented reason.
+
+---
+
+# 21. Naming and Style
+
+Follow the existing repository style.
+
+Do not impose a new style without being asked.
+
+Use clear names.
+
+Avoid unnecessary abbreviations.
+
+Prefer consistency with surrounding code over personal preference.
+
+Comments should explain why, constraints or invariants.
+
+Do not write comments that merely restate the code.
+
+---
+
+# 22. Documentation
+
+Update documentation when a change alters:
+
+- architecture;
+- public API;
+- file format;
+- build process;
+- subsystem ownership;
+- supported platform behavior;
+- shader pipeline;
+- asset pipeline;
+- configuration.
+
+Do not copy the whole architecture into `AGENTS.md`.
+
+Architecture belongs in `Ideia.md` or the appropriate design document.
+
+---
+
+# 23. Testing
+
+For meaningful code changes, run the relevant available checks.
+
+Depending on the subsystem, this may include:
+
+- build;
+- unit tests;
+- integration tests;
+- renderer tests;
+- asset tests;
+- shader compilation;
+- example application;
+- benchmark;
+- debug validation.
+
+Do not claim tests passed unless they were actually run.
+
+If a relevant test cannot be run, say so.
+
+---
+
+# 24. Benchmarks
+
+Do not invent benchmark numbers.
+
+Do not claim performance improvements based only on intuition.
+
+When changing performance-sensitive systems, compare before and after when practical.
+
+Relevant measurements may include:
+
+- RAM usage;
+- VRAM usage;
+- allocations per frame;
+- CPU frame time;
+- GPU frame time;
+- startup time;
+- asset loading time;
+- shader/pipeline creation time;
+- executable size;
+- build time.
+
+Performance regressions require investigation or an explicit tradeoff.
+
+---
+
+# 25. Do Not Over-Optimize Early
+
+The engine is performance-focused, but not every line needs manual optimization.
+
+Prefer a clear implementation first when performance is not yet relevant.
+
+Optimize measured bottlenecks and architectural costs.
+
+Do not make code significantly harder to maintain for insignificant theoretical gains.
+
+---
+
+# 26. Do Not Add Abstractions Without Need
+
+Before adding an abstraction, ask:
+
+1. What problem does it solve now?
+2. Are there actually multiple implementations?
+3. Does it reduce or increase complexity?
+4. Does it hide important costs?
+5. Does it make ownership less clear?
+6. Can the current problem be solved more directly?
+
+Avoid architecture astronautics.
+
+---
+
+# 27. Do Not Change Languages Casually
+
+Do not introduce additional implementation languages without a concrete reason.
+
+Current intended roles are defined in `Ideia.md`.
+
+In particular, do not introduce:
+
+- C++;
+- C#;
+- Java;
+- Python;
+- another scripting runtime;
+
+into core/runtime code merely out of preference.
+
+If another language materially improves a subsystem, explain the tradeoff before making the change.
+
+---
+
+# 28. Repository Hygiene
+
+Do not commit or generate unnecessary:
+
+- binaries;
+- build artifacts;
+- cache files;
+- temporary files;
+- IDE-specific files;
+- generated output;
+
+unless the repository intentionally tracks them.
+
+Respect `.gitignore`.
+
+Do not add secrets, tokens, credentials or machine-specific paths.
+
+---
+
+# 29. Generated Code
+
+If code is generated:
+
+- clearly separate generated and handwritten files;
+- do not manually edit generated files unless instructed;
+- document the generator;
+- ensure regeneration is deterministic when practical.
+
+Do not add generated noise to unrelated diffs.
+
+---
+
+# 30. File Formats and Serialization
+
+When changing runtime file formats:
+
+- version the format when appropriate;
+- validate sizes and offsets;
+- handle malformed data;
+- consider alignment;
+- consider endianness where relevant;
+- avoid unsafe unchecked parsing;
+- document compatibility implications.
+
+Do not silently break existing assets without a migration plan when compatibility matters.
+
+---
+
+# 31. Security
+
+Treat external files as untrusted input.
+
+Validate:
+
+- lengths;
+- counts;
+- offsets;
+- indexes;
+- integer arithmetic;
+- versions;
+- enum values;
+- compressed sizes;
+- resource references.
+
+Do not trust imported assets simply because they were produced by a common tool.
+
+---
+
+# 32. When Something Is Unclear
+
+Do not guess about existing repository behavior when the answer can be determined from the code.
+
+Search and inspect first.
+
+For small ambiguities, choose the solution most consistent with existing code and document the assumption.
+
+Ask the user only when the ambiguity materially changes the requested result and cannot reasonably be resolved from the repository.
+
+---
+
+# 33. When Fixing Bugs
+
+When fixing a bug:
+
+1. Identify the root cause.
+2. Avoid merely hiding the symptom.
+3. Keep the fix scoped.
+4. Add or update a test when practical.
+5. Check related lifetime, ownership or synchronization issues.
+6. Avoid unrelated refactors in the same change.
+
+---
+
+# 34. When Refactoring
+
+A refactor should preserve behavior unless behavior changes are explicitly part of the task.
+
+Before a large refactor:
+
+- understand current dependencies;
+- preserve externally visible behavior;
+- keep the project buildable when practical;
+- avoid changing multiple unrelated systems simultaneously.
+
+Do not refactor just to make the code look more familiar.
+
+---
+
+# 35. When Adding a Feature
+
+Before implementing a significant feature:
+
+1. Find the correct subsystem.
+2. Check whether it should be runtime, editor, plugin or offline tooling.
+3. Determine ownership.
+4. Determine lifecycle.
+5. Determine memory cost.
+6. Determine threading implications.
+7. Determine whether it can be optional.
+8. Determine whether it affects public API.
+9. Determine how it will be tested.
+10. Implement the smallest coherent version.
+
+---
+
+# 36. When Working on Rendering Features
+
+For rendering features, evaluate both quality and cost.
+
+Consider:
+
+- image quality;
+- GPU cost;
+- CPU cost;
+- VRAM;
+- RAM;
+- bandwidth;
+- shader complexity;
+- scalability;
+- low-end fallback;
+- high-end path.
+
+The goal is not maximum visual quality at any cost.
+
+The project goal is high visual quality with high efficiency.
+
+Do not permanently penalize low-end configurations for high-end rendering features.
+
+---
+
+# 37. Agent Must Not
+
+The agent must not:
+
+- silently redesign the engine;
+- ignore `Ideia.md`;
+- add unrelated features;
+- introduce large dependencies without justification;
+- add a new runtime language by preference;
+- make Lua mandatory;
+- make Slang a mandatory exported-game runtime dependency;
+- mix editor and runtime code unnecessarily;
+- move heavy offline processing into runtime without reason;
+- add permanent runtime cost for unused optional features when avoidable;
+- invent benchmark results;
+- claim tests were run when they were not;
+- hide major performance costs;
+- discard user code unnecessarily;
+- mass-reformat unrelated files;
+- rewrite working systems without a reason;
+- add speculative abstractions;
+- sacrifice correctness for benchmark numbers;
+- leave known resource leaks;
+- leave known invalid lifetime bugs;
+- leave known race conditions;
+- create circular module dependencies without strong justification.
+
+---
+
+# 38. Agent Should
+
+The agent should:
+
+- inspect before editing;
+- preserve existing design;
+- keep changes focused;
+- prefer simple implementations;
+- minimize runtime overhead;
+- make ownership explicit;
+- keep optional systems removable;
+- reuse existing infrastructure;
+- isolate third-party APIs;
+- keep platform-specific code isolated;
+- test relevant changes;
+- benchmark performance-sensitive changes when practical;
+- update documentation when behavior changes;
+- explain meaningful tradeoffs;
+- report limitations accurately.
+
+---
+
+# 39. Completion Checklist
+
+Before considering a task complete, check as applicable:
+
+```text
+[ ] requested behavior implemented
+[ ] project compiles
+[ ] relevant tests pass
+[ ] no known resource leak introduced
+[ ] ownership/lifetimes are valid
+[ ] shutdown path remains valid
+[ ] error paths considered
+[ ] no unnecessary dependency added
+[ ] runtime/editor boundary preserved
+[ ] runtime/tooling boundary preserved
+[ ] no unnecessary per-frame allocations added
+[ ] public API compatibility considered
+[ ] shader pipeline rules respected
+[ ] performance-sensitive changes measured when practical
+[ ] documentation updated when needed
+[ ] no unrelated files changed
 ```
 
 ---
 
-# Final Principle
+# 40. Final Rule
 
-The engine must not be lightweight because it lacks functionality.
+`Ideia.md` defines what this engine is intended to become.
 
-The engine must be lightweight because functionality is designed efficiently.
+`AGENTS.md` defines how an AI agent must work while helping build it.
 
-Every subsystem should respect:
+When there is a conflict:
 
-> Modern technology without unnecessary weight.
-
-And:
-
-> You only pay for what you use.
-
-And:
-
-> Maximum visual quality per unit of hardware.
+1. Follow the user's explicit current instruction.
+2. Preserve correctness and safety.
+3. Follow `Ideia.md` for project architecture.
+4. Follow `AGENTS.md` for agent behavior.
+5. Follow existing repository conventions when no higher-priority rule applies.
