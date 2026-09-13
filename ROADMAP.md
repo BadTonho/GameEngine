@@ -48,10 +48,17 @@ A new contributor can clone the project, configure a compiler, build an empty ex
 ### Validation status
 
 - [x] Windows/MSVC configure, build and CTest pass locally.
-- [ ] Linux/GCC configure, build and CTest pass locally or in CI.
-- [ ] Linux/Clang configure, build and CTest pass locally or in CI.
+- [x] Linux/GCC configure, build and CTest pass locally.
+- [x] Linux/Clang configure, build and CTest pass locally.
 - [ ] Linux AddressSanitizer and UndefinedBehaviorSanitizer pass in CI.
 - [ ] The public remote repository has completed its first CI run.
+
+Local Linux validation performed with GCC 15.2.0 and Clang 21.1.8:
+
+- Debug and Release builds passed with CTest.
+- ASan/UBSan tests passed with leak detection disabled because the current
+  execution environment blocks LeakSanitizer through `ptrace`.
+- Full sanitizer and remote CI validation remain pending on GitHub Actions.
 
 ## Phase 1 — Minimal core and platform
 
