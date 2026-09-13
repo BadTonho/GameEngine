@@ -21,7 +21,7 @@ A prioridade principal da engine será:
 * possibilidade de rodar em PCs fracos;
 * editor leve e responsivo;
 * sistemas completamente opcionais;
-* nenhum custo relevante para recursos que não forem utilizados;
+* custo proporcional aos recursos realmente utilizados;
 * controle explícito de memória;
 * alta performance;
 * fácil utilização para desenvolvedores de jogos;
@@ -39,9 +39,26 @@ Em português:
 
 > Máxima qualidade visual pelo menor custo possível de hardware.
 
-Se um jogo não usa física, Lua, networking, ray tracing, volumetria, GI dinâmica, partículas ou outro sistema opcional, esse código idealmente não deve existir no executável final.
+Se um jogo não usa física, Lua, networking, ray tracing, volumetria, GI dinâmica, partículas ou outro sistema opcional, esse código e seus dados idealmente não devem existir no executável final. Quando a remoção completa não for tecnicamente possível, o custo residual deve ser pequeno, explícito e mensurável.
 
 A qualidade gráfica deve ser **escalável**, não obrigatoriamente pesada.
+
+## Escopo e critério de sucesso
+
+Este documento descreve uma visão de longo prazo. Ele não é um compromisso de prazo de lançamento nem exige que todos os sistemas sejam implementados ao mesmo tempo.
+
+O foco inicial de validação será uma engine para jogos 3D em desktop, começando por Windows e Linux, com renderização em tempo real e caminhos gráficos escaláveis. Outras plataformas, gêneros e recursos podem ser adicionados conforme a arquitetura e os testes justificarem.
+
+Nesta visão, “melhor possível” significa maximizar a combinação de:
+
+* qualidade visual;
+* previsibilidade de performance;
+* eficiência de RAM, VRAM, CPU e GPU;
+* estabilidade e correção;
+* capacidade de evolução;
+* simplicidade para quem utiliza a engine.
+
+Esses objetivos podem entrar em conflito. Cada decisão importante deverá explicitar o trade-off e ser validada por protótipos, testes e medições. A visão pode permanecer ambiciosa mesmo quando a implementação de uma parte for revisada.
 
 # LINGUAGENS
 
@@ -121,7 +138,7 @@ void engine_transform_set_position(
 
 Internamente essas funções podem ser implementadas em Zig.
 
-A C ABI permitirá integração futura com:
+A C ABI poderá servir como uma fronteira de integração futura com:
 
 * C
 * C++
@@ -131,6 +148,17 @@ A C ABI permitirá integração futura com:
 * Lua
 * Python
 * outras linguagens
+
+A C ABI, sozinha, não cria bindings automáticos. Cada linguagem que utilizar a engine precisará de um binding, gerador ou adaptador próprio. A ABI pública deverá permanecer pequena, estável e baseada em tipos simples.
+
+## Regras da ABI pública
+
+* utilizar handles opacos em vez de expor estruturas internas;
+* definir claramente quem aloca, quem possui e quem libera cada recurso;
+* versionar a ABI e validar compatibilidade;
+* representar falhas com códigos de erro e contratos documentados;
+* evitar containers, strings e layouts internos de Zig na fronteira pública;
+* definir convenções para callbacks, threads e shutdown.
 
 Arquitetura:
 
@@ -741,6 +769,10 @@ Direct3D 12
 Metal
 ```
 
+A RHI deverá representar conceitos realmente compartilhados entre os backends. Durante os primeiros protótipos, ela deve ser pequena e evoluir a partir das necessidades observadas no backend Vulkan. Não é necessário congelar uma abstração completa antes de existir um renderer funcional.
+
+Detalhes específicos de cada API, capacidades opcionais e limitações de hardware devem permanecer isolados no backend ou ser expostos por capacidades explícitas da RHI.
+
 ---
 
 # BACKENDS GRÁFICOS
@@ -1036,7 +1068,7 @@ ideal:
 < 1 segundo
 ```
 
-Esses números são metas iniciais e podem mudar conforme testes reais.
+Esses números são metas iniciais e podem mudar conforme testes reais. Toda medição deverá informar plataforma, hardware, configuração de build, cena, recursos carregados e critério utilizado. Uma meta só é útil quando puder ser reproduzida.
 
 ---
 
@@ -1065,13 +1097,13 @@ ideal:
 < 10 MB
 ```
 
-Esses valores devem ser tratados como targets de engenharia e não promessas.
+Esses valores devem ser tratados como targets de engenharia e não promessas. O custo de um projeto vazio deve ser separado do custo dos módulos e assets que o projeto escolher carregar.
 
 ---
 
 # BUILD MODULAR
 
-O usuário poderá escolher módulos.
+O sistema de build e empacotamento permitirá escolher módulos.
 
 Exemplo:
 
@@ -1125,11 +1157,9 @@ Editor
 Asset compiler
 ```
 
-Não apenas desativado.
+O objetivo não é apenas desativar recursos em tempo de execução. Módulos opcionais devem ser removidos do build, link ou pacote final sempre que tecnicamente possível. Ainda assim, componentes compartilhados podem possuir algum custo residual; esse custo deve ser conhecido e medido.
 
-Não compilado ou não empacotado sempre que tecnicamente possível.
-
-# PRINCÍPIO
+# PRINCÍPIOS
 
 ```text
 Don't Pay For What You Don't Use
@@ -1266,9 +1296,11 @@ Uma biblioteca não entra apenas porque facilita desenvolvimento.
 
 ---
 
-# PRIMEIRA VERSÃO
+# ROADMAP DE VALIDAÇÃO E EVOLUÇÃO
 
-Não começar fazendo tudo.
+As versões abaixo são marcos técnicos, não prazos de lançamento. A engine pode levar o tempo necessário para atingir qualidade, e cada marco poderá ser dividido em vários protótipos internos.
+
+Uma etapa só deve ser considerada concluída quando seu comportamento, seus custos e seus caminhos de erro forem compreendidos por meio de testes e medições. Decisões que ainda não foram validadas não devem ser tratadas como contratos permanentes da arquitetura.
 
 ## v0.0.1
 
@@ -1332,6 +1364,8 @@ A prioridade visual nesta fase é obter uma base PBR correta antes de efeitos co
 
 # v0.0.3
 
+O ECS entra nesta fase como uma decisão a ser validada pelo uso real e por benchmarks. O layout de dados, o modelo de queries e a estratégia de armazenamento podem ser revisados antes de serem considerados estáveis.
+
 Adicionar:
 
 ```text
@@ -1388,6 +1422,8 @@ O compilador e ferramentas de shader continuam componentes de desenvolvimento/ed
 
 # v0.1
 
+Este é o objetivo de uma primeira engine utilizável, não uma data. Os recursos podem ser lançados e estabilizados em marcos independentes.
+
 Adicionar:
 
 ```text
@@ -1422,6 +1458,21 @@ Quando isso funcionar corretamente, a engine já pode ser considerada funcional.
 
 Recursos como GI dinâmica, ray tracing, virtualized geometry e volumetria avançada ficam para versões posteriores, depois de profiling e estabilidade da base.
 
+# DECISÕES ABERTAS E EXPERIMENTOS
+
+Para preservar a qualidade da arquitetura, algumas decisões devem ser escolhidas com base em protótipos e medições, e não apenas por preferência:
+
+* modelo de ECS e layout das queries;
+* estratégia de handles, ownership e lifetime de recursos;
+* limites e capacidades da RHI;
+* caminho principal de iluminação, como Forward+, Clustered ou Deferred;
+* combinação de allocators para dados permanentes, temporários e de streaming;
+* formato de assets, cache e política de streaming;
+* integração e custo real do Lua opcional;
+* uso de compute, async compute, GPU culling e outras técnicas avançadas.
+
+Manter essas decisões abertas durante a fase de pesquisa não enfraquece a visão. Evita congelar abstrações antes de conhecer suas exigências reais.
+
 # FILOSOFIA FINAL
 
 A engine deve seguir os seguintes princípios:
@@ -1445,7 +1496,7 @@ LOW STARTUP TIME
 
 LOW BINARY SIZE
 
-ZERO-COST OPTIONAL FEATURES
+COST PROPORTIONAL TO USED FEATURES
 
 MODERN GRAPHICS
 
