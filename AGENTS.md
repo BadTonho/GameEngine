@@ -19,6 +19,12 @@ The primary goal is to provide modern game-engine capabilities while minimizing:
 
 The engine must remain usable on low-end hardware while still supporting modern rendering and engine technologies.
 
+The visual target is AAA-class rendering quality when the hardware and project configuration allow it, while preserving aggressive scalability for low-end and mid-range hardware.
+
+The engine must pursue:
+
+> Maximum visual quality per unit of hardware.
+
 The main architectural principle is:
 
 > You do not pay for what you do not use.
@@ -28,6 +34,17 @@ Optional systems must be removable from the final build whenever technically pos
 ---
 
 # Official Technology Stack
+
+```text
+Runtime / Core / Renderer: Zig
+Public ABI / interoperability: C ABI
+Offline tools: Rust
+Gameplay scripting: Lua (optional)
+Shader source language: Slang
+Initial graphics backend: Vulkan
+Future graphics backends: Direct3D 12, Metal
+```
+
 
 ## Runtime
 
@@ -112,7 +129,7 @@ Rust is primarily intended for offline tools and development infrastructure.
 Preferred Rust use cases:
 
 * Asset compiler
-* Shader compiler
+* Shader compiler / Slang toolchain integration
 * Texture compiler
 * Model importer
 * Animation compiler
@@ -140,6 +157,54 @@ Projects that do not use Lua should not include the Lua runtime in the final exe
 
 ---
 
+# Shader Language
+
+Primary shader language:
+
+```text
+Slang
+```
+
+Slang is the preferred source language for GPU shaders.
+
+The shader toolchain should compile shaders offline whenever practical.
+
+Preferred model:
+
+```text
+Slang source
+    ↓
+Offline shader compilation
+    ↓
+Backend-specific output
+    ├── SPIR-V → Vulkan
+    ├── DXIL   → Direct3D 12
+    └── Metal-compatible output → Metal
+```
+
+The final game runtime should not depend on the Slang compiler unless a project explicitly requires runtime shader compilation.
+
+Prefer precompiled shader artifacts, pipeline metadata, reflection data and cached variants.
+
+Runtime shader compilation should be treated as an exceptional feature, not the default path.
+
+Shader systems must consider:
+
+- binary size
+- startup time
+- shader cache size
+- pipeline creation cost
+- permutation explosion
+- compilation latency
+- platform portability
+- GPU feature compatibility
+
+Do not create shader permutations blindly.
+
+Prefer specialization, data-driven material systems, dynamic branching where appropriate, and offline pruning of unused variants.
+
+---
+
 # Core Philosophy
 
 Every implementation should optimize for:
@@ -155,6 +220,8 @@ explicit resource ownership
 simple architecture
 minimal dependencies
 fast iteration
+maximum visual quality per unit of hardware
+scalable rendering quality
 ```
 
 Do not optimize only for developer convenience if it causes permanent runtime overhead.
@@ -492,24 +559,40 @@ Metal
 
 Modern rendering features may include:
 
+* physically based rendering (PBR)
+* HDR
+* image-based lighting (IBL)
+* Forward+
+* clustered lighting
 * GPU-driven rendering
 * indirect drawing
 * bindless resources
 * compute shaders
 * async compute
 * render graphs
-* GPU culling
-* PBR
-* Forward+
-* clustered lighting
-* HDR
+* GPU frustum culling
+* GPU occlusion culling
 * temporal anti-aliasing
-* upscaling
+* temporal upscaling
+* screen-space ambient occlusion
+* screen-space reflections
+* volumetric fog
+* high-quality shadow systems
 * GPU particles
 * texture streaming
 * mesh streaming
+* asynchronous asset streaming
+* real-time global illumination
+* ray-traced reflections
+* ray-traced shadows
+* virtualized geometry
+* advanced volumetrics
 
 Do not implement a feature merely because it is considered modern.
+
+Visual quality does not justify permanent runtime cost.
+
+High-end features should be modular, scalable and removable when unused.
 
 Every feature must justify:
 
@@ -519,6 +602,98 @@ Every feature must justify:
 * GPU cost
 * maintenance cost
 * usefulness
+
+---
+
+# Rendering Scalability
+
+The renderer must support graceful scaling across hardware classes.
+
+Target philosophy:
+
+```text
+Low-end hardware
+    ↓
+Good visual quality
+Low memory usage
+Low GPU cost
+
+Mid-range hardware
+    ↓
+High visual quality
+Balanced effects
+Stable frame times
+
+High-end hardware
+    ↓
+AAA-class visual quality
+Advanced lighting
+Advanced reflections
+High-end geometry and volumetrics
+```
+
+Do not design the renderer around a single quality level.
+
+Expensive features should expose cheaper alternatives whenever practical.
+
+Examples:
+
+```text
+Global Illumination:
+Off
+Baked
+Probe-based
+Screen-space / hybrid
+Real-time
+Ray traced
+
+Reflections:
+Off
+Probe-based
+SSR
+Hybrid
+Ray traced
+
+Shadows:
+Basic
+Cascaded
+High quality
+Virtual / advanced
+Ray traced
+```
+
+The low-end path must be a first-class supported path, not an afterthought.
+
+The high-end path must not force its memory, CPU or GPU overhead onto lower quality levels.
+
+---
+
+# Visual Quality Rules
+
+The engine is not intended to be visually minimal.
+
+It should be capable of producing modern, high-end visuals while remaining efficient.
+
+When evaluating a visual feature, consider:
+
+1. Visual improvement
+2. GPU cost
+3. CPU cost
+4. VRAM cost
+5. RAM cost
+6. startup impact
+7. shader complexity
+8. scalability
+9. ability to disable it completely
+10. whether a cheaper approximation exists
+
+Prefer techniques that provide the largest perceptual improvement for the smallest hardware cost.
+
+Rendering decisions should optimize:
+
+> image quality / hardware cost
+
+not merely maximum image quality.
 
 ---
 
@@ -637,6 +812,10 @@ Track:
 * frame time
 * CPU time
 * GPU time
+* VRAM usage
+* shader/pipeline creation time
+* visible geometry throughput
+* culling efficiency
 * entity update performance
 * allocations per frame
 * build time
@@ -1107,6 +1286,9 @@ Release:
 * optimization
 * minimal diagnostics
 * unnecessary systems stripped
+* editor-only code stripped
+* offline asset tools stripped
+* Slang compiler stripped unless runtime shader compilation is explicitly enabled
 
 ---
 
@@ -1149,6 +1331,9 @@ Important test targets include:
 * resource lifecycle
 * job synchronization
 * filesystem utilities
+* shader reflection metadata
+* shader cache compatibility
+* material/shader interface validation
 
 ---
 
@@ -1296,6 +1481,11 @@ When working on this repository, agents must:
 * consider binary-size implications;
 * consider startup implications;
 * benchmark performance-sensitive changes when possible;
+* treat visual quality as a performance-budgeted feature;
+* keep shader compilation offline by default;
+* use Slang as the default shader source language unless a backend-specific exception is justified;
+* prevent unnecessary shader permutation growth;
+* preserve scalable rendering paths for low-end, mid-range and high-end hardware;
 * add tests for important logic;
 * document non-obvious architectural decisions.
 
@@ -1318,7 +1508,11 @@ Agents must not:
 * introduce platform-specific code into common modules unnecessarily;
 * optimize by guessing when measurement is available;
 * sacrifice correctness for benchmark results;
-* implement speculative features unrelated to current milestones.
+* implement speculative features unrelated to current milestones;
+* make the Slang compiler a mandatory runtime dependency;
+* add high-end rendering features that permanently penalize low-end configurations;
+* duplicate Vulkan, D3D12 and Metal shader source unnecessarily when shared Slang code can express the feature;
+* create uncontrolled shader permutation explosions.
 
 ---
 
@@ -1336,7 +1530,8 @@ When multiple solutions are valid, prefer in this order:
 7. Maintainability
 8. Small binary size
 9. Fast startup
-10. Developer convenience
+10. Maximum visual quality per unit of hardware
+11. Developer convenience
 ```
 
 Developer convenience is important, but it must not silently compromise the central goals of the engine.
@@ -1358,6 +1553,7 @@ Platform
 Window
 Input
 Vulkan Renderer
+Slang shader pipeline
 ```
 
 Target:
@@ -1392,7 +1588,9 @@ v0.0.3
 
 ECS
 Materials
-Shaders
+Slang shader system
+PBR foundation
+HDR foundation
 Lighting
 Asset System
 C ABI
@@ -1404,6 +1602,11 @@ Then:
 v0.0.4
 
 Rust offline tools
+Asset compiler
+Texture compiler
+Slang shader compiler integration
+Shader cache / reflection pipeline
+Model importer
 ```
 
 Then:
@@ -1465,3 +1668,7 @@ Every subsystem should respect:
 And:
 
 > You only pay for what you use.
+
+And:
+
+> Maximum visual quality per unit of hardware.
