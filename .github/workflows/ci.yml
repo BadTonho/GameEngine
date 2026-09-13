@@ -64,6 +64,44 @@ jobs:
       - name: Test
         run: ctest --preset linux-clang-debug
 
+  linux-gcc-release:
+    name: Linux / GCC / Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux graphics dependencies
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libx11-dev libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers vulkan-tools xvfb
+
+      - name: Configure
+        run: cmake --preset linux-gcc-release
+
+      - name: Build
+        run: cmake --build --preset linux-gcc-release
+
+      - name: Test
+        run: ctest --preset linux-gcc-release
+
+  linux-clang-release:
+    name: Linux / Clang / Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux graphics dependencies
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y clang libx11-dev libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers vulkan-tools xvfb
+
+      - name: Configure
+        run: cmake --preset linux-clang-release
+
+      - name: Build
+        run: cmake --build --preset linux-clang-release
+
+      - name: Test
+        run: ctest --preset linux-clang-release
+
   linux-sanitizers:
     name: Linux / GCC / AddressSanitizer and UndefinedBehaviorSanitizer
     runs-on: ubuntu-latest

@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 2A.** The repository currently provides a Linux/X11/Vulkan rendering foundation. It is not ready to create a complete game yet.
+> **Status: early development — Phase 2 complete on Linux.** The repository currently provides a Linux/X11/Vulkan rendering foundation. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -23,24 +23,25 @@ The complete direction is documented in [Idea.md](Idea.md). The implementation s
 
 ## Current status
 
-Phase 0 and Phase 1A are implemented. Phase 2A currently provides the first Vulkan rendering path:
+Phase 0 and Phase 1A are implemented. Phase 2 is complete on Linux and provides the first Vulkan rendering path:
 
 - CMake 3.25+ project using C++20 without compiler extensions;
 - `gameengine_core` with fixed-width types, status values, diagnostics, clock and input state;
 - `gameengine_platform` with a native Xlib/X11 Linux backend;
-- `gameengine_renderer` with a minimal Vulkan RHI and X11 surface backend;
+- `gameengine_renderer` with a Vulkan RHI, X11 surface backend and typed resource handles;
 - `gameengine_runtime` executable with a window, Vulkan device, swapchain and triangle;
+- Vulkan buffers, RGBA8 images, samplers, graphics pipelines and staging uploads;
+- generation-checked handles and fence-based deferred resource destruction;
+- Vulkan object names and command labels through `VK_EXT_debug_utils`;
 - `gameengine_tests`, `gameengine_rhi_tests` and `gameengine_platform_tests` without an external test framework;
 - CTest integration with core, RHI, runtime, Vulkan and X11 smoke tests;
 - high-warning builds with warnings treated as errors;
 - Debug, Release and GCC sanitizer presets;
 - GitHub Actions for Windows/MSVC, Linux/GCC, Linux/Clang and ASan/UBSan.
 
-The following are intentionally not part of Phase 2A:
+The following are intentionally not part of Phase 2:
 
 - the functional Windows/Win32 backend;
-- advanced RHI resources such as buffers, textures, samplers and uploads;
-- deferred GPU destruction and capture-tool integration;
 - Slang shader compilation and shader reflection;
 - ECS, editor, Lua and Rust tooling;
 - physics, audio, networking or gameplay APIs;
@@ -58,7 +59,7 @@ The following are intentionally not part of Phase 2A:
 | Offline tooling | Rust | Planned |
 | Gameplay scripting | Optional Lua | Planned |
 | Shader source | Slang, compiled offline | Planned |
-| First graphics backend | Vulkan | In use in Phase 2A |
+| First graphics backend | Vulkan | In use |
 
 Vulkan, X11 and Mesa are system dependencies for the Linux rendering build. Slang, Rust and Lua are not required yet.
 
@@ -134,6 +135,8 @@ cmake --build --preset linux-gcc-sanitizers
 ctest --preset linux-gcc-sanitizers
 ```
 
+The sanitizer test preset disables LeakSanitizer because the Mesa/DBus stack used by Xvfb keeps process-lifetime allocations outside the engine. AddressSanitizer and UndefinedBehaviorSanitizer remain enabled.
+
 Presets are host-filtered. Windows shows the Windows presets, while Linux shows the Linux presets.
 
 ## Preset matrix
@@ -174,7 +177,7 @@ CTest currently runs five checks on Linux when Vulkan is enabled:
 2. `gameengine_rhi`: verifies RHI lifecycle error handling and Vulkan utility policies;
 3. `gameengine_runtime_smoke`: verifies that the runtime initializes Vulkan, renders a frame and destroys the X11 window;
 4. `gameengine_platform_x11`: verifies the platform lifecycle and idempotent shutdown;
-5. `gameengine_vulkan_resize`: verifies swapchain recreation after an X11 resize.
+5. `gameengine_vulkan_resize`: verifies resource creation/upload/destruction and swapchain recreation after an X11 resize.
 
 To build the core and platform without Vulkan, configure with `-DGAMEENGINE_BUILD_VULKAN=OFF`. This uses the renderer stub and does not require Vulkan headers.
 

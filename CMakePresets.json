@@ -220,6 +220,9 @@
     {
       "name": "linux-gcc-sanitizers",
       "configurePreset": "linux-gcc-sanitizers",
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=0"
+      },
       "output": {
         "outputOnFailure": true
       }

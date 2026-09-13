@@ -19,6 +19,57 @@ core::Status Renderer::render_frame(const platform::Platform&) noexcept
     return core::Status{core::ErrorCode::unsupported_platform};
 }
 
+core::Status Renderer::create_buffer(const BufferDescription&, BufferHandle&) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status Renderer::upload_buffer(BufferHandle, std::span<const std::byte>) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status Renderer::destroy_buffer(BufferHandle) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status Renderer::create_image(const ImageDescription&, ImageHandle&) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status Renderer::upload_image(ImageHandle, std::span<const std::byte>) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status Renderer::destroy_image(ImageHandle) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status Renderer::create_sampler(const SamplerDescription&, SamplerHandle&) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status Renderer::destroy_sampler(SamplerHandle) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status Renderer::create_graphics_pipeline(const GraphicsPipelineDescription&,
+                                                PipelineHandle&) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status Renderer::destroy_pipeline(PipelineHandle) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
 void Renderer::shutdown() noexcept
 {
     initialized_ = false;

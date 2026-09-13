@@ -24,6 +24,10 @@ int main()
     if (renderer.render_frame(platform).code != expected_error) {
         return 2;
     }
+    gameengine::rhi::BufferHandle buffer;
+    if (renderer.create_buffer({.size = 1}, buffer).code != expected_error) {
+        return 3;
+    }
 
     renderer.shutdown();
 
@@ -34,7 +38,7 @@ int main()
     };
     if (gameengine::renderer::vulkan::choose_surface_format(formats).format !=
         VK_FORMAT_B8G8R8A8_SRGB) {
-        return 3;
+        return 4;
     }
 
     const std::vector<VkPresentModeKHR> present_modes = {
@@ -42,7 +46,7 @@ int main()
     };
     if (gameengine::renderer::vulkan::choose_present_mode(present_modes) !=
         VK_PRESENT_MODE_FIFO_KHR) {
-        return 4;
+        return 5;
     }
 
     VkSurfaceCapabilitiesKHR capabilities{};
@@ -56,7 +60,14 @@ int main()
         capabilities,
         gameengine::platform::WindowSize{2560, 120});
     if (extent.width != 1920 || extent.height != 240) {
-        return 5;
+        return 6;
+    }
+
+    const auto zero_extent = gameengine::renderer::vulkan::choose_extent(
+        capabilities,
+        gameengine::platform::WindowSize{0, 0});
+    if (zero_extent.width != 320 || zero_extent.height != 240) {
+        return 7;
     }
 
     if (gameengine::renderer::vulkan::map_result(VK_SUCCESS,
@@ -64,8 +75,11 @@ int main()
             .code != gameengine::core::ErrorCode::none ||
         gameengine::renderer::vulkan::map_result(VK_ERROR_SURFACE_LOST_KHR,
                                                   gameengine::core::ErrorCode::vulkan_frame_failed)
-                .code != gameengine::core::ErrorCode::vulkan_surface_lost) {
-        return 6;
+                .code != gameengine::core::ErrorCode::vulkan_surface_lost ||
+        gameengine::renderer::vulkan::map_result(VK_NOT_READY,
+                                                  gameengine::core::ErrorCode::vulkan_frame_failed)
+                .code != gameengine::core::ErrorCode::vulkan_frame_failed) {
+        return 8;
     }
 #endif
 
