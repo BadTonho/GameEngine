@@ -35,7 +35,7 @@ The agent must preserve the architecture defined by the repository and `Ideia.md
 
 In particular, do not silently replace or change:
 
-- Zig as the primary runtime language
+- C++ as the primary runtime language
 - C ABI as the interoperability boundary
 - Rust as the preferred language for offline tooling
 - Lua as optional gameplay scripting
@@ -209,6 +209,14 @@ Prefer existing project allocators and memory systems.
 
 Do not introduce a new allocator abstraction when the existing one is sufficient.
 
+For C++ runtime code:
+
+- use RAII for resources with scope-bound lifetime;
+- do not use owning raw pointers when ownership can be represented explicitly;
+- distinguish C++ object lifetime from the allocator that owns its storage;
+- evaluate standard-library containers and custom containers by measured cost;
+- document and validate policies for exceptions, RTTI, coroutines and allocators instead of adopting or banning them by preference.
+
 ---
 
 # 10. Hot Path Rules
@@ -350,11 +358,13 @@ Before changing public API or C ABI:
 2. Avoid unnecessary breaking changes.
 3. Keep ownership clear.
 4. Keep ABI types simple.
-5. Avoid leaking internal Zig implementation details.
+5. Avoid leaking internal C++ implementation details.
 6. Avoid unstable memory layouts.
 7. Document behavior and lifetime.
 
 Do not expose internal containers or implementation-specific pointers through the public ABI unless explicitly required.
+
+A source-level C++ SDK may provide an ergonomic interface for C++ users, but binary plugins and cross-language integrations should use the versioned C ABI unless a stronger compatibility contract is explicitly defined. Do not expose C++ classes, templates, STL types, exceptions or compiler-specific layouts as an ABI commitment.
 
 ---
 
@@ -543,19 +553,17 @@ Avoid architecture astronautics.
 
 # 27. Do Not Change Languages Casually
 
-Do not introduce additional implementation languages without a concrete reason.
+Do not change C++ as the primary runtime language or introduce additional implementation languages without a concrete reason.
 
 Current intended roles are defined in `Ideia.md`.
 
-In particular, do not introduce:
+In particular, do not introduce into core/runtime code merely out of preference:
 
-- C++;
+- Zig;
 - C#;
 - Java;
 - Python;
 - another scripting runtime;
-
-into core/runtime code merely out of preference.
 
 If another language materially improves a subsystem, explain the tradeoff before making the change.
 

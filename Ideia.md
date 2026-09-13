@@ -62,9 +62,9 @@ Esses objetivos podem entrar em conflito. Cada decisão importante deverá expli
 
 # LINGUAGENS
 
-## Zig
+## C++
 
-Zig será a principal linguagem da engine e do runtime.
+C++ será a principal linguagem da engine e do runtime.
 
 Responsável por:
 
@@ -92,20 +92,21 @@ Responsável por:
 
 Regra:
 
-> Tudo que roda dentro do jogo deve preferencialmente ser escrito em Zig.
+> Tudo que roda dentro do jogo deve preferencialmente ser escrito em C++.
 
 Objetivos:
 
-* nenhuma garbage collection no core;
+* nenhum garbage collector obrigatório no core;
 * nenhuma runtime pesada obrigatória;
-* controle explícito de memória;
+* ownership e lifetime explícitos;
 * poucas alocações;
 * executáveis pequenos;
 * acesso direto às APIs do sistema;
 * desempenho previsível;
-* fácil integração com C e APIs nativas.
+* fácil integração com C e APIs nativas;
+* uso de design orientado a dados quando isso melhorar o sistema.
 
-A versão do compilador Zig usada pelo projeto deverá ser **fixada/pinada** no repositório ou na configuração de toolchain. Atualizações de Zig devem ser deliberadas e testadas, nunca automáticas.
+A versão do padrão C++, os compiladores suportados e a configuração de toolchain deverão ser **fixados/pinados** no repositório ou na configuração de build. Atualizações devem ser deliberadas e testadas, nunca automáticas.
 
 # C
 
@@ -136,13 +137,13 @@ void engine_transform_set_position(
 );
 ```
 
-Internamente essas funções podem ser implementadas em Zig.
+Internamente essas funções podem ser implementadas em C++.
 
 A C ABI poderá servir como uma fronteira de integração futura com:
 
 * C
 * C++
-* Zig
+* Zig (binding futuro, não runtime oficial)
 * Rust
 * C#
 * Lua
@@ -157,7 +158,7 @@ A C ABI, sozinha, não cria bindings automáticos. Cada linguagem que utilizar a
 * definir claramente quem aloca, quem possui e quem libera cada recurso;
 * versionar a ABI e validar compatibilidade;
 * representar falhas com códigos de erro e contratos documentados;
-* evitar containers, strings e layouts internos de Zig na fronteira pública;
+* evitar containers, strings, classes, templates, exceções e layouts internos de C++ na fronteira pública;
 * definir convenções para callbacks, threads e shutdown.
 
 Arquitetura:
@@ -170,7 +171,7 @@ Arquitetura:
                  │
        ┌─────────┼─────────┐
        │         │         │
-      Zig        C        Rust
+      C++        C        Rust
        │         │         │
      Plugins   Plugins   Plugins
 ```
@@ -270,7 +271,7 @@ Exemplo:
 ```text
 Projeto A
 
-Zig
+C++
 +
 Engine
 ```
@@ -287,7 +288,7 @@ Outro projeto:
 ```text
 Projeto B
 
-Zig
+C++
 +
 Engine
 +
@@ -357,7 +358,7 @@ Hot reload e compilação em desenvolvimento podem existir no editor, mas devem 
                               GAME ENGINE
                                   │
                                   │
-                               ZIG CORE
+                               C++ CORE
                                   │
           ┌───────────────────────┼───────────────────────┐
           │                       │                       │
@@ -378,7 +379,7 @@ Hot reload e compilação em desenvolvimento podem existir no editor, mas devem 
                                   │
                        ┌──────────┼──────────┐
                        │          │          │
-                      Zig         C        Rust
+                      C++         C        Rust
                     Plugins    Plugins    Plugins
 
 
@@ -395,7 +396,7 @@ Hot reload e compilação em desenvolvimento podem existir no editor, mas devem 
 
                         TOOLCHAIN / EDITOR
                                   │
-                            Zig + Rust
+                            C++ + Rust
                                   │
              ┌────────────────────┼────────────────────┐
              │                    │                    │
@@ -407,7 +408,7 @@ Hot reload e compilação em desenvolvimento podem existir no editor, mas devem 
 
                              GAMEPLAY
                                   │
-                           Zig or Lua
+                           C++ or Lua
                                   │
                           Lua OPTIONAL
 ```
@@ -481,7 +482,8 @@ Engine/
 │   └── runtime/
 │
 ├── api/
-│   └── c/
+│   ├── c/
+│   └── cpp/
 │
 ├── shaders/
 │   ├── common/
@@ -519,7 +521,7 @@ Engine/
 ├── tests/
 ├── third_party/
 ├── docs/
-├── build.zig
+├── CMakeLists.txt
 └── README.md
 ```
 
@@ -1304,7 +1306,7 @@ Uma etapa só deve ser considerada concluída quando seu comportamento, seus cus
 
 ## v0.0.1
 
-Somente Zig no runtime + Slang para o primeiro shader.
+Somente C++ no runtime + Slang para o primeiro shader.
 
 ```text
 Core
@@ -1525,16 +1527,19 @@ Recursos caros devem possuir caminhos alternativos e/ou serem opcionais.
 
 ```text
 Runtime / Core / Renderer:
-Zig
+C++
 
 Public ABI / Plugin Boundary:
 C ABI
+
+C++ SDK / Public API:
+C++
 
 Offline Tools:
 Rust
 
 Gameplay Native:
-Zig
+C++
 
 Gameplay Scripting:
 Lua opcional
@@ -1549,6 +1554,9 @@ Future Graphics APIs:
 Direct3D 12
 Metal
 
+Build System:
+CMake + presets de toolchain
+
 Platforms:
 Windows
 Linux
@@ -1558,7 +1566,7 @@ macOS futuramente
 ## Responsabilidade de cada linguagem
 
 ```text
-Zig
+C++
 └── tudo que precisa ser extremamente leve, previsível e próximo do runtime
 
 C ABI
