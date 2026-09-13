@@ -2,7 +2,11 @@
 
 ## Objetivo
 
-Criar uma game engine moderna, extremamente leve, rápida e modular.
+Criar uma game engine moderna, extremamente leve, rápida, modular e visualmente avançada.
+
+A meta não é ser leve por possuir poucos recursos. A meta é entregar **qualidade visual de nível AAA com o menor custo possível de RAM, CPU, GPU, armazenamento e tempo de inicialização**.
+
+A engine deve conseguir escalar desde hardware modesto até máquinas high-end sem obrigar todos os projetos a carregar sistemas caros.
 
 A prioridade principal da engine será:
 
@@ -11,28 +15,39 @@ A prioridade principal da engine será:
 * inicialização extremamente rápida;
 * executáveis pequenos;
 * arquitetura moderna;
+* renderer moderno e escalável;
+* alta qualidade visual;
 * suporte a hardware moderno;
 * possibilidade de rodar em PCs fracos;
-* editor leve;
+* editor leve e responsivo;
 * sistemas completamente opcionais;
-* nenhum custo para recursos que não forem utilizados;
+* nenhum custo relevante para recursos que não forem utilizados;
 * controle explícito de memória;
 * alta performance;
-* fácil utilização para desenvolvedores de jogos.
+* fácil utilização para desenvolvedores de jogos;
+* ferramentas pesadas fora do runtime sempre que possível.
 
-A filosofia principal será:
+As duas filosofias centrais serão:
 
-> Zero custo quando um recurso não é utilizado.
+> You only pay for what you use.
 
-Se um jogo não usa física, Lua, networking, partículas ou outro sistema, esse código idealmente não deve nem existir no executável final.
+> Maximum visual quality per unit of hardware.
 
----
+Em português:
+
+> Você só paga pelo que usa.
+
+> Máxima qualidade visual pelo menor custo possível de hardware.
+
+Se um jogo não usa física, Lua, networking, ray tracing, volumetria, GI dinâmica, partículas ou outro sistema opcional, esse código idealmente não deve existir no executável final.
+
+A qualidade gráfica deve ser **escalável**, não obrigatoriamente pesada.
 
 # LINGUAGENS
 
 ## Zig
 
-Zig será a principal linguagem da engine.
+Zig será a principal linguagem da engine e do runtime.
 
 Responsável por:
 
@@ -45,11 +60,12 @@ Responsável por:
 * Threading
 * Job System
 * Renderer
+* RHI
 * Render Graph
 * Scene System
 * ECS
 * Asset Runtime
-* Animation
+* Animation Runtime
 * Audio Runtime
 * Physics Integration
 * Networking Runtime futuramente
@@ -61,17 +77,18 @@ Regra:
 
 > Tudo que roda dentro do jogo deve preferencialmente ser escrito em Zig.
 
-Objetivo:
+Objetivos:
 
-* nenhuma garbage collection;
-* nenhuma runtime pesada;
+* nenhuma garbage collection no core;
+* nenhuma runtime pesada obrigatória;
 * controle explícito de memória;
 * poucas alocações;
 * executáveis pequenos;
 * acesso direto às APIs do sistema;
-* desempenho previsível.
+* desempenho previsível;
+* fácil integração com C e APIs nativas.
 
----
+A versão do compilador Zig usada pelo projeto deverá ser **fixada/pinada** no repositório ou na configuração de toolchain. Atualizações de Zig devem ser deliberadas e testadas, nunca automáticas.
 
 # C
 
@@ -144,7 +161,7 @@ Possíveis ferramentas:
 Tools/
 ├── AssetCompiler/
 ├── TextureCompiler/
-├── ShaderCompiler/
+├── ShaderTooling/
 ├── ModelImporter/
 ├── AnimationCompiler/
 ├── AssetDatabase/
@@ -163,7 +180,7 @@ walk.fbx
 
         ↓
 
-Rust Asset Pipeline
+Rust Asset / Tool Pipeline
 
         ↓
 
@@ -253,57 +270,127 @@ Somente nesse caso Lua entra no executável.
 
 ---
 
+# SLANG
+
+Slang será a linguagem padrão para shaders da engine.
+
+Responsável por:
+
+* vertex shaders;
+* fragment/pixel shaders;
+* compute shaders;
+* ray tracing shaders futuramente;
+* bibliotecas compartilhadas de código GPU;
+* especialização e geração de variantes de shader.
+
+Objetivo principal:
+
+```text
+                 Slang
+                   │
+        ┌──────────┼──────────┐
+        │          │          │
+        ↓          ↓          ↓
+      SPIR-V      DXIL       Metal
+        │          │          │
+        ↓          ↓          ↓
+     Vulkan       D3D12      Metal
+```
+
+A engine deve evitar manter versões completamente separadas do mesmo shader para Vulkan, Direct3D 12 e Metal sempre que Slang puder fornecer uma base compartilhada.
+
+## Regra de compilação de shaders
+
+Shaders devem ser compilados **offline** sempre que possível.
+
+Pipeline preferido:
+
+```text
+Shader .slang
+    ↓
+Shader Compiler / Toolchain
+    ↓
+SPIR-V / DXIL / saída Metal
+    ↓
+Shader Cache / Pipeline Cache
+    ↓
+Runtime
+```
+
+O compilador Slang e ferramentas de compilação de shader **não devem ser dependências obrigatórias do jogo final**.
+
+Em builds de release, o runtime deve consumir shaders já compilados e preparados para a plataforma alvo.
+
+Hot reload e compilação em desenvolvimento podem existir no editor, mas devem permanecer fora do runtime final sempre que possível.
+
 # ARQUITETURA GERAL
 
 ```text
-                       GAME ENGINE
-                           │
-                           │
-                        ZIG CORE
-                           │
-       ┌───────────────────┼───────────────────┐
-       │                   │                   │
-     CORE               RENDERER             SCENE
-       │                   │                   │
-       │                   │                   │
-   Memory                Vulkan               ECS
-   Filesystem            D3D12                Transform
-   Jobs                  Metal                Hierarchy
-   Threading             Render Graph         Components
-   Logging               GPU Culling          Assets
-   Platform              Compute              Animation
-   Input                 PBR                  Physics
-   Timing                Bindless             Audio
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                           │
-                         C ABI
-                           │
-                ┌──────────┼──────────┐
-                │          │          │
-               Zig         C        Rust
-             Plugins    Plugins    Plugins
+                              GAME ENGINE
+                                  │
+                                  │
+                               ZIG CORE
+                                  │
+          ┌───────────────────────┼───────────────────────┐
+          │                       │                       │
+        CORE                   RENDERER                 SCENE
+          │                       │                       │
+      Memory                     RHI                     ECS
+      Filesystem              Render Graph             Transform
+      Jobs                    GPU Culling              Hierarchy
+      Threading               GPU Driven              Components
+      Logging                 PBR                     Assets
+      Platform                Lighting                Animation
+      Input                   Shadows                 Physics
+      Timing                  Post FX                 Audio
+          │                       │                       │
+          └───────────────────────┼───────────────────────┘
+                                  │
+                                C ABI
+                                  │
+                       ┌──────────┼──────────┐
+                       │          │          │
+                      Zig         C        Rust
+                    Plugins    Plugins    Plugins
 
 
-                    TOOLCHAIN / EDITOR
-                           │
-                     Zig + Rust
-                           │
-          ┌────────────────┼────────────────┐
-          │                │                │
-       Assets           Shaders          Build
-          │                │                │
-      Compiler          Compiler         Packager
-      Importer          Cache            Exporter
+                         GPU SHADER LAYER
+                                  │
+                                Slang
+                                  │
+                  ┌───────────────┼───────────────┐
+                  │               │               │
+                SPIR-V           DXIL          Metal target
+                  │               │               │
+                Vulkan           D3D12           Metal
 
 
-                         GAMEPLAY
-                            │
-                           Lua
-                        OPTIONAL
+                        TOOLCHAIN / EDITOR
+                                  │
+                            Zig + Rust
+                                  │
+             ┌────────────────────┼────────────────────┐
+             │                    │                    │
+           Assets               Shaders              Build
+             │                    │                    │
+         Compiler           Slang Compiler          Packager
+         Importer           Cache/Variants          Exporter
+
+
+                             GAMEPLAY
+                                  │
+                           Zig or Lua
+                                  │
+                          Lua OPTIONAL
 ```
 
----
+Separação fundamental:
+
+```text
+Editor / Toolchain ≠ Runtime final
+```
+
+O jogo exportado deve conter somente os módulos e dados necessários para sua execução.
 
 # ESTRUTURA DO PROJETO
 
@@ -327,9 +414,7 @@ Engine/
 │   │   └── macos/
 │   │
 │   ├── window/
-│   │
 │   ├── input/
-│   │
 │   ├── filesystem/
 │   │
 │   ├── renderer/
@@ -338,10 +423,17 @@ Engine/
 │   │   ├── d3d12/
 │   │   ├── metal/
 │   │   ├── render_graph/
+│   │   ├── gpu_driven/
+│   │   ├── visibility/
 │   │   ├── shaders/
 │   │   ├── materials/
 │   │   ├── lighting/
+│   │   ├── shadows/
 │   │   ├── pbr/
+│   │   ├── postfx/
+│   │   ├── upscaling/
+│   │   ├── volumetrics/
+│   │   ├── raytracing/
 │   │   └── gpu/
 │   │
 │   ├── scene/
@@ -351,24 +443,26 @@ Engine/
 │   │   └── hierarchy/
 │   │
 │   ├── ecs/
-│   │
 │   ├── assets/
-│   │
 │   ├── animation/
-│   │
 │   ├── audio/
-│   │
 │   ├── physics/
-│   │
 │   ├── scripting/
 │   │   └── lua/
-│   │
 │   ├── networking/
-│   │
 │   └── runtime/
 │
 ├── api/
 │   └── c/
+│
+├── shaders/
+│   ├── common/
+│   ├── materials/
+│   ├── lighting/
+│   ├── shadows/
+│   ├── postfx/
+│   ├── compute/
+│   └── raytracing/
 │
 ├── editor/
 │   ├── core/
@@ -383,6 +477,7 @@ Engine/
 ├── tools/
 │   ├── asset_compiler/
 │   ├── shader_compiler/
+│   ├── shader_cache/
 │   ├── texture_compiler/
 │   ├── model_importer/
 │   ├── animation_compiler/
@@ -391,23 +486,14 @@ Engine/
 │   └── build_tools/
 │
 ├── plugins/
-│
 ├── examples/
-│
 ├── benchmarks/
-│
 ├── tests/
-│
 ├── third_party/
-│
 ├── docs/
-│
 ├── build.zig
-│
 └── README.md
 ```
-
----
 
 # MEMORY SYSTEM
 
@@ -540,15 +626,19 @@ Isso permite detectar handles inválidos e entidades destruídas.
 
 # RENDERER
 
-O renderer será completamente desacoplado da API gráfica.
+O renderer é um dos sistemas centrais da engine.
 
-Não espalhar Vulkan pelo código da engine.
+A meta é alcançar **qualidade visual moderna/AAA sem transformar essa qualidade em custo obrigatório para todo projeto**.
+
+O renderer deve ser completamente desacoplado da API gráfica.
+
+Não espalhar Vulkan, Direct3D 12 ou Metal pelo código da engine.
 
 Evitar:
 
 ```text
 Scene
-    ↓
+  ↓
 vkCmdDraw()
 ```
 
@@ -556,11 +646,13 @@ Preferir:
 
 ```text
 Scene
-    ↓
+  ↓
 Renderer API
-    ↓
+  ↓
+Render Graph
+  ↓
 RHI
-    ↓
+  ↓
 Backend
 ```
 
@@ -575,13 +667,45 @@ Render Graph
       ↓
 RHI
       │
- ┌────┼────┐
- │    │    │
- ↓    ↓    ↓
-VK   DX12 Metal
+ ┌────┼─────┐
+ │    │     │
+ ↓    ↓     ↓
+VK   DX12  Metal
 ```
 
----
+A qualidade visual deve ser escalável por níveis e módulos.
+
+Exemplo conceitual:
+
+```text
+BASE
+├── PBR
+├── HDR
+├── Image Based Lighting
+├── Shadow Maps
+├── Forward+ / Clustered Lighting
+├── GPU Culling
+└── Instancing
+
+ADVANCED
+├── TAA
+├── Upscaling
+├── SSAO
+├── SSR
+├── Contact Shadows
+├── Volumetric Fog
+└── Improved Shadowing
+
+ULTRA / OPTIONAL
+├── Real-time Global Illumination
+├── Ray Traced Reflections
+├── Ray Traced Shadows
+├── Virtualized Geometry
+├── High-end Volumetrics
+└── Advanced Reconstruction/Upscaling
+```
+
+Os sistemas avançados não devem contaminar o custo do renderer básico quando estiverem desativados.
 
 # RHI
 
@@ -649,7 +773,17 @@ macOS
 └── Metal
 ```
 
----
+Shaders:
+
+```text
+Slang
+  │
+  ├── SPIR-V → Vulkan
+  ├── DXIL   → Direct3D 12
+  └── Metal target → Metal
+```
+
+O backend gráfico e o formato final do shader devem poder mudar sem obrigar os sistemas de cena, materiais e gameplay a conhecer detalhes específicos da API.
 
 # TECNOLOGIAS MODERNAS DE RENDERIZAÇÃO
 
@@ -658,22 +792,35 @@ A engine poderá evoluir para suportar:
 * Vulkan;
 * Direct3D 12;
 * Metal;
+* Slang para shaders;
 * GPU Driven Rendering;
 * Bindless Resources;
 * Indirect Drawing;
+* Multi-Draw Indirect;
 * Compute Shaders;
 * Async Compute;
 * Render Graph;
 * GPU Frustum Culling;
 * GPU Occlusion Culling;
+* Hi-Z / hierarchical depth quando útil;
 * PBR;
+* Image Based Lighting;
 * Forward+;
 * Clustered Lighting;
 * HDR;
+* Tone Mapping;
 * Temporal Anti-Aliasing;
-* Upscaling;
+* temporal reconstruction;
+* upscaling;
 * Instancing;
 * GPU particles;
+* Screen Space Reflections;
+* Ambient Occlusion;
+* Volumetric Fog;
+* Contact Shadows;
+* real-time GI futuramente;
+* ray tracing opcional;
+* virtualized geometry futuramente;
 * texture streaming;
 * mesh streaming;
 * asynchronous asset streaming.
@@ -682,9 +829,61 @@ Essas tecnologias devem ser adicionadas progressivamente.
 
 Tecnologia moderna não significa colocar tudo dentro da engine.
 
-Cada recurso deve justificar seu custo.
+Cada recurso deve justificar seu custo em:
 
----
+* CPU;
+* GPU;
+* VRAM;
+* RAM;
+* tamanho do executável;
+* complexidade;
+* tempo de build;
+* manutenção.
+
+## Princípio visual
+
+A pergunta principal não deve ser:
+
+> Como colocar o maior número de efeitos?
+
+A pergunta deve ser:
+
+> Qual técnica entrega a maior melhoria visual pelo menor custo possível?
+
+A engine deve buscar alta **qualidade visual por unidade de hardware**.
+
+## Escalabilidade gráfica
+
+Um mesmo projeto deve poder utilizar caminhos diferentes dependendo do hardware.
+
+Exemplo:
+
+```text
+PC FRACO
+├── Baked Lighting
+├── Probes
+├── PBR
+├── Shadow Maps
+└── efeitos leves
+
+PC MÉDIO
+├── PBR
+├── Forward+ / Clustered
+├── SSAO
+├── SSR
+├── TAA
+└── Volumetrics moderada
+
+PC HIGH-END
+├── Real-time GI
+├── Ray Tracing opcional
+├── Advanced Reflections
+├── High-end Volumetrics
+├── Virtualized Geometry
+└── Advanced Upscaling/Reconstruction
+```
+
+A engine deve permanecer a mesma. O custo muda conforme os recursos utilizados.
 
 # PLATFORM LAYER
 
@@ -740,6 +939,7 @@ GLTF
 FBX
 WAV
 OGG
+SLANG
 etc.
 ```
 
@@ -749,21 +949,15 @@ Pipeline:
 
 ```text
 Arquivo original
-
-        ↓
-
-Asset Importer
-
-        ↓
-
+      ↓
+Asset Importer / Shader Compiler
+      ↓
 Asset Compiler
-
-        ↓
-
-Asset otimizado
-
-        ↓
-
+      ↓
+Otimização / Compressão / Conversão
+      ↓
+Asset otimizado / Shader compilado
+      ↓
 Runtime
 ```
 
@@ -771,19 +965,27 @@ Exemplo:
 
 ```text
 dragon.glb
-     ↓
+    ↓
 dragon.mesh
 ```
 
 ```text
 dragon.png
-     ↓
+    ↓
 dragon.texture
+```
+
+```text
+lighting.slang
+    ↓
+SPIR-V / DXIL / Metal target
+    ↓
+shader cache
 ```
 
 O runtime deve fazer o mínimo possível.
 
----
+Importação, conversão, compressão, compilação e geração de variantes devem ocorrer offline sempre que isso melhorar o runtime.
 
 # EDITOR
 
@@ -807,10 +1009,14 @@ O jogo exportado não deve carregar:
 * editor UI;
 * project manager;
 * importadores;
+* compilador Slang;
 * shader compiler;
+* asset compiler;
 * debug tools que não forem necessários.
 
----
+O editor deve continuar visualmente moderno e agradável, mas beleza da interface não pode justificar desperdício sistemático de memória ou CPU.
+
+A viewport do editor deve utilizar o mesmo renderer da engine para que a prévia represente corretamente o resultado final.
 
 # META DE EDITOR
 
@@ -871,16 +1077,21 @@ Exemplo:
 
 ```text
 [✓] Renderer 3D
+[✓] PBR
 [✓] Audio
 [✓] Physics
 [✓] Animation
+[✓] TAA
 
 [ ] Renderer 2D
 [ ] Lua
 [ ] Networking
 [ ] Video
 [ ] Navigation
+[ ] Volumetrics
+[ ] Real-time GI
 [ ] Ray Tracing
+[ ] Virtualized Geometry
 ```
 
 Build final:
@@ -890,9 +1101,11 @@ Game.exe
 
 Core
 Renderer3D
+PBR
 Audio
 Physics
 Animation
+TAA
 ```
 
 Não incluído:
@@ -903,14 +1116,18 @@ Networking
 2D
 Video
 Navigation
+Volumetrics
+Real-time GI
 Ray Tracing
+Virtualized Geometry
+Slang compiler
+Editor
+Asset compiler
 ```
 
 Não apenas desativado.
 
-Não compilado.
-
----
+Não compilado ou não empacotado sempre que tecnicamente possível.
 
 # PRINCÍPIO
 
@@ -924,9 +1141,23 @@ Ou:
 Você só paga pelo que usa.
 ```
 
-Essa será uma das regras centrais da arquitetura.
+Segundo princípio:
 
----
+```text
+Maximum Visual Quality Per Unit of Hardware
+```
+
+Ou:
+
+```text
+Máxima qualidade visual pelo menor custo possível.
+```
+
+Essas serão regras centrais da arquitetura.
+
+A engine não deve escolher entre ser bonita e ser leve.
+
+Ela deve buscar as duas coisas através de arquitetura, escalabilidade e modularidade.
 
 # PERFORMANCE BUDGET
 
@@ -1041,7 +1272,7 @@ Não começar fazendo tudo.
 
 ## v0.0.1
 
-Somente Zig.
+Somente Zig no runtime + Slang para o primeiro shader.
 
 ```text
 Core
@@ -1050,25 +1281,25 @@ Platform
 Window
 Input
 Renderer
+RHI inicial
+Vulkan
+Shader pipeline mínimo
 ```
 
 Objetivo:
 
 ```text
 Abrir janela
-
 Inicializar GPU
-
+Compilar/preparar shader de desenvolvimento
+Carregar shader compilado
 Limpar tela
-
 Renderizar triângulo
-
 Receber input
-
 Fechar corretamente
 ```
 
----
+A primeira versão já deve estabelecer a separação entre código CPU/runtime e código GPU/shader.
 
 # v0.0.2
 
@@ -1082,21 +1313,22 @@ Camera
 Mesh
 Texture
 Basic Asset Loading
+Material básico
+PBR inicial
 ```
 
 Objetivo:
 
 ```text
 Abrir engine
-
 Carregar modelo
-
 Criar câmera
-
+Aplicar material
+Iluminar cena básica
 Renderizar modelo
 ```
 
----
+A prioridade visual nesta fase é obter uma base PBR correta antes de efeitos complexos.
 
 # v0.0.3
 
@@ -1105,13 +1337,20 @@ Adicionar:
 ```text
 ECS
 Materials
-Shaders
+Slang shader library
+Shader variants/cache
 Lighting
+IBL
+Shadows
+HDR
+Tone Mapping
 Asset System
 C ABI
 ```
 
----
+Objetivo:
+
+Criar a primeira base visual realmente sólida da engine sem introduzir recursos AAA de alto custo antes da infraestrutura necessária.
 
 # v0.0.4
 
@@ -1119,12 +1358,14 @@ Adicionar ferramentas Rust:
 
 ```text
 Asset Compiler
-Shader Compiler
+Shader Tooling
 Texture Compiler
 Model Importer
+Animation Compiler inicial
+Packager inicial
 ```
 
----
+O pipeline deve gerar dados prontos para consumo eficiente pelo runtime.
 
 # v0.0.5
 
@@ -1138,9 +1379,12 @@ Hierarchy
 Inspector
 Asset Browser
 Console
+Profiler
+Material inspection
+Shader hot reload em desenvolvimento
 ```
 
----
+O compilador e ferramentas de shader continuam componentes de desenvolvimento/editor, não do jogo final.
 
 # v0.1
 
@@ -1153,33 +1397,30 @@ Audio
 Animation
 Project System
 Build / Export
+Forward+ ou Clustered Lighting
+TAA
+SSAO
+primeiros efeitos de pós-processamento
 ```
 
 Objetivo:
 
 ```text
 Abrir editor
-
 Criar projeto
-
 Importar modelo
-
 Arrastar para cena
-
 Criar luz
-
 Criar câmera
-
+Criar material PBR
 Adicionar script
-
 Pressionar Play
-
 Exportar jogo
 ```
 
 Quando isso funcionar corretamente, a engine já pode ser considerada funcional.
 
----
+Recursos como GI dinâmica, ray tracing, virtualized geometry e volumetria avançada ficam para versões posteriores, depois de profiling e estabilidade da base.
 
 # FILOSOFIA FINAL
 
@@ -1187,6 +1428,8 @@ A engine deve seguir os seguintes princípios:
 
 ```text
 LIGHTWEIGHT
+
+VISUALLY ADVANCED
 
 FAST
 
@@ -1206,38 +1449,54 @@ ZERO-COST OPTIONAL FEATURES
 
 MODERN GRAPHICS
 
+SCALABLE GRAPHICS
+
 MULTITHREADED
 
 GPU DRIVEN
 
 EXPLICIT MEMORY
 
+OFFLINE ASSET PROCESSING
+
+OFFLINE SHADER COMPILATION
+
 CROSS PLATFORM
 
 SIMPLE FOR DEVELOPERS
 ```
 
----
+A qualidade visual não deve depender de tornar todo projeto pesado.
+
+Recursos caros devem possuir caminhos alternativos e/ou serem opcionais.
 
 # STACK OFICIAL
 
 ```text
-Runtime:
+Runtime / Core / Renderer:
 Zig
 
-Public ABI:
-C
+Public ABI / Plugin Boundary:
+C ABI
 
 Offline Tools:
 Rust
 
-Gameplay Scripting:
-Lua
+Gameplay Native:
+Zig
 
-Graphics:
+Gameplay Scripting:
+Lua opcional
+
+GPU Shaders:
+Slang
+
+Primary Graphics API:
 Vulkan
-Direct3D 12 futuramente
-Metal futuramente
+
+Future Graphics APIs:
+Direct3D 12
+Metal
 
 Platforms:
 Windows
@@ -1245,7 +1504,26 @@ Linux
 macOS futuramente
 ```
 
----
+## Responsabilidade de cada linguagem
+
+```text
+Zig
+└── tudo que precisa ser extremamente leve, previsível e próximo do runtime
+
+C ABI
+└── fronteira estável para plugins e interoperabilidade
+
+Rust
+└── ferramentas offline, compiladores, importadores e pipeline pesado
+
+Lua
+└── scripting de gameplay opcional
+
+Slang
+└── código executado na GPU e geração multiplataforma de shaders
+```
+
+Nenhuma linguagem deve ser adicionada ao projeto apenas por preferência. Ela precisa resolver um problema concreto.
 
 # REGRA MAIS IMPORTANTE
 
@@ -1258,31 +1536,49 @@ Antes de adicionar qualquer recurso perguntar:
 
 3. Quanto de CPU isso utiliza?
 
-4. Quanto aumenta o executável?
+4. Quanto de GPU isso utiliza?
 
-5. Quanto aumenta o startup?
+5. Quanto de VRAM isso utiliza?
 
-6. Pode ser opcional?
+6. Quanto aumenta o executável?
 
-7. Pode ser removido completamente do build?
+7. Quanto aumenta o startup?
 
-8. Pode ser feito de forma mais simples?
+8. Pode ser opcional?
+
+9. Pode ser removido completamente do build?
+
+10. Pode ser feito offline?
+
+11. Existe um caminho mais barato para hardware fraco?
+
+12. Quanto melhora a qualidade visual ou a experiência?
+
+13. Pode ser feito de forma mais simples?
 ```
 
 Se a resposta não justificar o custo, o recurso deve ser reconsiderado.
 
----
+Para recursos gráficos, avaliar sempre a relação:
+
+```text
+melhoria visual
+───────────────
+custo total
+```
+
+A engine deve buscar maximizar essa relação.
 
 # VISÃO
 
-Criar uma game engine moderna que tenha recursos suficientes para desenvolver jogos atuais, mas sem seguir a tendência de engines cada vez maiores e mais pesadas.
+Criar uma game engine moderna capaz de produzir jogos visualmente impressionantes, inclusive com qualidade comparável a engines AAA, sem seguir a tendência de transformar todo projeto e todo editor em software pesado.
 
 O objetivo será permitir algo como:
 
 ```text
-Engine abre imediatamente.
+Engine abre rapidamente.
 
-Projeto abre imediatamente.
+Projeto abre rapidamente.
 
 Pouca RAM em idle.
 
@@ -1290,13 +1586,44 @@ Runtime pequeno.
 
 Jogo começa rapidamente.
 
-Somente sistemas necessários são compilados.
+Somente sistemas necessários são compilados ou empacotados.
 
-Hardware fraco consegue utilizar o editor.
+Shaders são preparados offline.
 
-Hardware poderoso consegue aproveitar tecnologias modernas.
+Hardware fraco consegue utilizar o editor e caminhos gráficos mais leves.
+
+Hardware médio consegue atingir ótima qualidade visual com técnicas eficientes.
+
+Hardware poderoso consegue ativar tecnologias gráficas avançadas.
+```
+
+Visão de escalabilidade:
+
+```text
+LOW-END
+   ↓
+boa qualidade visual
+baixo custo
+
+MID-RANGE
+   ↓
+qualidade visual excelente
+técnicas modernas eficientes
+
+HIGH-END
+   ↓
+qualidade AAA
+GI / RT / volumetria / reconstrução avançada opcionais
 ```
 
 A engine não deve ser leve porque possui poucos recursos.
 
 Ela deve ser leve porque sua arquitetura foi projetada para eficiência.
+
+A engine não deve ser bonita porque desperdiça hardware.
+
+Ela deve ser bonita porque o renderer utiliza técnicas modernas de forma inteligente.
+
+Objetivo final:
+
+> A beleza de uma engine AAA com uma arquitetura construída desde o início para ser leve, escalável e modular.
