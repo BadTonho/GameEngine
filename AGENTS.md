@@ -22,7 +22,7 @@ Before editing code, the agent must:
 4. Check whether the requested functionality already exists.
 5. Read relevant documentation before introducing a new pattern.
 6. Read `Ideia.md` when the task affects architecture, language choice, rendering, memory, runtime structure, tooling or public APIs.
-7. Verify the exact target files and directories before editing, and confirm afterward that no unrelated files were changed.
+7. Before and after every alteration, inspect the relevant new or changed files for sensitive information that must never reach the public repository.
 
 Do not make architectural assumptions without first checking the repository.
 
@@ -98,7 +98,7 @@ Do not replace working systems purely because another implementation is preferre
 
 Large refactors require a clear technical reason.
 
-Before considering a task complete, inspect the repository status and the diff for the exact target files. If files outside the requested scope were modified, stop and investigate instead of leaving unrelated changes in the worktree.
+Before considering a task complete, inspect the repository status and the full diff for sensitive information. Confirm that no secrets, credentials, personal data or machine-specific information was introduced or exposed. If suspicious content is found, stop and investigate instead of leaving it in the worktree.
 
 ---
 
@@ -602,7 +602,18 @@ unless the repository intentionally tracks them.
 
 Respect `.gitignore`.
 
-Do not add secrets, tokens, credentials or machine-specific paths.
+This repository is intended to be public. Treat every file that could be tracked or committed as publicly visible.
+
+Before editing and again before considering a task complete, inspect new and changed files for:
+
+- passwords, API tokens, access keys, credentials and private keys;
+- certificates, `.env` values and authentication material;
+- personal data or private user/project information;
+- internal URLs, IP addresses or infrastructure details;
+- machine-specific absolute paths, logs, dumps and local configuration;
+- any other information that should not be published to GitHub.
+
+Never copy sensitive values into source files, documentation, examples, comments, test fixtures, logs or tool output. If pre-existing sensitive content is discovered, do not publish, repeat or expose it; stop and report the issue.
 
 ---
 
@@ -808,7 +819,7 @@ Before considering a task complete, check as applicable:
 [ ] shader pipeline rules respected
 [ ] performance-sensitive changes measured when practical
 [ ] documentation updated when needed
-[ ] target files and directories verified before and after editing
+[ ] new and changed files and the final diff checked for sensitive information
 [ ] documentation is stored in the appropriate location and remains organized
 [ ] no unnecessary monolithic file or module was introduced
 [ ] no unrelated files changed
