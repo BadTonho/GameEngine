@@ -1,6 +1,6 @@
 # GameEngine Roadmap
 
-This document turns the vision in `Ideia.md` into an execution sequence. The goal is to build a public, modern and efficient C++ game engine that can evolve for many years.
+This document turns the vision in `Idea.md` into an execution sequence. The goal is to build a public, modern and efficient C++ game engine that can evolve for many years.
 
 The roadmap does not define deadlines. Each phase is a technical milestone. A phase may take as long as necessary, be split into several prototypes, or return for revision when tests show that a decision was wrong.
 

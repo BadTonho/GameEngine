@@ -4,9 +4,9 @@
 
 This file defines how AI coding agents must behave when working in this repository.
 
-The project architecture, goals, technology choices and long-term vision are documented in `Ideia.md`.
+The project architecture, goals, technology choices and long-term vision are documented in `Idea.md`.
 
-Agents must read `Ideia.md` before making architectural decisions.
+Agents must read `Idea.md` before making architectural decisions.
 
 This file is not the engine design document.
 
@@ -21,7 +21,7 @@ Before editing code, the agent must:
 3. Check existing naming and coding conventions.
 4. Check whether the requested functionality already exists.
 5. Read relevant documentation before introducing a new pattern.
-6. Read `Ideia.md` when the task affects architecture, language choice, rendering, memory, runtime structure, tooling or public APIs.
+6. Read `Idea.md` when the task affects architecture, language choice, rendering, memory, runtime structure, tooling or public APIs.
 7. After completing alterations, inspect the relevant new or changed files and the final diff for sensitive information before the changes are ready for the user's commit.
 
 Do not make architectural assumptions without first checking the repository.
@@ -32,7 +32,7 @@ Do not make architectural assumptions without first checking the repository.
 
 Do not redesign the project unless the user explicitly requests it.
 
-The agent must preserve the architecture defined by the repository and `Ideia.md`.
+The agent must preserve the architecture defined by the repository and `Idea.md`.
 
 In particular, do not silently replace or change:
 
@@ -476,7 +476,7 @@ Update documentation when a change alters:
 
 Do not copy the whole architecture into `AGENTS.md`.
 
-Architecture belongs in `Ideia.md` or the appropriate design document.
+Architecture belongs in `Idea.md` or the appropriate design document.
 
 Documentation must remain organized and easy to navigate:
 
@@ -573,7 +573,7 @@ Do not split code into arbitrary tiny files merely to increase the file count. P
 
 Do not change C++ as the primary runtime language or introduce additional implementation languages without a concrete reason.
 
-Current intended roles are defined in `Ideia.md`.
+Current intended roles are defined in `Idea.md`.
 
 In particular, do not introduce into core/runtime code merely out of preference:
 
@@ -753,7 +753,7 @@ Do not permanently penalize low-end configurations for high-end rendering featur
 The agent must not:
 
 - silently redesign the engine;
-- ignore `Ideia.md`;
+- ignore `Idea.md`;
 - add unrelated features;
 - introduce large dependencies without justification;
 - add a new runtime language by preference;
@@ -829,7 +829,7 @@ Before considering a task complete, check as applicable:
 
 # 40. Final Rule
 
-`Ideia.md` defines what this engine is intended to become.
+`Idea.md` defines what this engine is intended to become.
 
 `AGENTS.md` defines how an AI agent must work while helping build it.
 
@@ -837,6 +837,6 @@ When there is a conflict:
 
 1. Follow the user's explicit current instruction.
 2. Preserve correctness and safety.
-3. Follow `Ideia.md` for project architecture.
+3. Follow `Idea.md` for project architecture.
 4. Follow `AGENTS.md` for agent behavior.
 5. Follow existing repository conventions when no higher-priority rule applies.

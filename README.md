@@ -19,7 +19,7 @@ The project is intended to grow into:
 - optional systems whose cost is explicit and proportional to their use;
 - a small C ABI for binary plugins and cross-language integration.
 
-The complete direction is documented in [Ideia.md](Ideia.md). The implementation sequence is tracked in [ROADMAP.md](ROADMAP.md).
+The complete direction is documented in [Idea.md](Idea.md). The implementation sequence is tracked in [ROADMAP.md](ROADMAP.md).
 
 ## Current status
 
@@ -160,29 +160,11 @@ CTest currently runs two checks:
 
 Build directories, compiler output, IDE files and local configuration are excluded by [.gitignore](.gitignore).
 
-## Repository layout
-
-```text
-Ideia.md                 Long-term architecture and project vision
-ROADMAP.md               Phases, milestones and acceptance criteria
-CMakeLists.txt           Official build definition
-CMakePresets.json        Supported local build configurations
-src/engine/core/         Core runtime library
-src/runtime/             Runtime entry point
-tests/                   Tests without an external framework
-.github/workflows/       Continuous integration
-docs/                    Future user and subsystem documentation
-tools/                   Future offline tooling
-editor/                  Future editor code
-```
-
-Only directories with real source files are created at this stage. Future directories are listed to explain the intended boundaries, not to imply that those systems already exist.
-
 ## Contributing
 
 The project is being built deliberately and incrementally. Before opening an issue or pull request:
 
-1. read [Ideia.md](Ideia.md) and the current [ROADMAP.md](ROADMAP.md);
+1. read [Idea.md](Idea.md) and the current [ROADMAP.md](ROADMAP.md);
 2. check whether the proposed work belongs in the current phase;
 3. keep runtime, editor and offline tooling boundaries separate;
 4. run the relevant CMake build and CTest preset;

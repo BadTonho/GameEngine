@@ -4,7 +4,7 @@ Thank you for your interest in contributing. GameEngine is a long-term public pr
 
 ## Before starting
 
-1. Read [Ideia.md](Ideia.md) for the project direction.
+1. Read [Idea.md](Idea.md) for the project direction.
 2. Read [ROADMAP.md](ROADMAP.md) to find the current phase.
 3. Search existing issues and code before starting a new implementation.
 4. For architectural changes, explain the trade-off before implementing them.
