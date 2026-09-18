@@ -6,7 +6,7 @@ The roadmap does not define deadlines. Each phase is a technical milestone. A ph
 
 ## Current status
 
-The repository completed the Phase 2 rendering foundation and Phase 3 shader pipeline. The public foundation, X11/Win32 platform paths, Vulkan RHI, resource uploads, deferred destruction, swapchain, triangle smoke path and offline Slang pipeline are implemented locally. Phase 4 is the next milestone.
+The repository completed Phase 2 and Phase 3 and is implementing the first Phase 4 vertical slice. The public foundation, X11/Win32 platform paths, Vulkan RHI, resource uploads, deferred destruction, swapchain, offline Slang pipeline, internal 3D math, indexed cube and Vulkan depth path are implemented locally.
 
 ## Evolution rules
 
@@ -155,18 +155,26 @@ Goal: move beyond the triangle and render a small scene with correct visual foun
 
 ### Tasks
 
-- [ ] Create a camera and transformations.
-- [ ] Create vertex and index buffers.
+- [x] Create a camera and transformations.
+- [x] Create vertex and index buffers.
 - [ ] Load a prepared mesh.
 - [ ] Load a texture and sampler.
 - [ ] Create a basic material.
-- [ ] Create a depth buffer and depth testing.
+- [x] Create a depth buffer and depth testing.
 - [ ] Create basic lighting.
 - [ ] Implement initial PBR.
 - [ ] Implement HDR and tone mapping.
 - [ ] Create a small reference scene.
 - [ ] Measure CPU, GPU, RAM, VRAM, draw calls and startup.
 - [ ] Add a reference capture for visual regression detection.
+
+### Phase 4 vertical slice validation
+
+- [x] Implement custom `Vec3`/`Mat4` math with right-handed Vulkan `0..1` depth projection.
+- [x] Render a deterministic procedural indexed cube with a static camera.
+- [x] Use push constants for the 64-byte view-projection matrix.
+- [x] Validate Debug and Release builds, shader regeneration and CTest locally.
+- [ ] Add prepared mesh, texture, material, lighting, PBR, HDR and reference capture systems.
 
 ### Completion criteria
 

@@ -171,6 +171,16 @@ if(GAMEENGINE_BUILD_TESTS)
     gameengine_configure_target(gameengine_shader_tests)
     add_test(NAME gameengine_shaders COMMAND gameengine_shader_tests)
 
+    add_executable(gameengine_math_tests
+        tests/math_tests.cpp
+    )
+    target_link_libraries(gameengine_math_tests PRIVATE gameengine_core)
+    target_include_directories(gameengine_math_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    gameengine_configure_target(gameengine_math_tests)
+    add_test(NAME gameengine_math COMMAND gameengine_math_tests)
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         find_program(GAMEENGINE_XVFB_RUN xvfb-run)
 
@@ -276,6 +286,7 @@ if(GAMEENGINE_BUILD_TESTS)
     set_tests_properties(gameengine_core PROPERTIES LABELS "unit")
     set_tests_properties(gameengine_rhi PROPERTIES LABELS "rhi")
     set_tests_properties(gameengine_shaders PROPERTIES LABELS "shader")
+    set_tests_properties(gameengine_math PROPERTIES LABELS "unit")
     if(TEST gameengine_shader_pipeline)
         set_tests_properties(gameengine_shader_pipeline PROPERTIES LABELS "shader")
     endif()

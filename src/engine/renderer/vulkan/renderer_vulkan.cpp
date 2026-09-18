@@ -22,10 +22,12 @@
 #endif
 
 #include "engine/core/diagnostics.hpp"
+#include "engine/math/math.hpp"
 #include "engine/renderer/vulkan/shader_pipeline.hpp"
 #include "engine/renderer/vulkan/triangle_shaders.hpp"
 #include "engine/renderer/vulkan/vulkan_pipeline_cache.hpp"
 #include "engine/renderer/vulkan/vulkan_utils.hpp"
+#include "engine/scene/bootstrap_cube.hpp"
 
 #include <algorithm>
 #include <array>
@@ -155,6 +157,10 @@ struct Renderer::Impl final {
     std::vector<VkImageView> swapchain_image_views;
     VkFormat swapchain_format = VK_FORMAT_UNDEFINED;
     VkExtent2D swapchain_extent{};
+    VkFormat depth_format = VK_FORMAT_UNDEFINED;
+    VkImage depth_image = VK_NULL_HANDLE;
+    VkDeviceMemory depth_memory = VK_NULL_HANDLE;
+    VkImageView depth_image_view = VK_NULL_HANDLE;
     VkRenderPass render_pass = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
@@ -180,8 +186,9 @@ struct Renderer::Impl final {
     const renderer::vulkan::ShaderArtifact* vertex_shader_artifact = nullptr;
     const renderer::vulkan::ShaderArtifact* fragment_shader_artifact = nullptr;
     bool shader_hot_reload_enabled = false;
-    rhi::BufferHandle triangle_buffer{};
-    rhi::PipelineHandle triangle_pipeline{};
+    rhi::BufferHandle cube_vertex_buffer{};
+    rhi::BufferHandle cube_index_buffer{};
+    rhi::PipelineHandle cube_pipeline{};
     PFN_vkSetDebugUtilsObjectNameEXT set_debug_utils_object_name = nullptr;
     PFN_vkCmdBeginDebugUtilsLabelEXT cmd_begin_debug_utils_label = nullptr;
     PFN_vkCmdEndDebugUtilsLabelEXT cmd_end_debug_utils_label = nullptr;
@@ -224,11 +231,13 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status recreate_swapchain(platform::WindowSize window_size) noexcept;
     [[nodiscard]] core::Status create_swapchain(platform::WindowSize window_size) noexcept;
     [[nodiscard]] core::Status create_image_views() noexcept;
+    [[nodiscard]] VkFormat find_depth_format() const noexcept;
+    [[nodiscard]] core::Status create_depth_resources() noexcept;
     [[nodiscard]] core::Status create_render_pass() noexcept;
     [[nodiscard]] core::Status create_framebuffers() noexcept;
     [[nodiscard]] core::Status create_command_buffers() noexcept;
     [[nodiscard]] core::Status create_sync_objects() noexcept;
-    [[nodiscard]] core::Status create_triangle_resources() noexcept;
+    [[nodiscard]] core::Status create_bootstrap_cube_resources() noexcept;
     [[nodiscard]] core::Status rebuild_pipelines() noexcept;
     [[nodiscard]] core::Status build_pipeline_object(const PipelineSlot& slot,
                                                      VkPipeline& pipeline) noexcept;
@@ -410,7 +419,7 @@ core::Status Renderer::Impl::initialize(
     if (!status) {
         return status;
     }
-    status = create_triangle_resources();
+    status = create_bootstrap_cube_resources();
     if (!status) {
         return status;
     }
@@ -486,8 +495,9 @@ void Renderer::Impl::shutdown() noexcept
     vertex_shader_artifact = nullptr;
     fragment_shader_artifact = nullptr;
     shader_hot_reload_enabled = false;
-    triangle_buffer = {};
-    triangle_pipeline = {};
+    cube_vertex_buffer = {};
+    cube_index_buffer = {};
+    cube_pipeline = {};
     validation_error = false;
 }
 
@@ -946,15 +956,19 @@ core::Status Renderer::Impl::create_swapchain(platform::WindowSize window_size) 
     if (!status) {
         return status;
     }
+    status = create_depth_resources();
+    if (!status) {
+        return status;
+    }
     status = create_render_pass();
     if (!status) {
         return status;
     }
-    if (triangle_pipeline.valid()) {
+    if (cube_pipeline.valid()) {
         status = rebuild_pipelines();
     } else {
         rhi::GraphicsPipelineDescription description{};
-        status = create_graphics_pipeline(description, triangle_pipeline);
+        status = create_graphics_pipeline(description, cube_pipeline);
     }
     if (!status) {
         return status;
@@ -1002,6 +1016,86 @@ core::Status Renderer::Impl::create_image_views() noexcept
     return core::Status{};
 }
 
+VkFormat Renderer::Impl::find_depth_format() const noexcept
+{
+    constexpr std::array<VkFormat, 3> candidates = {
+        VK_FORMAT_D32_SFLOAT,
+        VK_FORMAT_D24_UNORM_S8_UINT,
+        VK_FORMAT_D16_UNORM,
+    };
+    for (const VkFormat candidate : candidates) {
+        VkFormatProperties properties{};
+        vkGetPhysicalDeviceFormatProperties(physical_device, candidate, &properties);
+        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) !=
+            0U) {
+            return candidate;
+        }
+    }
+    return VK_FORMAT_UNDEFINED;
+}
+
+core::Status Renderer::Impl::create_depth_resources() noexcept
+{
+    depth_format = find_depth_format();
+    if (depth_format == VK_FORMAT_UNDEFINED) {
+        return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+    }
+
+    VkImageCreateInfo image_info{};
+    image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = depth_format;
+    image_info.extent = {swapchain_extent.width, swapchain_extent.height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(device, &image_info, nullptr, &depth_image) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+    }
+
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device, depth_image, &requirements);
+    std::uint32_t memory_type = 0;
+    core::Status status = find_memory_type(requirements.memoryTypeBits,
+                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                           memory_type);
+    if (!status) {
+        return status;
+    }
+
+    VkMemoryAllocateInfo allocation_info{};
+    allocation_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocation_info.allocationSize = requirements.size;
+    allocation_info.memoryTypeIndex = memory_type;
+    if (vkAllocateMemory(device, &allocation_info, nullptr, &depth_memory) != VK_SUCCESS ||
+        vkBindImageMemory(device, depth_image, depth_memory, 0) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+    }
+
+    VkImageViewCreateInfo view_info{};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = depth_image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = depth_format;
+    view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    view_info.subresourceRange.levelCount = 1;
+    view_info.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(device, &view_info, nullptr, &depth_image_view) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+    }
+    set_debug_name(VK_OBJECT_TYPE_IMAGE,
+                   reinterpret_cast<std::uint64_t>(depth_image),
+                   "GameEngine.DepthImage");
+    set_debug_name(VK_OBJECT_TYPE_IMAGE_VIEW,
+                   reinterpret_cast<std::uint64_t>(depth_image_view),
+                   "GameEngine.DepthImageView");
+    return core::Status{};
+}
+
 core::Status Renderer::Impl::create_render_pass() noexcept
 {
     VkAttachmentDescription color_attachment{};
@@ -1014,26 +1108,49 @@ core::Status Renderer::Impl::create_render_pass() noexcept
     color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+    VkAttachmentDescription depth_attachment{};
+    depth_attachment.format = depth_format;
+    depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
     VkAttachmentReference color_reference{};
     color_reference.attachment = 0;
     color_reference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference depth_reference{};
+    depth_reference.attachment = 1;
+    depth_reference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &color_reference;
+    subpass.pDepthStencilAttachment = &depth_reference;
 
     VkSubpassDependency dependency{};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                               VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                               VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    const std::array<VkAttachmentDescription, 2> attachments = {
+        color_attachment,
+        depth_attachment,
+    };
 
     VkRenderPassCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    create_info.attachmentCount = 1;
-    create_info.pAttachments = &color_attachment;
+    create_info.attachmentCount = static_cast<std::uint32_t>(attachments.size());
+    create_info.pAttachments = attachments.data();
     create_info.subpassCount = 1;
     create_info.pSubpasses = &subpass;
     create_info.dependencyCount = 1;
@@ -1062,7 +1179,7 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
                                                     VkPipeline& pipeline) noexcept
 {
     pipeline = VK_NULL_HANDLE;
-    if (slot.description.vertex_layout != rhi::PipelineVertexLayout::position2_color3) {
+    if (slot.description.vertex_layout != rhi::PipelineVertexLayout::position3_color3) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
     if (vertex_shader_artifact == nullptr || fragment_shader_artifact == nullptr ||
@@ -1088,11 +1205,14 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
 
     VkVertexInputBindingDescription vertex_binding{};
     vertex_binding.binding = 0;
-    vertex_binding.stride = sizeof(float) * 5;
+    vertex_binding.stride = sizeof(scene::ColoredVertex);
     vertex_binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
     const std::array<VkVertexInputAttributeDescription, 2> vertex_attributes = {
-        VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32_SFLOAT, 0},
-        VkVertexInputAttributeDescription{1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(float) * 2},
+        VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
+        VkVertexInputAttributeDescription{1,
+                                          0,
+                                          VK_FORMAT_R32G32B32_SFLOAT,
+                                          sizeof(math::Vec3)},
     };
     VkPipelineShaderStageCreateInfo vertex_stage{};
     vertex_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1141,6 +1261,12 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+    VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+    depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_stencil.depthTestEnable = VK_TRUE;
+    depth_stencil.depthWriteEnable = VK_TRUE;
+    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
+
     VkPipelineColorBlendAttachmentState color_blend_attachment{};
     color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
                                              VK_COLOR_COMPONENT_G_BIT |
@@ -1162,8 +1288,14 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
 
     bool created_layout = false;
     if (pipeline_layout == VK_NULL_HANDLE) {
+        VkPushConstantRange push_constant_range{};
+        push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        push_constant_range.offset = 0;
+        push_constant_range.size = sizeof(math::Mat4);
         VkPipelineLayoutCreateInfo layout_info{};
         layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layout_info.pushConstantRangeCount = 1;
+        layout_info.pPushConstantRanges = &push_constant_range;
         if (vkCreatePipelineLayout(device, &layout_info, nullptr, &pipeline_layout) != VK_SUCCESS) {
             vkDestroyShaderModule(device, vertex_shader, nullptr);
             vkDestroyShaderModule(device, fragment_shader, nullptr);
@@ -1181,6 +1313,7 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
     pipeline_info.pViewportState = &viewport_state;
     pipeline_info.pRasterizationState = &rasterizer;
     pipeline_info.pMultisampleState = &multisampling;
+    pipeline_info.pDepthStencilState = &depth_stencil;
     pipeline_info.pColorBlendState = &color_blending;
     pipeline_info.pDynamicState = &dynamic_state;
     pipeline_info.layout = pipeline_layout;
@@ -1205,7 +1338,7 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
     vkDestroyShaderModule(device, fragment_shader, nullptr);
     set_debug_name(VK_OBJECT_TYPE_PIPELINE,
                    reinterpret_cast<std::uint64_t>(pipeline),
-                   "GameEngine.TrianglePipeline");
+                   "GameEngine.CubePipeline");
     return core::Status{};
 }
 
@@ -1225,12 +1358,15 @@ core::Status Renderer::Impl::create_framebuffers() noexcept
 {
     framebuffers.resize(swapchain_image_views.size());
     for (std::size_t index = 0; index < swapchain_image_views.size(); ++index) {
-        VkImageView attachments[] = {swapchain_image_views[index]};
+        const std::array<VkImageView, 2> attachments = {
+            swapchain_image_views[index],
+            depth_image_view,
+        };
         VkFramebufferCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         create_info.renderPass = render_pass;
-        create_info.attachmentCount = 1;
-        create_info.pAttachments = attachments;
+        create_info.attachmentCount = static_cast<std::uint32_t>(attachments.size());
+        create_info.pAttachments = attachments.data();
         create_info.width = swapchain_extent.width;
         create_info.height = swapchain_extent.height;
         create_info.layers = 1;
@@ -1275,30 +1411,36 @@ core::Status Renderer::Impl::create_sync_objects() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_triangle_resources() noexcept
+core::Status Renderer::Impl::create_bootstrap_cube_resources() noexcept
 {
-    struct Vertex final {
-        float position[2];
-        float color[3];
-    };
-
-    constexpr std::array<Vertex, 3> vertices = {
-        Vertex{{0.0F, -0.6F}, {1.0F, 0.2F, 0.2F}},
-        Vertex{{0.6F, 0.6F}, {0.2F, 1.0F, 0.2F}},
-        Vertex{{-0.6F, 0.6F}, {0.2F, 0.4F, 1.0F}},
-    };
-
-    const rhi::BufferDescription description{
-        .size = sizeof(vertices),
+    const rhi::BufferDescription vertex_description{
+        .size = sizeof(scene::bootstrap_cube_vertices),
         .usage = rhi::BufferUsage::vertex,
     };
-    core::Status status = create_buffer(description, triangle_buffer);
+    core::Status status = create_buffer(vertex_description, cube_vertex_buffer);
     if (!status) {
         return status;
     }
 
-    const auto vertex_bytes = std::as_bytes(std::span<const Vertex>{vertices});
-    status = upload_buffer(triangle_buffer, vertex_bytes);
+    const auto vertex_bytes = std::as_bytes(
+        std::span<const scene::ColoredVertex>{scene::bootstrap_cube_vertices});
+    status = upload_buffer(cube_vertex_buffer, vertex_bytes);
+    if (!status) {
+        return status;
+    }
+
+    const rhi::BufferDescription index_description{
+        .size = sizeof(scene::bootstrap_cube_indices),
+        .usage = rhi::BufferUsage::index,
+    };
+    status = create_buffer(index_description, cube_index_buffer);
+    if (!status) {
+        return status;
+    }
+
+    const auto index_bytes = std::as_bytes(
+        std::span<const std::uint16_t>{scene::bootstrap_cube_indices});
+    status = upload_buffer(cube_index_buffer, index_bytes);
     if (!status) {
         return status;
     }
@@ -1532,9 +1674,15 @@ core::Status Renderer::Impl::create_buffer(const rhi::BufferDescription& descrip
 {
     handle = {};
     if (description.size == 0 || description.size > std::numeric_limits<VkDeviceSize>::max() ||
-        description.usage != rhi::BufferUsage::vertex) {
+        (description.usage != rhi::BufferUsage::vertex &&
+         description.usage != rhi::BufferUsage::index)) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
+
+    const VkBufferUsageFlags usage =
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        (description.usage == rhi::BufferUsage::vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+                                                         : VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
     core::Status status = allocate_buffer_slot(handle);
     if (!status) {
@@ -1542,8 +1690,7 @@ core::Status Renderer::Impl::create_buffer(const rhi::BufferDescription& descrip
     }
     BufferSlot& slot = buffers[handle.index];
     status = create_buffer_resource(static_cast<VkDeviceSize>(description.size),
-                                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-                                        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                    usage,
                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                                     slot.buffer,
                                     slot.memory);
@@ -1555,7 +1702,8 @@ core::Status Renderer::Impl::create_buffer(const rhi::BufferDescription& descrip
     slot.size = static_cast<VkDeviceSize>(description.size);
     set_debug_name(VK_OBJECT_TYPE_BUFFER,
                    reinterpret_cast<std::uint64_t>(slot.buffer),
-                   "GameEngine.VertexBuffer");
+                   description.usage == rhi::BufferUsage::vertex ? "GameEngine.VertexBuffer"
+                                                                  : "GameEngine.IndexBuffer");
     return core::Status{};
 }
 
@@ -1892,7 +2040,7 @@ core::Status Renderer::Impl::create_graphics_pipeline(
     rhi::PipelineHandle& handle) noexcept
 {
     handle = {};
-    if (description.vertex_layout != rhi::PipelineVertexLayout::position2_color3 ||
+    if (description.vertex_layout != rhi::PipelineVertexLayout::position3_color3 ||
         render_pass == VK_NULL_HANDLE) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
@@ -1975,7 +2123,7 @@ core::Status Renderer::Impl::destroy_pipeline(rhi::PipelineHandle handle) noexce
     if (!validate_pipeline(handle, slot)) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
-    if (handle.index == triangle_pipeline.index && handle.generation == triangle_pipeline.generation) {
+    if (handle.index == cube_pipeline.index && handle.generation == cube_pipeline.generation) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
     slot->state = ResourceState::pending;
@@ -2122,6 +2270,19 @@ void Renderer::Impl::cleanup_swapchain() noexcept
         vkDestroyImageView(device, image_view, nullptr);
     }
     swapchain_image_views.clear();
+    if (depth_image_view != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, depth_image_view, nullptr);
+        depth_image_view = VK_NULL_HANDLE;
+    }
+    if (depth_image != VK_NULL_HANDLE) {
+        vkDestroyImage(device, depth_image, nullptr);
+        depth_image = VK_NULL_HANDLE;
+    }
+    if (depth_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, depth_memory, nullptr);
+        depth_memory = VK_NULL_HANDLE;
+    }
+    depth_format = VK_FORMAT_UNDEFINED;
     if (swapchain != VK_NULL_HANDLE) {
         vkDestroySwapchainKHR(device, swapchain, nullptr);
         swapchain = VK_NULL_HANDLE;
@@ -2152,10 +2313,10 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     const PipelineSlot* pipeline = nullptr;
-    if (triangle_pipeline.valid() && triangle_pipeline.index < pipelines.size()) {
-        const PipelineSlot& candidate = pipelines[triangle_pipeline.index];
+    if (cube_pipeline.valid() && cube_pipeline.index < pipelines.size()) {
+        const PipelineSlot& candidate = pipelines[cube_pipeline.index];
         if (candidate.state == ResourceState::live &&
-            candidate.generation == triangle_pipeline.generation) {
+            candidate.generation == cube_pipeline.generation) {
             pipeline = &candidate;
         }
     }
@@ -2163,14 +2324,23 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     const BufferSlot* vertex_buffer = nullptr;
-    if (triangle_buffer.valid() && triangle_buffer.index < buffers.size()) {
-        const BufferSlot& candidate = buffers[triangle_buffer.index];
+    if (cube_vertex_buffer.valid() && cube_vertex_buffer.index < buffers.size()) {
+        const BufferSlot& candidate = buffers[cube_vertex_buffer.index];
         if (candidate.state == ResourceState::live &&
-            candidate.generation == triangle_buffer.generation) {
+            candidate.generation == cube_vertex_buffer.generation) {
             vertex_buffer = &candidate;
         }
     }
-    if (vertex_buffer == nullptr || vertex_buffer->buffer == VK_NULL_HANDLE) {
+    const BufferSlot* index_buffer = nullptr;
+    if (cube_index_buffer.valid() && cube_index_buffer.index < buffers.size()) {
+        const BufferSlot& candidate = buffers[cube_index_buffer.index];
+        if (candidate.state == ResourceState::live &&
+            candidate.generation == cube_index_buffer.generation) {
+            index_buffer = &candidate;
+        }
+    }
+    if (vertex_buffer == nullptr || vertex_buffer->buffer == VK_NULL_HANDLE ||
+        index_buffer == nullptr || index_buffer->buffer == VK_NULL_HANDLE) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
@@ -2181,16 +2351,18 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         return result;
     }
 
-    VkClearValue clear_value{};
-    clear_value.color = {{0.02F, 0.03F, 0.06F, 1.0F}};
+    const std::array<VkClearValue, 2> clear_values = {
+        VkClearValue{.color = {{0.02F, 0.03F, 0.06F, 1.0F}}},
+        VkClearValue{.depthStencil = {1.0F, 0}},
+    };
     VkRenderPassBeginInfo render_pass_info{};
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     render_pass_info.renderPass = render_pass;
     render_pass_info.framebuffer = framebuffers[image_index];
     render_pass_info.renderArea.offset = {0, 0};
     render_pass_info.renderArea.extent = swapchain_extent;
-    render_pass_info.clearValueCount = 1;
-    render_pass_info.pClearValues = &clear_value;
+    render_pass_info.clearValueCount = static_cast<std::uint32_t>(clear_values.size());
+    render_pass_info.pClearValues = clear_values.data();
 
     vkCmdBeginRenderPass(command_buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
     VkViewport viewport{};
@@ -2203,9 +2375,30 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
     vkCmdSetScissor(command_buffer, 0, 1, &scissor);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(command_buffer, 0, 1, &vertex_buffer->buffer, &offset);
-    begin_debug_label(command_buffer, "GameEngine.Triangle");
+    vkCmdBindIndexBuffer(command_buffer, index_buffer->buffer, 0, VK_INDEX_TYPE_UINT16);
+    const core::f32 aspect_ratio = static_cast<core::f32>(swapchain_extent.width) /
+                                    static_cast<core::f32>(swapchain_extent.height);
+    const math::Mat4 model = math::multiply(math::rotation_y(0.65F), math::rotation_x(-0.4F));
+    const math::Mat4 view = math::look_at_rh(
+        {2.5F, 2.0F, 4.0F}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+    const math::Mat4 projection = math::perspective_rh_zo(
+        1.04719755F, aspect_ratio, 0.1F, 100.0F);
+    const math::Mat4 view_projection =
+        math::multiply(projection, math::multiply(view, model));
+    begin_debug_label(command_buffer, "GameEngine.Cube");
     vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
-    vkCmdDraw(command_buffer, 3, 1, 0, 0);
+    vkCmdPushConstants(command_buffer,
+                       pipeline_layout,
+                       VK_SHADER_STAGE_VERTEX_BIT,
+                       0,
+                       sizeof(view_projection),
+                       view_projection.values.data());
+    vkCmdDrawIndexed(command_buffer,
+                     static_cast<std::uint32_t>(scene::bootstrap_cube_indices.size()),
+                     1,
+                     0,
+                     0,
+                     0);
     end_debug_label(command_buffer);
     vkCmdEndRenderPass(command_buffer);
     return vkEndCommandBuffer(command_buffer);

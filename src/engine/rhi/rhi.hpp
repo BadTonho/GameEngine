@@ -52,6 +52,7 @@ struct PipelineHandle final {
 
 enum class BufferUsage : core::u8 {
     vertex = 0,
+    index,
 };
 
 enum class ImageFormat : core::u8 {
@@ -80,11 +81,11 @@ struct SamplerDescription final {
 };
 
 enum class PipelineVertexLayout : core::u8 {
-    position2_color3 = 0,
+    position3_color3 = 0,
 };
 
 struct GraphicsPipelineDescription final {
-    PipelineVertexLayout vertex_layout = PipelineVertexLayout::position2_color3;
+    PipelineVertexLayout vertex_layout = PipelineVertexLayout::position3_color3;
 };
 
 struct RendererConfiguration final {

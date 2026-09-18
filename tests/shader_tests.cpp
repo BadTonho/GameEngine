@@ -38,6 +38,7 @@ int main()
 
     if (vertex_shader_artifact.entry_point != "vertex_main" ||
         fragment_shader_artifact.entry_point != "fragment_main" ||
+        shader_vertex_layout != "position3_color3" ||
         vertex_shader_artifact.required_capabilities !=
             gameengine::renderer::vulkan::shader_capability_vulkan_1_0 ||
         fragment_shader_artifact.required_capabilities !=

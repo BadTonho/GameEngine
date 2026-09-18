@@ -1,8 +1,16 @@
 struct VertexInput
 {
-    [[vk::location(0)]] float2 position;
+    [[vk::location(0)]] float3 position;
     [[vk::location(1)]] float3 color;
 };
+
+struct PushConstants
+{
+    float4x4 view_projection;
+};
+
+[[vk::push_constant]]
+ConstantBuffer<PushConstants> push_constants;
 
 struct VertexOutput
 {
@@ -19,7 +27,7 @@ struct FragmentInput
 VertexOutput vertex_main(VertexInput input)
 {
     VertexOutput output;
-    output.position = float4(input.position, 0.0, 1.0);
+    output.position = mul(push_constants.view_projection, float4(input.position, 1.0));
     output.color = input.color;
     return output;
 }

@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 3 complete.** The repository currently provides a Vulkan rendering foundation with an offline Slang shader pipeline, deterministic shader artifacts, capability selection and a persistent device-specific pipeline cache. It is not ready to create a complete game yet.
+> **Status: early development — Phase 4 vertical slice in progress.** The repository currently provides a Vulkan rendering foundation with an offline Slang shader pipeline, a deterministic indexed 3D cube, camera transforms and depth testing. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -23,25 +23,27 @@ The complete direction is documented in [Idea.md](Idea.md). The implementation s
 
 ## Current status
 
-Phase 0 and Phase 1A are implemented. Phase 2 is complete on Linux and provides the first Vulkan rendering path:
+Phase 0 through Phase 3 are implemented. Phase 4 has its first deterministic 3D vertical slice:
 
 - CMake 3.25+ project using C++20 without compiler extensions;
 - `gameengine_core` with fixed-width types, status values, diagnostics, clock and input state;
 - `gameengine_platform` with a native Xlib/X11 Linux backend;
 - `gameengine_renderer` with a Vulkan RHI, X11 surface backend and typed resource handles;
-- `gameengine_runtime` executable with a window, Vulkan device, swapchain and triangle;
-- Vulkan buffers, RGBA8 images, samplers, graphics pipelines and staging uploads;
+- `gameengine_runtime` executable with a window, Vulkan device, swapchain and indexed cube;
+- Vulkan vertex/index buffers, RGBA8 images, samplers, depth resources, graphics pipelines and staging uploads;
+- internal `Vec3`/`Mat4` math with right-handed Vulkan-compatible perspective and look-at transforms;
 - generation-checked handles and fence-based deferred resource destruction;
 - Vulkan object names and command labels through `VK_EXT_debug_utils`;
-- `gameengine_tests`, `gameengine_rhi_tests`, `gameengine_platform_tests` and shader pipeline tests without an external test framework;
-- CTest integration with core, RHI, runtime, Vulkan, shader pipeline and X11 smoke tests;
+- `gameengine_tests`, `gameengine_rhi_tests`, `gameengine_math_tests`, `gameengine_platform_tests` and shader pipeline tests without an external test framework;
+- CTest integration with core, RHI, math, runtime, Vulkan, shader pipeline and X11 smoke tests;
 - high-warning builds with warnings treated as errors;
 - Debug, Release and GCC sanitizer presets;
 - GitHub Actions for Windows/MSVC, Linux/GCC, Linux/Clang and ASan/UBSan.
 
-The following are intentionally not part of Phase 3:
+The following are intentionally outside the current Phase 4 vertical slice:
 
-- shader variants beyond the current Vulkan capability profile;
+- prepared mesh/assets loading;
+- textures, materials, lighting, PBR, HDR and tone mapping;
 - runtime shader file loading, automatic polling and editor integration;
 - ECS, editor, Lua and Rust tooling;
 - physics, audio, networking or gameplay APIs;
@@ -58,7 +60,7 @@ The following are intentionally not part of Phase 3:
 | Binary interoperability | Versioned C ABI | Planned |
 | Offline tooling | Rust | Planned |
 | Gameplay scripting | Optional Lua | Planned |
-| Shader source | Slang, compiled offline | Phase 3 in use |
+| Shader source | Slang, compiled offline | Phase 4 in use |
 | First graphics backend | Vulkan | In use |
 
 Vulkan, X11 and Mesa are system dependencies for the Linux rendering build. Slang is required only to regenerate offline shader artifacts; it is never a runtime dependency. Rust and Lua are not required yet.
@@ -171,15 +173,18 @@ On Linux, the GCC Debug executable is located at:
 build/linux-gcc-debug/gameengine_runtime
 ```
 
-CTest currently runs seven checks on Linux and eight on Windows when Vulkan is enabled:
+CTest currently runs eight checks on Linux and nine on Windows when Vulkan is enabled:
 
 1. `gameengine_core`: verifies the core initialization and shutdown lifecycle;
 2. `gameengine_rhi`: verifies RHI lifecycle error handling and Vulkan utility policies;
 3. `gameengine_shaders`: verifies SPIR-V layout, metadata, IDs and embedded artifacts;
-4. `gameengine_runtime_smoke`: verifies that the runtime initializes Vulkan, renders a frame and destroys the X11 window;
-5. `gameengine_platform_x11`: verifies the platform lifecycle and idempotent shutdown;
-6. `gameengine_vulkan_resize`: verifies resource creation/upload/destruction, swapchain recreation, pipeline-cache load/persist/discard behavior and explicit development reload;
-7. `gameengine_shader_pipeline`: verifies variant selection and pipeline-cache identity validation;
+4. `gameengine_math`: verifies matrices, camera transforms and procedural cube data;
+5. `gameengine_runtime_smoke`: verifies that the runtime initializes Vulkan, renders a frame and destroys the X11 window;
+6. `gameengine_platform_x11`: verifies the platform lifecycle and idempotent shutdown;
+7. `gameengine_vulkan_resize`: verifies resource creation/upload/destruction, swapchain recreation, pipeline-cache load/persist/discard behavior and explicit development reload;
+8. `gameengine_shader_pipeline`: verifies variant selection and pipeline-cache identity validation;
+
+The Windows-only unit checks additionally cover the native Win32 platform path. The 3D integration test verifies depth resources, indexed drawing, swapchain recreation and validation-clean shutdown.
 
 To build the core and platform without Vulkan, configure with `-DGAMEENGINE_BUILD_VULKAN=OFF`. This uses the renderer stub and does not require Vulkan headers.
 
