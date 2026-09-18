@@ -491,12 +491,16 @@ Documentation must remain organized and easy to navigate:
 
 # 23. Testing
 
-For meaningful code changes, run the relevant available checks.
+Every new or modified function must have corresponding tests to prevent regressions.
 
-Depending on the subsystem, this may include:
+Tests must be executed and validated **locally** (e.g., via CTest or direct test binaries).
+
+**Do not use or rely on GitHub Actions for running tests** because workflow credits/minutes are exhausted. All verification must be performed locally on the developer machine before considering any work complete.
+
+Depending on the subsystem, tests may include:
 
 - build;
-- unit tests;
+- unit tests for every function and subsystem;
 - integration tests;
 - renderer tests;
 - asset tests;
@@ -505,7 +509,7 @@ Depending on the subsystem, this may include:
 - benchmark;
 - debug validation.
 
-Do not claim tests passed unless they were actually run.
+Do not claim tests passed unless they were actually run locally.
 
 If a relevant test cannot be run, say so.
 
@@ -791,7 +795,8 @@ The agent should:
 - reuse existing infrastructure;
 - isolate third-party APIs;
 - keep platform-specific code isolated;
-- test relevant changes;
+- write tests for every function to prevent regressions;
+- test relevant changes locally without relying on GitHub Actions;
 - benchmark performance-sensitive changes when practical;
 - update documentation when behavior changes;
 - explain meaningful tradeoffs;
@@ -805,8 +810,9 @@ Before considering a task complete, check as applicable:
 
 ```text
 [ ] requested behavior implemented
+[ ] every new or modified function has corresponding test coverage
 [ ] project compiles
-[ ] relevant tests pass
+[ ] relevant tests pass locally (do not rely on GitHub Actions)
 [ ] no known resource leak introduced
 [ ] ownership/lifetimes are valid
 [ ] shutdown path remains valid
