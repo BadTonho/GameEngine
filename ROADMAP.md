@@ -64,12 +64,8 @@ Local Linux validation performed with GCC 15.2.0 and Clang 21.1.8:
 
 Goal: create a small, predictable runtime that shuts down correctly.
 
-Phase 1A is implemented for Linux with an Xlib backend. The Win32 backend and
-the remaining memory/handle coverage are still pending.
-
-The core and compilation checks pass locally. The X11 integration checks need
-an accessible display or a working Xvfb instance; the current restricted agent
-environment cannot create local X11 sockets.
+Phase 1 is implemented for Linux with an Xlib backend and Windows with a Win32
+backend. The core, platform and compilation checks pass locally on both platforms.
 
 ### Tasks
 
@@ -80,7 +76,7 @@ environment cannot create local X11 sockets.
 - [ ] Create opaque handles and generation-based IDs where needed.
 - [ ] Create the minimum math types for the first scene.
 - [x] Create the platform layer.
-- [ ] Create the Windows window and event loop.
+- [x] Create the Windows window and event loop.
 - [x] Add initial Linux support without spreading conditionals through the core.
 - [x] Create keyboard and mouse input.
 - [x] Create timing and the main loop.
@@ -96,8 +92,8 @@ The runtime opens a window, processes events, receives input, runs its loop and 
 
 Goal: initialize the GPU and establish a small abstraction based on real needs.
 
-Phase 2 is implemented for Linux with Xlib, Mesa-compatible Vulkan and a
-precompiled SPIR-V bootstrap shader path.
+Phase 2 is implemented for Linux (Xlib) and Windows (Win32), supporting desktop
+swapchains, surface recreation on resize, and a precompiled SPIR-V bootstrap shader path.
 
 ### Tasks
 
