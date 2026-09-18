@@ -21,6 +21,8 @@ enum class ErrorCode : u8 {
     vulkan_frame_failed,
     vulkan_surface_lost,
     vulkan_validation_failed,
+    shader_variant_unavailable,
+    shader_reload_disabled,
 };
 
 struct Status final {
@@ -68,6 +70,10 @@ struct Status final {
         return "vulkan_surface_lost";
     case ErrorCode::vulkan_validation_failed:
         return "vulkan_validation_failed";
+    case ErrorCode::shader_variant_unavailable:
+        return "shader_variant_unavailable";
+    case ErrorCode::shader_reload_disabled:
+        return "shader_reload_disabled";
     }
 
     return "unknown";

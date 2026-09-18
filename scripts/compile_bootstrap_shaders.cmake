@@ -9,6 +9,7 @@ set(_expected_slang_version "2026.13.1-1-g84792eb15")
 set(_shader_source "${_repository_dir}/assets/shaders/bootstrap/triangle.slang")
 set(_default_header "${_repository_dir}/src/engine/renderer/vulkan/triangle_shaders.hpp")
 set(_default_reflection_dir "${_repository_dir}/build/shader-reflection")
+set(_default_cache_dir "${_repository_dir}/build/shader-cache")
 
 if(GAMEENGINE_SHADER_HEADER)
     set(_shader_header "${GAMEENGINE_SHADER_HEADER}")
@@ -20,6 +21,22 @@ if(GAMEENGINE_SHADER_REFLECTION_DIR)
     set(_reflection_dir "${GAMEENGINE_SHADER_REFLECTION_DIR}")
 else()
     set(_reflection_dir "${_default_reflection_dir}")
+endif()
+
+if(GAMEENGINE_SHADER_CACHE_DIR)
+    set(_cache_dir "${GAMEENGINE_SHADER_CACHE_DIR}")
+else()
+    set(_cache_dir "${_default_cache_dir}")
+endif()
+
+if(GAMEENGINE_SHADER_CONFIGURATION)
+    set(_configuration "${GAMEENGINE_SHADER_CONFIGURATION}")
+else()
+    set(_configuration "Release")
+endif()
+if(NOT _configuration STREQUAL "Debug" AND NOT _configuration STREQUAL "Release")
+    message(FATAL_ERROR
+        "GAMEENGINE_SHADER_CONFIGURATION must be Debug or Release, got '${_configuration}'.")
 endif()
 
 if(GAMEENGINE_SLANGC)
@@ -60,56 +77,52 @@ if(NOT _slang_version STREQUAL _expected_slang_version)
 endif()
 
 file(MAKE_DIRECTORY "${_reflection_dir}")
+file(MAKE_DIRECTORY "${_cache_dir}/${_configuration}")
 get_filename_component(_header_directory "${_shader_header}" DIRECTORY)
 file(MAKE_DIRECTORY "${_header_directory}")
+file(SHA256 "${_shader_source}" _source_sha256)
 
-set(_vertex_spirv "${_reflection_dir}/triangle.vertex.spv")
-set(_fragment_spirv "${_reflection_dir}/triangle.fragment.spv")
-set(_vertex_reflection "${_reflection_dir}/triangle.vertex.reflection.json")
-set(_fragment_reflection "${_reflection_dir}/triangle.fragment.reflection.json")
+set(_base_manifest
+    "schema=1\n"
+    "source_sha256=${_source_sha256}\n"
+    "slang_version=${_slang_version}\n"
+    "target=spirv\n"
+    "profile=spirv_1_0\n"
+    "capabilities=vulkan_1_0\n"
+    "configuration=${_configuration}\n")
 
-function(_compile_shader _stage _entry _output _reflection)
-    execute_process(
-        COMMAND "${_slangc}"
-                "${_shader_source}"
-                -target spirv
-                -profile spirv_1_0
-                -stage "${_stage}"
-                -entry "${_entry}"
-                -fvk-use-entrypoint-name
-                -fspv-reflect
-                -emit-spirv-via-glsl
-                -warnings-as-errors all
-                -o "${_output}"
-                -reflection-json "${_reflection}"
-        RESULT_VARIABLE _compile_result
-        OUTPUT_VARIABLE _compile_output
-        ERROR_VARIABLE _compile_error
-    )
-    if(NOT _compile_result EQUAL 0)
-        message(FATAL_ERROR
-            "Slang ${_stage} shader compilation failed with exit code ${_compile_result}.\n"
-            "${_compile_output}\n${_compile_error}")
-    endif()
+function(_make_shader_identity _stage _entry _id_result _manifest_result)
+    set(_manifest "${_base_manifest}stage=${_stage}\nentry=${_entry}\n")
+    string(SHA256 _id "${_manifest}")
+    set(${_id_result} "${_id}" PARENT_SCOPE)
+    set(${_manifest_result} "${_manifest}" PARENT_SCOPE)
+endfunction()
+
+function(_validate_shader_outputs _stage _entry _output _reflection)
     if(NOT EXISTS "${_output}")
-        message(FATAL_ERROR "Slang did not produce the SPIR-V artifact: ${_output}")
+        message(FATAL_ERROR "Slang did not produce the ${_stage} SPIR-V artifact: ${_output}")
     endif()
     if(NOT EXISTS "${_reflection}")
-        message(FATAL_ERROR "Slang did not produce the reflection artifact: ${_reflection}")
+        message(FATAL_ERROR
+            "Slang did not produce the ${_stage} reflection artifact: ${_reflection}")
     endif()
     file(SIZE "${_output}" _output_size)
     if(_output_size EQUAL 0 OR NOT _output_size GREATER 3)
         message(FATAL_ERROR "SPIR-V artifact is empty: ${_output}")
     endif()
+    file(READ "${_output}" _spirv_magic HEX LIMIT 4)
+    if(NOT _spirv_magic STREQUAL "03022307")
+        message(FATAL_ERROR "SPIR-V artifact has an invalid magic number: ${_output}")
+    endif()
     math(EXPR _word_remainder "${_output_size} % 4")
     if(NOT _word_remainder EQUAL 0)
         message(FATAL_ERROR "SPIR-V artifact is not aligned to 32-bit words: ${_output}")
     endif()
+    file(READ "${_reflection}" _reflection_content)
     file(SIZE "${_reflection}" _reflection_size)
     if(_reflection_size EQUAL 0)
         message(FATAL_ERROR "Reflection artifact is empty: ${_reflection}")
     endif()
-    file(READ "${_reflection}" _reflection_content)
     string(FIND "${_reflection_content}" "\"name\": \"${_entry}\"" _entry_position)
     if(_entry_position EQUAL -1)
         message(FATAL_ERROR
@@ -122,8 +135,78 @@ function(_compile_shader _stage _entry _output _reflection)
     endif()
 endfunction()
 
-_compile_shader(vertex vertex_main "${_vertex_spirv}" "${_vertex_reflection}")
-_compile_shader(fragment fragment_main "${_fragment_spirv}" "${_fragment_reflection}")
+function(_compile_shader _stage _entry _id _manifest _output_result _reflection_result)
+    set(_artifact_dir "${_cache_dir}/${_configuration}/${_id}")
+    set(_cached_output "${_artifact_dir}/shader.spv")
+    set(_cached_reflection "${_artifact_dir}/reflection.json")
+    set(_cached_manifest "${_artifact_dir}/manifest.txt")
+    file(MAKE_DIRECTORY "${_artifact_dir}")
+
+    set(_cache_hit FALSE)
+    if(EXISTS "${_cached_output}" AND EXISTS "${_cached_reflection}" AND
+       EXISTS "${_cached_manifest}")
+        file(READ "${_cached_manifest}" _stored_manifest)
+        if(_stored_manifest STREQUAL _manifest)
+            set(_cache_hit TRUE)
+        endif()
+    endif()
+
+    if(_cache_hit)
+        message(STATUS "Shader cache hit: ${_stage} ${_entry} (${_id})")
+    else()
+        message(STATUS "Compiling shader: ${_stage} ${_entry} (${_id})")
+        set(_temporary_output "${_cached_output}.tmp")
+        set(_temporary_reflection "${_cached_reflection}.tmp")
+        file(REMOVE "${_temporary_output}" "${_temporary_reflection}")
+        if(_configuration STREQUAL "Debug")
+            set(_optimization_args -O0 -g3)
+        else()
+            set(_optimization_args -O2 -g0)
+        endif()
+        execute_process(
+            COMMAND "${_slangc}"
+                    "${_shader_source}"
+                    -target spirv
+                    -profile spirv_1_0
+                    -stage "${_stage}"
+                    -entry "${_entry}"
+                    -fvk-use-entrypoint-name
+                    -fspv-reflect
+                    -emit-spirv-via-glsl
+                    -warnings-as-errors all
+                    ${_optimization_args}
+                    -o "${_temporary_output}"
+                    -reflection-json "${_temporary_reflection}"
+            RESULT_VARIABLE _compile_result
+            OUTPUT_VARIABLE _compile_output
+            ERROR_VARIABLE _compile_error
+        )
+        if(NOT _compile_result EQUAL 0)
+            file(REMOVE "${_temporary_output}" "${_temporary_reflection}")
+            message(FATAL_ERROR
+                "Slang ${_stage} shader compilation failed with exit code ${_compile_result}.\n"
+                "${_compile_output}\n${_compile_error}")
+        endif()
+        _validate_shader_outputs(
+            "${_stage}" "${_entry}" "${_temporary_output}" "${_temporary_reflection}")
+        file(RENAME "${_temporary_output}" "${_cached_output}")
+        file(RENAME "${_temporary_reflection}" "${_cached_reflection}")
+        file(WRITE "${_cached_manifest}" "${_manifest}")
+    endif()
+
+    _validate_shader_outputs("${_stage}" "${_entry}" "${_cached_output}" "${_cached_reflection}")
+    set(_staged_output "${_reflection_dir}/triangle.${_stage}.spv")
+    set(_staged_reflection "${_reflection_dir}/triangle.${_stage}.reflection.json")
+    configure_file("${_cached_output}" "${_staged_output}" COPYONLY)
+    configure_file("${_cached_reflection}" "${_staged_reflection}" COPYONLY)
+    set(${_output_result} "${_cached_output}" PARENT_SCOPE)
+    set(${_reflection_result} "${_cached_reflection}" PARENT_SCOPE)
+endfunction()
+
+_make_shader_identity(vertex vertex_main _vertex_id _vertex_manifest)
+_make_shader_identity(fragment fragment_main _fragment_id _fragment_manifest)
+_compile_shader(vertex vertex_main "${_vertex_id}" "${_vertex_manifest}" _vertex_spirv _vertex_reflection)
+_compile_shader(fragment fragment_main "${_fragment_id}" "${_fragment_manifest}" _fragment_spirv _fragment_reflection)
 
 function(_read_spirv_words _path _symbol _result)
     file(READ "${_path}" _hex HEX)
@@ -148,13 +231,37 @@ _read_spirv_words("${_vertex_spirv}" vertex_shader _vertex_array)
 _read_spirv_words("${_fragment_spirv}" fragment_shader _fragment_array)
 
 file(WRITE "${_shader_header}" "#pragma once\n\n")
-file(APPEND "${_shader_header}" "#include <array>\n#include <cstdint>\n\n")
 file(APPEND "${_shader_header}"
+    "#include <array>\n"
+    "#include <cstdint>\n"
+    "#include <string_view>\n\n"
+    "#include \"engine/renderer/vulkan/shader_pipeline.hpp\"\n\n"
     "namespace gameengine::renderer::vulkan::bootstrap {\n\n"
     "// Generated by scripts/compile_bootstrap_shaders.cmake.\n"
-    "// Do not edit this file manually.\n")
+    "// Do not edit this file manually.\n"
+    "inline constexpr std::string_view shader_configuration = \"${_configuration}\";\n"
+    "inline constexpr std::string_view shader_source_sha256 = \"${_source_sha256}\";\n")
 file(APPEND "${_shader_header}" "${_vertex_array}${_fragment_array}\n")
-file(APPEND "${_shader_header}" "} // namespace gameengine::renderer::vulkan::bootstrap\n")
+file(APPEND "${_shader_header}"
+    "inline constexpr std::string_view vertex_shader_id = \"${_vertex_id}\";\n"
+    "inline constexpr std::string_view fragment_shader_id = \"${_fragment_id}\";\n"
+    "inline constexpr ShaderArtifact vertex_shader_artifact{\n"
+    "    vertex_shader_id, ShaderStage::vertex, \"vertex_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, vertex_shader.data(), vertex_shader.size()\n"
+    "};\n"
+    "inline constexpr ShaderArtifact fragment_shader_artifact{\n"
+    "    fragment_shader_id, ShaderStage::fragment, \"fragment_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, fragment_shader.data(), fragment_shader.size()\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> vertex_shader_variants = {\n"
+    "    vertex_shader_artifact,\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> fragment_shader_variants = {\n"
+    "    fragment_shader_artifact,\n"
+    "};\n\n"
+    "} // namespace gameengine::renderer::vulkan::bootstrap\n")
 
 message(STATUS "Generated ${_shader_header}")
+message(STATUS "Shader configuration: ${_configuration}")
+message(STATUS "Shader cache: ${_cache_dir}/${_configuration}")
 message(STATUS "Reflection artifacts: ${_reflection_dir}")

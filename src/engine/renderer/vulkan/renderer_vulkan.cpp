@@ -22,7 +22,9 @@
 #endif
 
 #include "engine/core/diagnostics.hpp"
+#include "engine/renderer/vulkan/shader_pipeline.hpp"
 #include "engine/renderer/vulkan/triangle_shaders.hpp"
+#include "engine/renderer/vulkan/vulkan_pipeline_cache.hpp"
 #include "engine/renderer/vulkan/vulkan_utils.hpp"
 
 #include <algorithm>
@@ -43,6 +45,7 @@ constexpr std::array<const char*, 1> device_extensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 constexpr core::u32 frames_in_flight = 2;
+constexpr core::usize pipeline_cache_path_capacity = 512;
 
 [[nodiscard]] bool has_extension(const std::vector<VkExtensionProperties>& extensions,
                                  const char* name) noexcept
@@ -154,6 +157,8 @@ struct Renderer::Impl final {
     VkExtent2D swapchain_extent{};
     VkRenderPass render_pass = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
+    renderer::vulkan::PipelineCacheIdentity pipeline_cache_identity{};
     std::vector<VkFramebuffer> framebuffers;
     std::vector<VkCommandBuffer> command_buffers;
 
@@ -170,6 +175,11 @@ struct Renderer::Impl final {
     std::vector<SamplerSlot> samplers;
     std::vector<PipelineSlot> pipelines;
     std::array<std::vector<DeferredDeletion>, frames_in_flight> deferred_deletions;
+    std::array<char, pipeline_cache_path_capacity> pipeline_cache_path{};
+    renderer::vulkan::ShaderDeviceCapabilities shader_capabilities{};
+    const renderer::vulkan::ShaderArtifact* vertex_shader_artifact = nullptr;
+    const renderer::vulkan::ShaderArtifact* fragment_shader_artifact = nullptr;
+    bool shader_hot_reload_enabled = false;
     rhi::BufferHandle triangle_buffer{};
     rhi::PipelineHandle triangle_pipeline{};
     PFN_vkSetDebugUtilsObjectNameEXT set_debug_utils_object_name = nullptr;
@@ -178,9 +188,11 @@ struct Renderer::Impl final {
     bool validation_error = false;
 
     [[nodiscard]] core::Status initialize(platform::NativeWindowHandles handles,
-                                           platform::WindowSize window_size) noexcept;
+                                           platform::WindowSize window_size,
+                                           const rhi::RendererConfiguration& configuration) noexcept;
     void shutdown() noexcept;
     [[nodiscard]] core::Status render_frame(platform::WindowSize window_size) noexcept;
+    [[nodiscard]] core::Status reload_shaders() noexcept;
 
     [[nodiscard]] core::Status create_buffer(const rhi::BufferDescription& description,
                                               rhi::BufferHandle& handle) noexcept;
@@ -205,6 +217,9 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status create_surface() noexcept;
     [[nodiscard]] core::Status pick_physical_device() noexcept;
     [[nodiscard]] core::Status create_logical_device() noexcept;
+    [[nodiscard]] core::Status create_pipeline_cache() noexcept;
+    void persist_pipeline_cache() noexcept;
+    [[nodiscard]] core::Status select_shader_variants() noexcept;
     [[nodiscard]] core::Status create_command_pool() noexcept;
     [[nodiscard]] core::Status recreate_swapchain(platform::WindowSize window_size) noexcept;
     [[nodiscard]] core::Status create_swapchain(platform::WindowSize window_size) noexcept;
@@ -215,6 +230,8 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status create_sync_objects() noexcept;
     [[nodiscard]] core::Status create_triangle_resources() noexcept;
     [[nodiscard]] core::Status rebuild_pipelines() noexcept;
+    [[nodiscard]] core::Status build_pipeline_object(const PipelineSlot& slot,
+                                                     VkPipeline& pipeline) noexcept;
     [[nodiscard]] VkResult record_command_buffer(VkCommandBuffer command_buffer,
                                                   core::u32 image_index) noexcept;
 
@@ -330,12 +347,30 @@ void destroy_debug_utils_messenger(VkInstance instance,
 
 } // namespace
 
-core::Status Renderer::Impl::initialize(platform::NativeWindowHandles handles,
-                                         platform::WindowSize window_size) noexcept
+core::Status Renderer::Impl::initialize(
+    platform::NativeWindowHandles handles,
+    platform::WindowSize window_size,
+    const rhi::RendererConfiguration& configuration) noexcept
 {
     if (!handles.valid() || window_size.width == 0 || window_size.height == 0) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
+    if (configuration.pipeline_cache_path == nullptr) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+    const std::size_t cache_path_length = std::strlen(configuration.pipeline_cache_path);
+    if (cache_path_length == 0 || cache_path_length >= pipeline_cache_path.size()) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+#ifdef NDEBUG
+    if (configuration.enable_shader_hot_reload) {
+        return core::Status{core::ErrorCode::shader_reload_disabled};
+    }
+#endif
+    std::memcpy(pipeline_cache_path.data(),
+                configuration.pipeline_cache_path,
+                cache_path_length + 1);
+    shader_hot_reload_enabled = configuration.enable_shader_hot_reload;
     native_handles = handles;
     last_window_size = window_size;
 
@@ -352,6 +387,14 @@ core::Status Renderer::Impl::initialize(platform::NativeWindowHandles handles,
         return status;
     }
     status = create_logical_device();
+    if (!status) {
+        return status;
+    }
+    status = select_shader_variants();
+    if (!status) {
+        return status;
+    }
+    status = create_pipeline_cache();
     if (!status) {
         return status;
     }
@@ -382,6 +425,8 @@ void Renderer::Impl::shutdown() noexcept
         static_cast<void>(vkDeviceWaitIdle(device));
     }
 
+    persist_pipeline_cache();
+
     for (core::u32 index = 0; index < frames_in_flight; ++index) {
         collect_deferred(index);
     }
@@ -404,6 +449,11 @@ void Renderer::Impl::shutdown() noexcept
     if (device != VK_NULL_HANDLE && pipeline_layout != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
         pipeline_layout = VK_NULL_HANDLE;
+    }
+
+    if (device != VK_NULL_HANDLE && pipeline_cache != VK_NULL_HANDLE) {
+        vkDestroyPipelineCache(device, pipeline_cache, nullptr);
+        pipeline_cache = VK_NULL_HANDLE;
     }
 
     if (device != VK_NULL_HANDLE) {
@@ -430,6 +480,12 @@ void Renderer::Impl::shutdown() noexcept
     command_pool = VK_NULL_HANDLE;
     native_handles = {};
     last_window_size = {};
+    pipeline_cache_path = {};
+    pipeline_cache_identity = {};
+    shader_capabilities = {};
+    vertex_shader_artifact = nullptr;
+    fragment_shader_artifact = nullptr;
+    shader_hot_reload_enabled = false;
     triangle_buffer = {};
     triangle_pipeline = {};
     validation_error = false;
@@ -729,6 +785,87 @@ core::Status Renderer::Impl::create_logical_device() noexcept
     return core::Status{};
 }
 
+core::Status Renderer::Impl::select_shader_variants() noexcept
+{
+    shader_capabilities.supported_capabilities =
+        renderer::vulkan::shader_capability_vulkan_1_0;
+
+    const auto vertex = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::vertex_shader_variants,
+        shader_capabilities);
+    const auto fragment = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::fragment_shader_variants,
+        shader_capabilities);
+    if (vertex == nullptr || fragment == nullptr) {
+        return core::Status{core::ErrorCode::shader_variant_unavailable};
+    }
+    vertex_shader_artifact = vertex;
+    fragment_shader_artifact = fragment;
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_pipeline_cache() noexcept
+{
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physical_device, &properties);
+    pipeline_cache_identity = renderer::vulkan::make_pipeline_cache_identity(
+        properties,
+        VK_API_VERSION_1_0);
+
+    std::vector<std::byte> initial_data;
+    const auto load_result = renderer::vulkan::load_pipeline_cache_file(
+        pipeline_cache_path.data(),
+        pipeline_cache_identity,
+        initial_data);
+    if (load_result == renderer::vulkan::PipelineCacheLoadResult::ignored) {
+        core::log(core::LogLevel::warning, "Ignoring incompatible Vulkan pipeline cache");
+    }
+
+    VkPipelineCacheCreateInfo create_info{};
+    create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    create_info.initialDataSize = initial_data.size();
+    create_info.pInitialData = initial_data.empty() ? nullptr : initial_data.data();
+    VkResult result = vkCreatePipelineCache(device, &create_info, nullptr, &pipeline_cache);
+    if (result != VK_SUCCESS && !initial_data.empty()) {
+        core::log(core::LogLevel::warning,
+                  "Vulkan pipeline cache rejected its payload; starting empty");
+        create_info.initialDataSize = 0;
+        create_info.pInitialData = nullptr;
+        result = vkCreatePipelineCache(device, &create_info, nullptr, &pipeline_cache);
+    }
+    if (result != VK_SUCCESS) {
+        core::log(core::LogLevel::error, "Unable to create Vulkan pipeline cache");
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    return core::Status{};
+}
+
+void Renderer::Impl::persist_pipeline_cache() noexcept
+{
+    if (device == VK_NULL_HANDLE || pipeline_cache == VK_NULL_HANDLE ||
+        pipeline_cache_path[0] == '\0') {
+        return;
+    }
+
+    std::size_t data_size = 0;
+    if (vkGetPipelineCacheData(device, pipeline_cache, &data_size, nullptr) != VK_SUCCESS ||
+        data_size > renderer::vulkan::pipeline_cache_max_payload) {
+        core::log(core::LogLevel::warning, "Unable to query Vulkan pipeline cache data");
+        return;
+    }
+    std::vector<std::byte> data(data_size);
+    if (!data.empty() &&
+        vkGetPipelineCacheData(device, pipeline_cache, &data_size, data.data()) != VK_SUCCESS) {
+        core::log(core::LogLevel::warning, "Unable to read Vulkan pipeline cache data");
+        return;
+    }
+    data.resize(data_size);
+    if (!renderer::vulkan::write_pipeline_cache_file(
+            pipeline_cache_path.data(), pipeline_cache_identity, data)) {
+        core::log(core::LogLevel::warning, "Unable to persist Vulkan pipeline cache");
+    }
+}
+
 core::Status Renderer::Impl::create_command_pool() noexcept
 {
     const QueueFamilies families = find_queue_families(physical_device);
@@ -921,18 +1058,24 @@ VkShaderModule Renderer::Impl::create_shader_module(const std::uint32_t* code,
     return shader_module;
 }
 
-core::Status Renderer::Impl::create_pipeline_object(PipelineSlot& slot) noexcept
+core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
+                                                    VkPipeline& pipeline) noexcept
 {
+    pipeline = VK_NULL_HANDLE;
     if (slot.description.vertex_layout != rhi::PipelineVertexLayout::position2_color3) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
+    if (vertex_shader_artifact == nullptr || fragment_shader_artifact == nullptr ||
+        pipeline_cache == VK_NULL_HANDLE) {
+        return core::Status{core::ErrorCode::shader_variant_unavailable};
+    }
 
     const VkShaderModule vertex_shader = create_shader_module(
-        ::gameengine::renderer::vulkan::bootstrap::vertex_shader.data(),
-        ::gameengine::renderer::vulkan::bootstrap::vertex_shader.size() * sizeof(std::uint32_t));
+        vertex_shader_artifact->spirv,
+        vertex_shader_artifact->spirv_word_count * sizeof(std::uint32_t));
     const VkShaderModule fragment_shader = create_shader_module(
-        ::gameengine::renderer::vulkan::bootstrap::fragment_shader.data(),
-        ::gameengine::renderer::vulkan::bootstrap::fragment_shader.size() * sizeof(std::uint32_t));
+        fragment_shader_artifact->spirv,
+        fragment_shader_artifact->spirv_word_count * sizeof(std::uint32_t));
     if (vertex_shader == VK_NULL_HANDLE || fragment_shader == VK_NULL_HANDLE) {
         if (vertex_shader != VK_NULL_HANDLE) {
             vkDestroyShaderModule(device, vertex_shader, nullptr);
@@ -955,12 +1098,12 @@ core::Status Renderer::Impl::create_pipeline_object(PipelineSlot& slot) noexcept
     vertex_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     vertex_stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
     vertex_stage.module = vertex_shader;
-    vertex_stage.pName = "vertex_main";
+    vertex_stage.pName = vertex_shader_artifact->entry_point.data();
     VkPipelineShaderStageCreateInfo fragment_stage{};
     fragment_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     fragment_stage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     fragment_stage.module = fragment_shader;
-    fragment_stage.pName = "fragment_main";
+    fragment_stage.pName = fragment_shader_artifact->entry_point.data();
     const std::array<VkPipelineShaderStageCreateInfo, 2> stages = {vertex_stage, fragment_stage};
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
@@ -1044,11 +1187,11 @@ core::Status Renderer::Impl::create_pipeline_object(PipelineSlot& slot) noexcept
     pipeline_info.renderPass = render_pass;
     pipeline_info.subpass = 0;
     if (vkCreateGraphicsPipelines(device,
-                                  VK_NULL_HANDLE,
+                                  pipeline_cache,
                                   1,
                                   &pipeline_info,
                                   nullptr,
-                                  &slot.pipeline) != VK_SUCCESS) {
+                                  &pipeline) != VK_SUCCESS) {
         if (created_layout) {
             vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
             pipeline_layout = VK_NULL_HANDLE;
@@ -1061,8 +1204,20 @@ core::Status Renderer::Impl::create_pipeline_object(PipelineSlot& slot) noexcept
     vkDestroyShaderModule(device, vertex_shader, nullptr);
     vkDestroyShaderModule(device, fragment_shader, nullptr);
     set_debug_name(VK_OBJECT_TYPE_PIPELINE,
-                   reinterpret_cast<std::uint64_t>(slot.pipeline),
+                   reinterpret_cast<std::uint64_t>(pipeline),
                    "GameEngine.TrianglePipeline");
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_pipeline_object(PipelineSlot& slot) noexcept
+{
+    VkPipeline replacement = VK_NULL_HANDLE;
+    const core::Status status = build_pipeline_object(slot, replacement);
+    if (!status) {
+        return status;
+    }
+    destroy_pipeline_object(slot);
+    slot.pipeline = replacement;
     return core::Status{};
 }
 
@@ -1769,6 +1924,51 @@ core::Status Renderer::Impl::rebuild_pipelines() noexcept
     return core::Status{};
 }
 
+core::Status Renderer::Impl::reload_shaders() noexcept
+{
+    if (!shader_hot_reload_enabled) {
+        return core::Status{core::ErrorCode::shader_reload_disabled};
+    }
+    if (device == VK_NULL_HANDLE || vkDeviceWaitIdle(device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    const auto previous_vertex_shader_artifact = vertex_shader_artifact;
+    const auto previous_fragment_shader_artifact = fragment_shader_artifact;
+    const core::Status variant_status = select_shader_variants();
+    if (!variant_status) {
+        return variant_status;
+    }
+
+    std::vector<VkPipeline> replacements(pipelines.size(), VK_NULL_HANDLE);
+    for (std::size_t index = 0; index < pipelines.size(); ++index) {
+        PipelineSlot& slot = pipelines[index];
+        if (slot.state != ResourceState::live) {
+            continue;
+        }
+        const core::Status status = build_pipeline_object(slot, replacements[index]);
+        if (!status) {
+            for (VkPipeline replacement : replacements) {
+                if (replacement != VK_NULL_HANDLE) {
+                    vkDestroyPipeline(device, replacement, nullptr);
+                }
+            }
+            vertex_shader_artifact = previous_vertex_shader_artifact;
+            fragment_shader_artifact = previous_fragment_shader_artifact;
+            return status;
+        }
+    }
+
+    for (std::size_t index = 0; index < pipelines.size(); ++index) {
+        PipelineSlot& slot = pipelines[index];
+        if (slot.state == ResourceState::live && replacements[index] != VK_NULL_HANDLE) {
+            destroy_pipeline_object(slot);
+            slot.pipeline = replacements[index];
+        }
+    }
+    return core::Status{};
+}
+
 core::Status Renderer::Impl::destroy_pipeline(rhi::PipelineHandle handle) noexcept
 {
     PipelineSlot* slot = nullptr;
@@ -2154,7 +2354,8 @@ Renderer::~Renderer() noexcept
     shutdown();
 }
 
-core::Status Renderer::initialize(const platform::Platform& platform) noexcept
+core::Status Renderer::initialize(const platform::Platform& platform,
+                                  const RendererConfiguration& configuration) noexcept
 {
     if (initialized_) {
         return core::Status{core::ErrorCode::already_initialized};
@@ -2169,7 +2370,8 @@ core::Status Renderer::initialize(const platform::Platform& platform) noexcept
     }
 
     const core::Status status = impl_->initialize(platform.native_window_handles(),
-                                                  platform.window_size());
+                                                  platform.window_size(),
+                                                  configuration);
     if (!status) {
         impl_->shutdown();
         delete impl_;
@@ -2189,6 +2391,14 @@ core::Status Renderer::render_frame(const platform::Platform& platform) noexcept
         return core::Status{core::ErrorCode::invalid_argument};
     }
     return impl_->render_frame(platform.window_size());
+}
+
+core::Status Renderer::reload_shaders() noexcept
+{
+    if (!initialized_ || impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    return impl_->reload_shaders();
 }
 
 core::Status Renderer::create_buffer(const BufferDescription& description,

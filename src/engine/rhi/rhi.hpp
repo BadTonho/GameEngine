@@ -87,6 +87,11 @@ struct GraphicsPipelineDescription final {
     PipelineVertexLayout vertex_layout = PipelineVertexLayout::position2_color3;
 };
 
+struct RendererConfiguration final {
+    const char* pipeline_cache_path = "gameengine.pipeline.cache";
+    bool enable_shader_hot_reload = false;
+};
+
 class Renderer final {
 public:
     Renderer() noexcept = default;
@@ -95,8 +100,11 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    [[nodiscard]] core::Status initialize(const platform::Platform& platform) noexcept;
+    [[nodiscard]] core::Status initialize(
+        const platform::Platform& platform,
+        const RendererConfiguration& configuration = {}) noexcept;
     [[nodiscard]] core::Status render_frame(const platform::Platform& platform) noexcept;
+    [[nodiscard]] core::Status reload_shaders() noexcept;
 
     [[nodiscard]] core::Status create_buffer(const BufferDescription& description,
                                               BufferHandle& handle) noexcept;

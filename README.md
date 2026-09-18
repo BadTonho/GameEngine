@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 3A complete.** The repository currently provides a Vulkan rendering foundation with an offline Slang bootstrap shader pipeline. It is not ready to create a complete game yet.
+> **Status: early development — Phase 3 complete.** The repository currently provides a Vulkan rendering foundation with an offline Slang shader pipeline, deterministic shader artifacts, capability selection and a persistent device-specific pipeline cache. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -33,15 +33,16 @@ Phase 0 and Phase 1A are implemented. Phase 2 is complete on Linux and provides 
 - Vulkan buffers, RGBA8 images, samplers, graphics pipelines and staging uploads;
 - generation-checked handles and fence-based deferred resource destruction;
 - Vulkan object names and command labels through `VK_EXT_debug_utils`;
-- `gameengine_tests`, `gameengine_rhi_tests` and `gameengine_platform_tests` without an external test framework;
-- CTest integration with core, RHI, runtime, Vulkan and X11 smoke tests;
+- `gameengine_tests`, `gameengine_rhi_tests`, `gameengine_platform_tests` and shader pipeline tests without an external test framework;
+- CTest integration with core, RHI, runtime, Vulkan, shader pipeline and X11 smoke tests;
 - high-warning builds with warnings treated as errors;
 - Debug, Release and GCC sanitizer presets;
 - GitHub Actions for Windows/MSVC, Linux/GCC, Linux/Clang and ASan/UBSan.
 
-The following are intentionally not part of Phase 2:
+The following are intentionally not part of Phase 3:
 
-- the full shader pipeline beyond the bootstrap compiler and reflection path;
+- shader variants beyond the current Vulkan capability profile;
+- runtime shader file loading, automatic polling and editor integration;
 - ECS, editor, Lua and Rust tooling;
 - physics, audio, networking or gameplay APIs;
 - a functional C ABI.
@@ -57,7 +58,7 @@ The following are intentionally not part of Phase 2:
 | Binary interoperability | Versioned C ABI | Planned |
 | Offline tooling | Rust | Planned |
 | Gameplay scripting | Optional Lua | Planned |
-| Shader source | Slang, compiled offline | Phase 3A in use |
+| Shader source | Slang, compiled offline | Phase 3 in use |
 | First graphics backend | Vulkan | In use |
 
 Vulkan, X11 and Mesa are system dependencies for the Linux rendering build. Slang is required only to regenerate offline shader artifacts; it is never a runtime dependency. Rust and Lua are not required yet.
@@ -170,14 +171,15 @@ On Linux, the GCC Debug executable is located at:
 build/linux-gcc-debug/gameengine_runtime
 ```
 
-CTest currently runs six checks on Linux when Vulkan is enabled:
+CTest currently runs seven checks on Linux and eight on Windows when Vulkan is enabled:
 
 1. `gameengine_core`: verifies the core initialization and shutdown lifecycle;
 2. `gameengine_rhi`: verifies RHI lifecycle error handling and Vulkan utility policies;
-3. `gameengine_shaders`: verifies the generated SPIR-V bootstrap artifacts;
+3. `gameengine_shaders`: verifies SPIR-V layout, metadata, IDs and embedded artifacts;
 4. `gameengine_runtime_smoke`: verifies that the runtime initializes Vulkan, renders a frame and destroys the X11 window;
 5. `gameengine_platform_x11`: verifies the platform lifecycle and idempotent shutdown;
-6. `gameengine_vulkan_resize`: verifies resource creation/upload/destruction and swapchain recreation after an X11 resize.
+6. `gameengine_vulkan_resize`: verifies resource creation/upload/destruction, swapchain recreation, pipeline-cache load/persist/discard behavior and explicit development reload;
+7. `gameengine_shader_pipeline`: verifies variant selection and pipeline-cache identity validation;
 
 To build the core and platform without Vulkan, configure with `-DGAMEENGINE_BUILD_VULKAN=OFF`. This uses the renderer stub and does not require Vulkan headers.
 
@@ -194,9 +196,9 @@ $env:GAMEENGINE_SLANGC = 'C:\path\to\slangc.exe'
 cmake --build build/windows-msvc-debug --target gameengine_compile_bootstrap_shaders --config Debug
 ```
 
-The generator writes the checked-in `src/engine/renderer/vulkan/triangle_shaders.hpp` header and untracked SPIR-V/reflection artifacts under the build directory. It validates the compiler version, SPIR-V alignment and reflection output. The Vulkan runtime loads only the generated SPIR-V bytes; it never invokes a shader compiler.
+The generator writes the checked-in `src/engine/renderer/vulkan/triangle_shaders.hpp` header and caches untracked SPIR-V/reflection artifacts under `build/shader-cache/<Debug|Release>/<shader-id>/`. Each artifact contains a source hash, compiler/target/stage metadata and a deterministic SHA-256 ID. It validates the compiler version, SPIR-V alignment and reflection output. A cache hit does not invoke `slangc`.
 
-The regular runtime build does not require `slangc` because the generated header is already included in the repository.
+The regular runtime build does not require `slangc` because the generated header is already included in the repository. The Vulkan renderer stores a device-specific pipeline cache in `gameengine.pipeline.cache` by default; `RendererConfiguration::pipeline_cache_path` can select another path. The C++ configuration also exposes explicit development-only `reload_shaders()` support. The C ABI is unchanged.
 
 Build directories, compiler output, IDE files and local configuration are excluded by [.gitignore](.gitignore).
 

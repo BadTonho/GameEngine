@@ -26,5 +26,24 @@ int main()
     if (!is_valid_spirv(vertex_shader) || !is_valid_spirv(fragment_shader)) {
         return 1;
     }
+
+    if (vertex_shader_id.size() != 64U || fragment_shader_id.size() != 64U ||
+        vertex_shader_artifact.spirv != vertex_shader.data() ||
+        fragment_shader_artifact.spirv != fragment_shader.data() ||
+        vertex_shader_artifact.spirv_word_count != vertex_shader.size() ||
+        fragment_shader_artifact.spirv_word_count != fragment_shader.size() ||
+        vertex_shader_variants.size() != 1U || fragment_shader_variants.size() != 1U) {
+        return 2;
+    }
+
+    if (vertex_shader_artifact.entry_point != "vertex_main" ||
+        fragment_shader_artifact.entry_point != "fragment_main" ||
+        vertex_shader_artifact.required_capabilities !=
+            gameengine::renderer::vulkan::shader_capability_vulkan_1_0 ||
+        fragment_shader_artifact.required_capabilities !=
+            gameengine::renderer::vulkan::shader_capability_vulkan_1_0) {
+        return 3;
+    }
+
     return 0;
 }

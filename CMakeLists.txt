@@ -103,7 +103,10 @@ if(GAMEENGINE_BUILD_VULKAN AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYST
     find_package(Vulkan REQUIRED)
     target_sources(gameengine_renderer PRIVATE
         src/engine/renderer/vulkan/renderer_vulkan.cpp
+        src/engine/renderer/vulkan/shader_pipeline.cpp
         src/engine/renderer/vulkan/triangle_shaders.hpp
+        src/engine/renderer/vulkan/vulkan_pipeline_cache.cpp
+        src/engine/renderer/vulkan/vulkan_pipeline_cache.hpp
         src/engine/renderer/vulkan/vulkan_utils.cpp
         src/engine/renderer/vulkan/vulkan_utils.hpp
     )
@@ -121,6 +124,8 @@ add_custom_target(gameengine_compile_bootstrap_shaders
     COMMAND ${CMAKE_COMMAND}
         -DGAMEENGINE_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
         -DGAMEENGINE_SLANGC=${GAMEENGINE_SLANGC}
+        -DGAMEENGINE_SHADER_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/shader-cache
+        -DGAMEENGINE_SHADER_CONFIGURATION=$<CONFIG>
         -DGAMEENGINE_SHADER_HEADER=${CMAKE_CURRENT_SOURCE_DIR}/src/engine/renderer/vulkan/triangle_shaders.hpp
         -DGAMEENGINE_SHADER_REFLECTION_DIR=${CMAKE_CURRENT_BINARY_DIR}/shader-reflection
         -P ${CMAKE_CURRENT_SOURCE_DIR}/scripts/compile_bootstrap_shaders.cmake
@@ -186,6 +191,17 @@ if(GAMEENGINE_BUILD_TESTS)
             )
             target_include_directories(gameengine_vulkan_tests PRIVATE ${Vulkan_INCLUDE_DIR})
             gameengine_configure_target(gameengine_vulkan_tests)
+
+            add_executable(gameengine_shader_pipeline_tests
+                tests/shader_pipeline_tests.cpp
+            )
+            target_link_libraries(gameengine_shader_pipeline_tests PRIVATE
+                gameengine_core
+                gameengine_renderer
+            )
+            target_include_directories(gameengine_shader_pipeline_tests PRIVATE ${Vulkan_INCLUDE_DIR})
+            gameengine_configure_target(gameengine_shader_pipeline_tests)
+            add_test(NAME gameengine_shader_pipeline COMMAND gameengine_shader_pipeline_tests)
         endif()
 
         if(GAMEENGINE_XVFB_RUN)
@@ -234,12 +250,23 @@ if(GAMEENGINE_BUILD_TESTS)
             )
             target_include_directories(gameengine_vulkan_tests PRIVATE ${Vulkan_INCLUDE_DIR})
             gameengine_configure_target(gameengine_vulkan_tests)
+
+            add_executable(gameengine_shader_pipeline_tests
+                tests/shader_pipeline_tests.cpp
+            )
+            target_link_libraries(gameengine_shader_pipeline_tests PRIVATE
+                gameengine_core
+                gameengine_renderer
+            )
+            target_include_directories(gameengine_shader_pipeline_tests PRIVATE ${Vulkan_INCLUDE_DIR})
+            gameengine_configure_target(gameengine_shader_pipeline_tests)
         endif()
 
         add_test(NAME gameengine_platform_win32 COMMAND gameengine_platform_tests)
         add_test(NAME gameengine_win32_unit COMMAND gameengine_win32_tests)
         if(GAMEENGINE_BUILD_VULKAN)
             add_test(NAME gameengine_vulkan_resize COMMAND gameengine_vulkan_tests)
+            add_test(NAME gameengine_shader_pipeline COMMAND gameengine_shader_pipeline_tests)
         endif()
         add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
     else()
@@ -249,6 +276,9 @@ if(GAMEENGINE_BUILD_TESTS)
     set_tests_properties(gameengine_core PROPERTIES LABELS "unit")
     set_tests_properties(gameengine_rhi PROPERTIES LABELS "rhi")
     set_tests_properties(gameengine_shaders PROPERTIES LABELS "shader")
+    if(TEST gameengine_shader_pipeline)
+        set_tests_properties(gameengine_shader_pipeline PROPERTIES LABELS "shader")
+    endif()
     set_tests_properties(gameengine_runtime_smoke PROPERTIES LABELS "smoke")
     if(TEST gameengine_platform_win32)
         set_tests_properties(gameengine_platform_win32 PROPERTIES LABELS "platform")

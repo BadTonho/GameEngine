@@ -41,3 +41,5 @@ Testing/
 .cache/
 .clangd/
 /.ccache/
+*.pipeline.cache
+*.pipeline.cache.tmp

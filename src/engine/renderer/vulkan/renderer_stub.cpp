@@ -9,12 +9,18 @@ Renderer::~Renderer() noexcept
     shutdown();
 }
 
-core::Status Renderer::initialize(const platform::Platform&) noexcept
+core::Status Renderer::initialize(const platform::Platform&,
+                                  const RendererConfiguration&) noexcept
 {
     return core::Status{core::ErrorCode::unsupported_platform};
 }
 
 core::Status Renderer::render_frame(const platform::Platform&) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status Renderer::reload_shaders() noexcept
 {
     return core::Status{core::ErrorCode::unsupported_platform};
 }
