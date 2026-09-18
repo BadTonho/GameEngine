@@ -955,12 +955,12 @@ core::Status Renderer::Impl::create_pipeline_object(PipelineSlot& slot) noexcept
     vertex_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     vertex_stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
     vertex_stage.module = vertex_shader;
-    vertex_stage.pName = "main";
+    vertex_stage.pName = "vertex_main";
     VkPipelineShaderStageCreateInfo fragment_stage{};
     fragment_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     fragment_stage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     fragment_stage.module = fragment_shader;
-    fragment_stage.pName = "main";
+    fragment_stage.pName = "fragment_main";
     const std::array<VkPipelineShaderStageCreateInfo, 2> stages = {vertex_stage, fragment_stage};
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};

@@ -26,4 +26,14 @@ Vertex and image uploads use temporary host-visible, coherent staging buffers an
 
 Debug builds require `VK_LAYER_KHRONOS_validation` and enable `VK_EXT_debug_utils`. Validation errors are logged and cause the smoke test to fail. Release builds do not require validation layers. Debug object names and command labels are provided through the same extension without a RenderDoc dependency.
 
-The triangle uses precompiled SPIR-V generated from the bootstrap GLSL sources by `scripts/generate_bootstrap_shaders.sh`. The compiler is an offline development tool and is not a runtime dependency. Slang remains the source language for the complete shader pipeline in Phase 3.
+The triangle uses precompiled SPIR-V generated from `assets/shaders/bootstrap/triangle.slang` by `scripts/compile_bootstrap_shaders.cmake`. The offline target requires the pinned `slangc` version `2026.13.1-1-g84792eb15`, emits reflection JSON and generates the checked-in `src/engine/renderer/vulkan/triangle_shaders.hpp` header. The compiler is never a runtime dependency.
+
+The bootstrap shader has explicit `vertex_main` and `fragment_main` entry points. Vertex position and color use Vulkan locations 0 and 1, and the fragment color uses location 0. The compiler uses the Vulkan 1.0-compatible SPIR-V 1.0 profile together with the `-emit-spirv-via-glsl` path because direct emission from the pinned Slang build requires a newer SPIR-V profile and can emit `SPV_GOOGLE_hlsl_functionality1`, which is not enabled by the initial Vulkan device configuration.
+
+To regenerate the artifacts:
+
+```text
+cmake --build build/<preset> --target gameengine_compile_bootstrap_shaders --config Debug
+```
+
+The normal runtime build consumes only the generated header. Shader caches, variants, runtime reflection and hot reload remain outside this bootstrap milestone.

@@ -116,6 +116,18 @@ endif()
 
 gameengine_configure_target(gameengine_renderer)
 
+set(GAMEENGINE_SLANGC "" CACHE FILEPATH "Path to the pinned slangc executable")
+add_custom_target(gameengine_compile_bootstrap_shaders
+    COMMAND ${CMAKE_COMMAND}
+        -DGAMEENGINE_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DGAMEENGINE_SLANGC=${GAMEENGINE_SLANGC}
+        -DGAMEENGINE_SHADER_HEADER=${CMAKE_CURRENT_SOURCE_DIR}/src/engine/renderer/vulkan/triangle_shaders.hpp
+        -DGAMEENGINE_SHADER_REFLECTION_DIR=${CMAKE_CURRENT_BINARY_DIR}/shader-reflection
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/scripts/compile_bootstrap_shaders.cmake
+    VERBATIM
+    COMMENT "Compiling bootstrap Slang shaders offline"
+)
+
 add_executable(gameengine_runtime
     src/runtime/main.cpp
 )
@@ -144,6 +156,15 @@ if(GAMEENGINE_BUILD_TESTS)
     endif()
     gameengine_configure_target(gameengine_rhi_tests)
     add_test(NAME gameengine_rhi COMMAND gameengine_rhi_tests)
+
+    add_executable(gameengine_shader_tests
+        tests/shader_tests.cpp
+    )
+    target_include_directories(gameengine_shader_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    gameengine_configure_target(gameengine_shader_tests)
+    add_test(NAME gameengine_shaders COMMAND gameengine_shader_tests)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         find_program(GAMEENGINE_XVFB_RUN xvfb-run)
@@ -227,6 +248,7 @@ if(GAMEENGINE_BUILD_TESTS)
 
     set_tests_properties(gameengine_core PROPERTIES LABELS "unit")
     set_tests_properties(gameengine_rhi PROPERTIES LABELS "rhi")
+    set_tests_properties(gameengine_shaders PROPERTIES LABELS "shader")
     set_tests_properties(gameengine_runtime_smoke PROPERTIES LABELS "smoke")
     if(TEST gameengine_platform_win32)
         set_tests_properties(gameengine_platform_win32 PROPERTIES LABELS "platform")
