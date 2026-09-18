@@ -25,6 +25,9 @@ function(gameengine_configure_target target_name)
             /EHs-c-
             /GR-
         )
+        target_compile_definitions(${target_name} PRIVATE
+            _HAS_EXCEPTIONS=0
+        )
     else()
         target_compile_options(${target_name} PRIVATE
             -Wall
@@ -70,6 +73,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(X11 REQUIRED)
     target_sources(gameengine_platform PRIVATE src/engine/platform/platform_x11.cpp)
     target_link_libraries(gameengine_platform PRIVATE X11::X11)
+    target_compile_definitions(gameengine_platform PUBLIC GAMEENGINE_PLATFORM_HAS_WINDOW=1)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    target_sources(gameengine_platform PRIVATE src/engine/platform/platform_win32.cpp)
     target_compile_definitions(gameengine_platform PUBLIC GAMEENGINE_PLATFORM_HAS_WINDOW=1)
 else()
     target_sources(gameengine_platform PRIVATE src/engine/platform/platform_stub.cpp)
@@ -183,6 +189,22 @@ if(GAMEENGINE_BUILD_TESTS)
                 add_test(NAME gameengine_vulkan_resize COMMAND gameengine_vulkan_tests)
             endif()
         endif()
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        add_executable(gameengine_platform_tests
+            tests/platform_tests.cpp
+        )
+        target_link_libraries(gameengine_platform_tests PRIVATE gameengine_core gameengine_platform)
+        gameengine_configure_target(gameengine_platform_tests)
+
+        add_executable(gameengine_win32_tests
+            tests/win32_tests.cpp
+        )
+        target_link_libraries(gameengine_win32_tests PRIVATE gameengine_core gameengine_platform)
+        gameengine_configure_target(gameengine_win32_tests)
+
+        add_test(NAME gameengine_platform_win32 COMMAND gameengine_platform_tests)
+        add_test(NAME gameengine_win32_unit COMMAND gameengine_win32_tests)
+        add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
     else()
         add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
     endif()
