@@ -361,8 +361,6 @@ void Platform::poll_events(EventCallback callback, void* user_data) noexcept
         return;
     }
 
-    s_pending_event_count = 0;
-
     const auto hwnd = reinterpret_cast<HWND>(native_window_);
     MSG msg{};
     while (PeekMessageW(&msg, hwnd, 0, 0, PM_REMOVE)) {
@@ -370,7 +368,21 @@ void Platform::poll_events(EventCallback callback, void* user_data) noexcept
         DispatchMessageW(&msg);
     }
 
+    RECT client_rect{};
+    if (GetClientRect(hwnd, &client_rect)) {
+        const auto current_w = static_cast<core::u32>(client_rect.right - client_rect.left);
+        const auto current_h = static_cast<core::u32>(client_rect.bottom - client_rect.top);
+        if (current_w != width_ || current_h != height_) {
+            input::Event ev{};
+            ev.type = input::EventType::window_resized;
+            ev.width = current_w;
+            ev.height = current_h;
+            push_pending_event(ev);
+        }
+    }
+
     const std::size_t count = s_pending_event_count;
+    s_pending_event_count = 0;
     for (std::size_t i = 0; i < count; ++i) {
         const auto& event = s_pending_events[i];
         if (event.type == input::EventType::quit_requested) {
@@ -381,8 +393,6 @@ void Platform::poll_events(EventCallback callback, void* user_data) noexcept
         }
         dispatch_event(event, callback, user_data);
     }
-
-    s_pending_event_count = 0;
 }
 
 void Platform::dispatch_event(const input::Event& event,

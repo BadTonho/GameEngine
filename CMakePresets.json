@@ -16,7 +16,8 @@
       "cacheVariables": {
         "CMAKE_CXX_STANDARD": "20",
         "CMAKE_CXX_EXTENSIONS": "OFF",
-        "GAMEENGINE_BUILD_TESTS": "ON"
+        "GAMEENGINE_BUILD_TESTS": "ON",
+        "GAMEENGINE_BUILD_VULKAN": "ON"
       },
       "condition": {
         "type": "equals",
@@ -34,7 +35,8 @@
       "cacheVariables": {
         "CMAKE_CXX_STANDARD": "20",
         "CMAKE_CXX_EXTENSIONS": "OFF",
-        "GAMEENGINE_BUILD_TESTS": "ON"
+        "GAMEENGINE_BUILD_TESTS": "ON",
+        "GAMEENGINE_BUILD_VULKAN": "ON"
       },
       "condition": {
         "type": "equals",

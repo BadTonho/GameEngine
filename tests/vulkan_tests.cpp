@@ -4,7 +4,17 @@
 #include <array>
 #include <cstddef>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <X11/Xlib.h>
+#endif
 
 int main()
 {
@@ -85,12 +95,27 @@ int main()
     }
 
     const auto handles = platform.native_window_handles();
+#if defined(_WIN32)
+    const auto hwnd = reinterpret_cast<HWND>(handles.window);
+    RECT rect{0, 0, 640, 480};
+    AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
+    SetWindowPos(
+        hwnd,
+        nullptr,
+        0,
+        0,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    platform.poll_events();
+#else
     auto* display = reinterpret_cast<Display*>(handles.display);
     const auto window = static_cast<::Window>(handles.window);
     XResizeWindow(display, window, 640, 480);
     XFlush(display);
     XSync(display, False);
     platform.poll_events();
+#endif
 
     const auto size = platform.window_size();
     if (size.width != 640 || size.height != 480) {

@@ -1,11 +1,25 @@
 #include "engine/rhi/rhi.hpp"
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define VK_USE_PLATFORM_WIN32_KHR
+#include <windows.h>
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_win32.h>
+#elif defined(__linux__)
 #define VK_USE_PLATFORM_XLIB_KHR
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_xlib.h>
 #include <X11/Xlib.h>
-
 #undef Status
+#else
+#include <vulkan/vulkan.h>
+#endif
 
 #include "engine/core/diagnostics.hpp"
 #include "engine/renderer/vulkan/triangle_shaders.hpp"
@@ -452,7 +466,11 @@ core::Status Renderer::Impl::create_instance() noexcept
 
     std::vector<const char*> extensions = {
         VK_KHR_SURFACE_EXTENSION_NAME,
+#if defined(_WIN32)
+        VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+#else
         VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
+#endif
     };
     if (validation) {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -515,6 +533,18 @@ core::Status Renderer::Impl::create_debug_messenger() noexcept
 
 core::Status Renderer::Impl::create_surface() noexcept
 {
+#if defined(_WIN32)
+    const auto hinstance = reinterpret_cast<HINSTANCE>(native_handles.display);
+    const auto hwnd = reinterpret_cast<HWND>(native_handles.window);
+    VkWin32SurfaceCreateInfoKHR create_info{};
+    create_info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    create_info.hinstance = hinstance;
+    create_info.hwnd = hwnd;
+    if (vkCreateWin32SurfaceKHR(instance, &create_info, nullptr, &surface) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_surface_failed};
+    }
+    return core::Status{};
+#else
     auto* display = reinterpret_cast<Display*>(native_handles.display);
     const auto window = static_cast<::Window>(native_handles.window);
     VkXlibSurfaceCreateInfoKHR create_info{};
@@ -525,6 +555,7 @@ core::Status Renderer::Impl::create_surface() noexcept
         return core::Status{core::ErrorCode::vulkan_surface_failed};
     }
     return core::Status{};
+#endif
 }
 
 Renderer::Impl::QueueFamilies Renderer::Impl::find_queue_families(

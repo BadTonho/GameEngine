@@ -99,7 +99,7 @@ target_include_directories(gameengine_renderer
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
 )
 
-if(GAMEENGINE_BUILD_VULKAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(GAMEENGINE_BUILD_VULKAN AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows"))
     find_package(Vulkan REQUIRED)
     target_sources(gameengine_renderer PRIVATE
         src/engine/renderer/vulkan/renderer_vulkan.cpp
@@ -139,7 +139,7 @@ if(GAMEENGINE_BUILD_TESTS)
         tests/rhi_tests.cpp
     )
     target_link_libraries(gameengine_rhi_tests PRIVATE gameengine_core gameengine_platform gameengine_renderer)
-    if(GAMEENGINE_BUILD_VULKAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(GAMEENGINE_BUILD_VULKAN)
         target_include_directories(gameengine_rhi_tests PRIVATE ${Vulkan_INCLUDE_DIR})
     endif()
     gameengine_configure_target(gameengine_rhi_tests)
@@ -202,8 +202,24 @@ if(GAMEENGINE_BUILD_TESTS)
         target_link_libraries(gameengine_win32_tests PRIVATE gameengine_core gameengine_platform)
         gameengine_configure_target(gameengine_win32_tests)
 
+        if(GAMEENGINE_BUILD_VULKAN)
+            add_executable(gameengine_vulkan_tests
+                tests/vulkan_tests.cpp
+            )
+            target_link_libraries(gameengine_vulkan_tests PRIVATE
+                gameengine_core
+                gameengine_platform
+                gameengine_renderer
+            )
+            target_include_directories(gameengine_vulkan_tests PRIVATE ${Vulkan_INCLUDE_DIR})
+            gameengine_configure_target(gameengine_vulkan_tests)
+        endif()
+
         add_test(NAME gameengine_platform_win32 COMMAND gameengine_platform_tests)
         add_test(NAME gameengine_win32_unit COMMAND gameengine_win32_tests)
+        if(GAMEENGINE_BUILD_VULKAN)
+            add_test(NAME gameengine_vulkan_resize COMMAND gameengine_vulkan_tests)
+        endif()
         add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
     else()
         add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
