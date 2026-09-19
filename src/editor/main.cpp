@@ -1,5 +1,8 @@
 #include "engine/core/core.hpp"
 #include "engine/core/diagnostics.hpp"
+#include "engine/editor/asset_catalog.hpp"
+#include "engine/editor/console.hpp"
+#include "engine/editor/profiler.hpp"
 #include "engine/editor/project.hpp"
 #include "engine/editor/renderer_bridge.hpp"
 #include "engine/editor/ui.hpp"
@@ -7,6 +10,7 @@
 #include "engine/renderer/renderer_quality.hpp"
 #include "engine/rhi/rhi.hpp"
 
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <vector>
@@ -89,6 +93,23 @@ int main(int argc, char** argv)
         return 3;
     }
 
+    gameengine::editor::ConsoleBuffer console;
+    gameengine::editor::record_console_message(
+        console, gameengine::core::LogLevel::info, "PROJECT READY");
+    gameengine::editor::AssetCatalog catalog;
+    const gameengine::core::Status catalog_status =
+        catalog.refresh(project.project_path().parent_path());
+    gameengine::editor::record_console_status(console,
+                                              catalog_status
+                                                  ? gameengine::core::LogLevel::info
+                                                  : gameengine::core::LogLevel::error,
+                                              catalog_status ? "ASSET CATALOG READY"
+                                                             : "ASSET CATALOG FAILED",
+                                              catalog_status);
+    gameengine::editor::EditorProfiler profiler;
+    const auto editor_start = std::chrono::steady_clock::now();
+    profiler.sample_memory();
+
 #if GAMEENGINE_RENDERER_HAS_VULKAN
     gameengine::platform::Platform platform;
     if (!platform.initialize()) {
@@ -108,22 +129,67 @@ int main(int argc, char** argv)
     }
 
     gameengine::rhi::Renderer renderer;
-    if (!renderer.initialize(platform) ||
-        !gameengine::renderer::diagnostics::set_renderer_quality(
-            renderer, project.manifest().renderer_quality) ||
-        !gameengine::editor::renderer_bridge::attach_scene(renderer, project.scene())) {
+    const gameengine::core::Status renderer_status = renderer.initialize(platform);
+    if (!renderer_status) {
+        gameengine::editor::record_console_status(
+            console, gameengine::core::LogLevel::error, "RENDERER INITIALIZE FAILED", renderer_status);
         renderer.shutdown();
         platform.shutdown();
         core.shutdown();
         return 6;
     }
+    const gameengine::core::Status quality_status =
+        gameengine::renderer::diagnostics::set_renderer_quality(
+            renderer, project.manifest().renderer_quality);
+    if (!quality_status) {
+        gameengine::editor::record_console_status(
+            console, gameengine::core::LogLevel::error, "RENDERER QUALITY FAILED", quality_status);
+        renderer.shutdown();
+        platform.shutdown();
+        core.shutdown();
+        return 6;
+    }
+    const gameengine::core::Status scene_status =
+        gameengine::editor::renderer_bridge::attach_scene(renderer, project.scene());
+    if (!scene_status) {
+        gameengine::editor::record_console_status(
+            console, gameengine::core::LogLevel::error, "SCENE ATTACH FAILED", scene_status);
+        renderer.shutdown();
+        platform.shutdown();
+        core.shutdown();
+        return 6;
+    }
+    profiler.set_startup_nanoseconds(static_cast<gameengine::core::u64>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - editor_start)
+            .count()));
     gameengine::editor::UiState ui;
     std::vector<gameengine::editor::UiVertex> ui_vertices;
     ui_vertices.reserve(16'384);
+    bool quality_fallback_reported = false;
     const auto update_ui = [&]() noexcept -> gameengine::core::Status {
         const auto size = platform.window_size();
-        ui.build(project, size.width, size.height, ui_vertices);
-        return gameengine::editor::renderer_bridge::set_ui_vertices(renderer, ui_vertices);
+        gameengine::renderer::metrics::FrameTimingReport report;
+        if (gameengine::editor::renderer_bridge::read_metrics(renderer, report)) {
+            profiler.update_frame(report);
+            if (!quality_fallback_reported &&
+                (report.quality_compute_fallback || report.quality_shadow_fallback ||
+                 report.quality_environment_fallback)) {
+                gameengine::editor::record_console_message(
+                    console,
+                    gameengine::core::LogLevel::warning,
+                    "RENDERER QUALITY FALLBACK ACTIVE");
+                quality_fallback_reported = true;
+            }
+        }
+        ui.build(project, catalog, console, profiler, size.width, size.height, ui_vertices);
+        const gameengine::core::Status status =
+            gameengine::editor::renderer_bridge::set_ui_vertices(renderer, ui_vertices);
+        if (!status) {
+            gameengine::editor::record_console_status(
+                console, gameengine::core::LogLevel::error, "UI UPDATE FAILED", status);
+        }
+        return status;
     };
     if (!update_ui()) {
         static_cast<void>(gameengine::editor::renderer_bridge::detach_scene(renderer));
@@ -134,6 +200,10 @@ int main(int argc, char** argv)
     }
     if (arguments.smoke_test) {
         const gameengine::core::Status frame_status = renderer.render_frame(platform);
+        if (!frame_status) {
+            gameengine::editor::record_console_status(
+                console, gameengine::core::LogLevel::error, "EDITOR FRAME FAILED", frame_status);
+        }
         static_cast<void>(gameengine::editor::renderer_bridge::detach_scene(renderer));
         renderer.shutdown();
         platform.shutdown();
@@ -142,16 +212,29 @@ int main(int argc, char** argv)
     }
 
     bool previous_save_down = false;
+    gameengine::core::u64 frame_counter = 0;
     while (!platform.should_close()) {
         EditorEvents events;
         platform.poll_events(editor_event_callback, &events);
         const auto& input = platform.input();
         if (events.left_click) {
-            static_cast<void>(ui.click(project,
-                                       static_cast<gameengine::core::f32>(events.mouse_x),
-                                       static_cast<gameengine::core::f32>(events.mouse_y),
-                                       platform.window_size().width,
-                                       platform.window_size().height));
+            static_cast<void>(ui.click(
+                project,
+                catalog,
+                static_cast<gameengine::core::f32>(events.mouse_x),
+                static_cast<gameengine::core::f32>(events.mouse_y),
+                platform.window_size().width,
+                platform.window_size().height));
+        }
+        if (ui.consume_refresh_request()) {
+            const gameengine::core::Status refresh_status =
+                catalog.refresh(project.project_path().parent_path());
+            gameengine::editor::record_console_status(
+                console,
+                refresh_status ? gameengine::core::LogLevel::info
+                               : gameengine::core::LogLevel::error,
+                refresh_status ? "ASSET CATALOG REFRESHED" : "ASSET CATALOG REFRESH FAILED",
+                refresh_status);
         }
         if (input.is_key_down(gameengine::input::KeyCode::escape)) {
             platform.request_close();
@@ -159,9 +242,18 @@ int main(int argc, char** argv)
         const bool save_down = input.is_key_down(gameengine::input::KeyCode::control) &&
                                input.is_key_down(gameengine::input::KeyCode::s);
         if (save_down && !previous_save_down) {
-            static_cast<void>(project.save());
+            const gameengine::core::Status save_status = project.save();
+            gameengine::editor::record_console_status(
+                console,
+                save_status ? gameengine::core::LogLevel::info
+                            : gameengine::core::LogLevel::error,
+                save_status ? "SCENE SAVED" : "SCENE SAVE FAILED",
+                save_status);
         }
         previous_save_down = save_down;
+        if ((frame_counter++ % 60U) == 0U) {
+            profiler.sample_memory();
+        }
         const gameengine::core::f32 delta = 0.02F;
         if (input.is_key_down(gameengine::input::KeyCode::left)) {
             static_cast<void>(project.move_selected(-delta, 0.0F, 0.0F));
@@ -189,6 +281,8 @@ int main(int argc, char** argv)
             continue;
         }
         if (!renderer.render_frame(platform)) {
+            gameengine::editor::record_console_message(
+                console, gameengine::core::LogLevel::error, "EDITOR FRAME FAILED");
             platform.request_close();
         }
     }

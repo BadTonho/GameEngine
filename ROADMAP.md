@@ -7,9 +7,9 @@ The roadmap does not define deadlines. Each phase is a technical milestone. A ph
 ## Current status
 
 The repository completed Phase 2 through Phase 6 and is consolidating the measurable Phase 7
-renderer. Forward+ is the selected production direction, with the procedural cube and generated
-lights remaining the reference fixture. Low/Medium/High resources are implemented; the final
-hardware baseline and VRAM policy remain open.
+renderer while implementing the Phase 8 editor. Forward+ is the selected production direction,
+with the procedural cube and generated lights remaining the reference fixture. Low/Medium/High
+resources are implemented; the final hardware baseline and VRAM policy remain open.
 
 ## Evolution rules
 
@@ -325,18 +325,33 @@ Goal: provide a useful public tool without contaminating the exported runtime.
 - [x] Create the procedural Vulkan viewport with an editor-only UI overlay.
 - [x] Create the deterministic entity hierarchy view and selection hit testing.
 - [x] Create the basic transform inspector and keyboard editing path.
-- [ ] Create the asset browser.
-- [ ] Create the console and diagnostics.
-- [ ] Create a basic profiler.
+- [x] Create the read-only project asset browser with prepared-asset validation.
+- [x] Create the bounded editor console and diagnostics panel.
+- [x] Create a basic render/session profiler with unavailable-metric fallbacks.
 - [x] Create deterministic save/load for the project and scene.
 - [x] Separate Editor and Runtime modules in the build.
-- [ ] Measure editor RAM and startup with an empty project.
+- [x] Measure editor RAM and startup with an empty project when platform APIs provide it.
 
 ### Completion criteria
 
 A user can create a procedural project, open its scene, select the bootstrap entity, edit its
 transform, save and view the result through the engine renderer. Adding arbitrary objects and
 assets remains later Phase 8 work.
+
+### Phase 8B validation status
+
+- [x] Add a deterministic, project-root-only catalog for `.gemesh`, `.getex`, `.gemat` and
+  `.gescene`, using the existing C++ validators and no asset ownership in the UI.
+- [x] Add a fixed-capacity read-only console that mirrors messages to `stderr`.
+- [x] Add a profiler panel backed by renderer pass reports, CPU/GPU fallback state and sampled
+  editor startup/process-memory metrics.
+- [x] Add explicit refresh, asset selection, panel switching, malformed-asset diagnostics and
+  no-Vulkan `unavailable` behavior.
+- [x] Validate Debug, no-Vulkan editor builds, editor unit tests and Vulkan editor smoke tests
+  locally.
+
+Asset editing/import, previews, file dialogs, undo/redo and runtime prepared-asset integration
+remain later Phase 8 work.
 
 ## Phase 9 — Optional runtime modules
 

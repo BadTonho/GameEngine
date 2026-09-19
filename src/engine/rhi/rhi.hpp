@@ -26,6 +26,10 @@ namespace gameengine::editor {
 struct UiVertex;
 }
 
+namespace gameengine::renderer::metrics {
+struct FrameTimingReport;
+}
+
 namespace gameengine::editor::renderer_bridge {
 [[nodiscard]] core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
                                          gameengine::scene::Scene& scene) noexcept;
@@ -33,6 +37,9 @@ namespace gameengine::editor::renderer_bridge {
 [[nodiscard]] core::Status set_ui_vertices(
     const gameengine::rhi::Renderer& renderer,
     std::span<const gameengine::editor::UiVertex> vertices) noexcept;
+[[nodiscard]] core::Status read_metrics(
+    const gameengine::rhi::Renderer& renderer,
+    gameengine::renderer::metrics::FrameTimingReport& report) noexcept;
 }
 
 namespace gameengine::renderer::diagnostics {
@@ -188,6 +195,9 @@ private:
     friend core::Status editor::renderer_bridge::set_ui_vertices(
         const Renderer& renderer,
         std::span<const editor::UiVertex> vertices) noexcept;
+    friend core::Status editor::renderer_bridge::read_metrics(
+        const Renderer& renderer,
+        renderer::metrics::FrameTimingReport& report) noexcept;
     friend void renderer::diagnostics::begin_metrics(const Renderer& renderer) noexcept;
     friend core::Status renderer::diagnostics::set_visibility_mode(
         const Renderer& renderer,

@@ -203,8 +203,14 @@ gameengine_configure_target(gameengine_runtime)
 
 if(GAMEENGINE_BUILD_EDITOR)
     add_library(gameengine_editor_core STATIC
+        src/engine/editor/asset_catalog.cpp
+        src/engine/editor/asset_catalog.hpp
+        src/engine/editor/console.cpp
+        src/engine/editor/console.hpp
         src/engine/editor/project.cpp
         src/engine/editor/project.hpp
+        src/engine/editor/profiler.cpp
+        src/engine/editor/profiler.hpp
         src/engine/editor/ui.cpp
         src/engine/editor/ui.hpp
         src/engine/editor/ui_types.hpp
@@ -215,6 +221,9 @@ if(GAMEENGINE_BUILD_EDITOR)
             $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     )
     gameengine_configure_target(gameengine_editor_core)
+    if(WIN32)
+        target_link_libraries(gameengine_editor_core PRIVATE psapi)
+    endif()
 
     add_executable(gameengine_editor
         src/editor/main.cpp
@@ -271,6 +280,19 @@ if(GAMEENGINE_BUILD_TESTS)
         )
         gameengine_configure_target(gameengine_editor_ui_tests)
         add_test(NAME gameengine_editor_ui COMMAND gameengine_editor_ui_tests)
+
+        add_executable(gameengine_editor_tools_tests
+            tests/editor_tools_tests.cpp
+        )
+        target_link_libraries(gameengine_editor_tools_tests PRIVATE
+            gameengine_editor_core
+            gameengine_scene
+            gameengine_assets
+            gameengine_renderer
+            gameengine_core
+        )
+        gameengine_configure_target(gameengine_editor_tools_tests)
+        add_test(NAME gameengine_editor_tools COMMAND gameengine_editor_tools_tests)
     endif()
 
     add_executable(gameengine_rhi_tests

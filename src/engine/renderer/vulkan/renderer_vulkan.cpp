@@ -6874,6 +6874,24 @@ core::Status set_ui_vertices(const gameengine::rhi::Renderer& renderer,
     return renderer.impl_->set_editor_ui_vertices(vertices);
 }
 
+core::Status read_metrics(
+    const gameengine::rhi::Renderer& renderer,
+    gameengine::renderer::metrics::FrameTimingReport& report) noexcept
+{
+    report = {};
+    if (renderer.impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    if (renderer.impl_->device == VK_NULL_HANDLE) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const core::u32 frame_count = static_cast<core::u32>(renderer.impl_->frame_timing.size());
+    const core::u32 frame_index =
+        (renderer.impl_->current_frame + frame_count - 1U) % frame_count;
+    report = renderer.impl_->frame_timing[frame_index];
+    return {};
+}
+
 } // namespace gameengine::editor::renderer_bridge
 
 namespace gameengine::renderer::diagnostics {

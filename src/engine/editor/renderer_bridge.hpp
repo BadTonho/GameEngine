@@ -4,6 +4,7 @@
 
 #include "engine/core/status.hpp"
 #include "engine/rhi/rhi.hpp"
+#include "engine/renderer/renderer_metrics.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/editor/ui_types.hpp"
 
@@ -14,5 +15,8 @@ namespace gameengine::editor::renderer_bridge {
 [[nodiscard]] core::Status detach_scene(const rhi::Renderer& renderer) noexcept;
 [[nodiscard]] core::Status set_ui_vertices(const rhi::Renderer& renderer,
                                             std::span<const UiVertex> vertices) noexcept;
+[[nodiscard]] core::Status read_metrics(
+    const rhi::Renderer& renderer,
+    gameengine::renderer::metrics::FrameTimingReport& report) noexcept;
 
 } // namespace gameengine::editor::renderer_bridge

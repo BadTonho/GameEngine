@@ -143,4 +143,12 @@ core::Status set_ui_vertices(const gameengine::rhi::Renderer&,
     return core::Status{core::ErrorCode::unsupported_platform};
 }
 
+core::Status read_metrics(
+    const gameengine::rhi::Renderer&,
+    gameengine::renderer::metrics::FrameTimingReport& report) noexcept
+{
+    report = {};
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
 } // namespace gameengine::editor::renderer_bridge

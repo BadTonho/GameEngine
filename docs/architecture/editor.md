@@ -49,3 +49,21 @@ testar o formato e o ciclo da sessão em builds de ferramentas sem backend gráf
 
 Asset browser, file dialog, edição de mesh/textura/material, câmera livre, undo/redo, console e
 profiler continuam fora da Fase 8A.
+
+## Ferramentas da Fase 8B
+
+O `AssetCatalog` é um módulo somente leitura do editor. Um refresh explícito percorre a raiz do
+projeto, ignora links simbólicos e considera apenas `.gemesh`, `.getex`, `.gemat` e `.gescene`.
+Os caminhos são armazenados relativos, normalizados e ordenados lexicograficamente. Cada arquivo
+é validado pelo leitor zero-copy de `engine/assets`; o catálogo retém apenas metadados e erros,
+nunca uma cópia proprietária dos bytes do asset. Nenhum asset real é necessário: o projeto novo
+continua contendo somente a cena procedural.
+
+O painel `Console` usa um ring buffer de capacidade fixa, com os níveis `debug`, `info`, `warning`
+e `error`. As mensagens exibidas no editor também continuam sendo escritas em `stderr`, mas o
+console não executa comandos nem faz polling de arquivos.
+
+O painel `Profiler` reutiliza `FrameTimingReport` do renderer e mostra passes, tempos CPU/GPU,
+draws, dispatches, visibilidade, perfil efetivo e o startup do editor. RAM atual e pico são
+consultados somente em amostras explícitas fora da gravação do frame; quando a plataforma não
+oferece a métrica, o painel informa `unavailable`. O runtime exportado não inclui esses módulos.
