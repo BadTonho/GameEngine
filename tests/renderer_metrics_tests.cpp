@@ -47,15 +47,22 @@ bool test_empty_and_populated_reports() noexcept
     report.gpu_source_buffer_bytes = 256U;
     report.gpu_visible_buffer_bytes = 512U;
     report.gpu_indirect_buffer_bytes = 64U;
+    report.benchmark_active = true;
+    report.benchmark_path = gameengine::renderer::benchmark::LightingPath::clustered;
+    report.benchmark_light_count = 32U;
     report.visibility_mode = gameengine::renderer::gpu_culling::VisibilityMode::gpu;
     report.gpu_culling_available = true;
     report.gpu_culling_active = true;
     report.gpu_culling_fallback = false;
+    report.add_pass("clustered_light_cull", 5U, 0U, true, 1U);
     report.add_pass("forward_opaque", 10U, 1U, true);
     report.passes[0].gpu_nanoseconds = 20U;
     accumulator.record(report);
     const auto& pass = accumulator.passes[0];
     return accumulator.frame_count == 2U && accumulator.total_draw_calls == 1U &&
+           accumulator.total_dispatch_calls == 1U && accumulator.benchmark_active &&
+           accumulator.benchmark_path == gameengine::renderer::benchmark::LightingPath::clustered &&
+           accumulator.benchmark_light_count == 32U &&
            accumulator.total_instances == 100U && accumulator.visible_instances == 12U &&
            accumulator.culled_instances == 88U &&
            accumulator.visibility_cpu_total_nanoseconds == 7U &&
@@ -71,10 +78,11 @@ bool test_empty_and_populated_reports() noexcept
            accumulator.visibility_mode == gameengine::renderer::gpu_culling::VisibilityMode::gpu &&
            accumulator.gpu_culling_available && accumulator.gpu_culling_active &&
            !accumulator.gpu_culling_fallback &&
-           accumulator.gpu_timestamps_available && pass.name == "forward_opaque" &&
-           pass.sample_count == 1U && pass.cpu_total_nanoseconds == 10U &&
-           pass.cpu_min_nanoseconds == 10U && pass.cpu_max_nanoseconds == 10U &&
-           pass.gpu_sample_count == 1U && pass.gpu_total_nanoseconds == 20U;
+           accumulator.gpu_timestamps_available && pass.name == "clustered_light_cull" &&
+           pass.sample_count == 1U && pass.cpu_total_nanoseconds == 5U &&
+           pass.cpu_min_nanoseconds == 5U && pass.cpu_max_nanoseconds == 5U &&
+           pass.dispatch_calls == 1U && pass.gpu_sample_count == 1U &&
+           pass.gpu_total_nanoseconds == 20U;
 }
 
 } // namespace

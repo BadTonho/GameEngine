@@ -8,6 +8,7 @@
 #include "engine/core/status.hpp"
 #include "engine/core/types.hpp"
 #include "engine/renderer/gpu_culling.hpp"
+#include "engine/renderer/renderer_benchmark.hpp"
 
 namespace gameengine::rhi {
 class Renderer;
@@ -22,6 +23,7 @@ struct PassTiming final {
     core::u64 cpu_nanoseconds = 0;
     core::u64 gpu_nanoseconds = 0;
     core::u32 draw_calls = 0;
+    core::u32 dispatch_calls = 0;
     bool gpu_time_valid = false;
 };
 
@@ -38,6 +40,9 @@ struct FrameTimingReport final {
     core::u64 gpu_source_buffer_bytes = 0;
     core::u64 gpu_visible_buffer_bytes = 0;
     core::u64 gpu_indirect_buffer_bytes = 0;
+    core::u32 benchmark_light_count = 0;
+    benchmark::LightingPath benchmark_path = benchmark::LightingPath::forward;
+    bool benchmark_active = false;
     gpu_culling::VisibilityMode visibility_mode = gpu_culling::VisibilityMode::cpu;
     bool gpu_culling_available = false;
     bool gpu_culling_active = false;
@@ -72,7 +77,8 @@ struct FrameTimingReport final {
     void add_pass(std::string_view pass_name,
                   core::u64 cpu_nanoseconds_value,
                   core::u32 pass_draw_calls,
-                  bool gpu_available) noexcept
+                  bool gpu_available,
+                  core::u32 pass_dispatch_calls = 0U) noexcept
     {
         if (pass_count >= max_timed_passes) {
             return;
@@ -81,6 +87,7 @@ struct FrameTimingReport final {
         timing.name = pass_name;
         timing.cpu_nanoseconds = cpu_nanoseconds_value;
         timing.draw_calls = pass_draw_calls;
+        timing.dispatch_calls = pass_dispatch_calls;
         timing.gpu_time_valid = gpu_available;
         draw_calls += pass_draw_calls;
     }
@@ -96,6 +103,7 @@ struct PassTimingAggregate final {
     core::u64 gpu_min_nanoseconds = std::numeric_limits<core::u64>::max();
     core::u64 gpu_max_nanoseconds = 0;
     core::u64 draw_calls = 0;
+    core::u64 dispatch_calls = 0;
     core::u64 gpu_sample_count = 0;
 };
 
@@ -103,6 +111,7 @@ struct TimingAccumulator final {
     std::array<PassTimingAggregate, max_timed_passes> passes{};
     core::u64 frame_count = 0;
     core::u64 total_draw_calls = 0;
+    core::u64 total_dispatch_calls = 0;
     core::u64 total_instances = 0;
     core::u64 visible_instances = 0;
     core::u64 culled_instances = 0;
@@ -116,6 +125,9 @@ struct TimingAccumulator final {
     core::u64 gpu_source_buffer_bytes = 0;
     core::u64 gpu_visible_buffer_bytes = 0;
     core::u64 gpu_indirect_buffer_bytes = 0;
+    core::u32 benchmark_light_count = 0;
+    benchmark::LightingPath benchmark_path = benchmark::LightingPath::forward;
+    bool benchmark_active = false;
     gpu_culling::VisibilityMode visibility_mode = gpu_culling::VisibilityMode::cpu;
     bool gpu_culling_available = false;
     bool gpu_culling_active = false;
@@ -127,6 +139,7 @@ struct TimingAccumulator final {
         passes = {};
         frame_count = 0;
         total_draw_calls = 0;
+        total_dispatch_calls = 0;
         total_instances = 0;
         visible_instances = 0;
         culled_instances = 0;
@@ -140,6 +153,9 @@ struct TimingAccumulator final {
         gpu_source_buffer_bytes = 0;
         gpu_visible_buffer_bytes = 0;
         gpu_indirect_buffer_bytes = 0;
+        benchmark_light_count = 0;
+        benchmark_path = benchmark::LightingPath::forward;
+        benchmark_active = false;
         visibility_mode = gpu_culling::VisibilityMode::cpu;
         gpu_culling_available = false;
         gpu_culling_active = false;
@@ -151,6 +167,9 @@ struct TimingAccumulator final {
     {
         ++frame_count;
         total_draw_calls += report.draw_calls;
+        for (core::u32 index = 0; index < report.pass_count; ++index) {
+            total_dispatch_calls += report.passes[index].dispatch_calls;
+        }
         total_instances += report.total_instances;
         visible_instances += report.visible_instances;
         culled_instances += report.culled_instances;
@@ -168,6 +187,9 @@ struct TimingAccumulator final {
         gpu_source_buffer_bytes = report.gpu_source_buffer_bytes;
         gpu_visible_buffer_bytes = report.gpu_visible_buffer_bytes;
         gpu_indirect_buffer_bytes = report.gpu_indirect_buffer_bytes;
+        benchmark_light_count = report.benchmark_light_count;
+        benchmark_path = report.benchmark_path;
+        benchmark_active = report.benchmark_active;
         visibility_mode = report.visibility_mode;
         gpu_culling_available = report.gpu_culling_available;
         gpu_culling_active = report.gpu_culling_active;
@@ -197,6 +219,7 @@ struct TimingAccumulator final {
             aggregate->cpu_max_nanoseconds =
                 std::max(aggregate->cpu_max_nanoseconds, timing.cpu_nanoseconds);
             aggregate->draw_calls += timing.draw_calls;
+            aggregate->dispatch_calls += timing.dispatch_calls;
             if (timing.gpu_time_valid) {
                 ++aggregate->gpu_sample_count;
                 aggregate->gpu_total_nanoseconds += timing.gpu_nanoseconds;
@@ -245,5 +268,8 @@ void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
 [[nodiscard]] core::Status set_procedural_workload(const gameengine::rhi::Renderer& renderer,
                                                    core::u32 instance_count) noexcept;
 void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
+[[nodiscard]] core::Status run_renderer_benchmark(
+    const gameengine::rhi::Renderer& renderer,
+    bool use_gpu_culling) noexcept;
 
 } // namespace gameengine::renderer::diagnostics

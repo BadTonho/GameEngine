@@ -34,7 +34,8 @@ bool test_deterministic_order_and_resource_dependency() noexcept
     }
     const auto order = graph.execution_order();
     return order.size() == 2U && order[0].index == producer.index &&
-           order[1].index == consumer.index && graph.pass_draw_calls(consumer) == 3U;
+           order[1].index == consumer.index && graph.pass_draw_calls(consumer) == 3U &&
+           graph.pass_dispatch_calls(consumer) == 0U;
 }
 
 bool test_validation_errors() noexcept
@@ -171,7 +172,40 @@ bool test_gpu_cull_dependency() noexcept
     const auto order = graph.execution_order();
     return order.size() == 2U && order[0].index == cull.index &&
            order[1].index == forward.index && graph.pass_draw_calls(cull) == 0U &&
-           graph.pass_draw_calls(forward) == 1U;
+           graph.pass_dispatch_calls(cull) == 0U && graph.pass_draw_calls(forward) == 1U;
+}
+
+bool test_lighting_prototype_dependencies() noexcept
+{
+    RenderGraph graph;
+    ResourceHandle input;
+    ResourceHandle output;
+    ResourceHandle color;
+    if (!graph.add_resource({"light_input", ResourceKind::storage_buffer, true}, input).ok() ||
+        !graph.add_resource({"light_lists", ResourceKind::storage_buffer, true}, output).ok() ||
+        !graph.add_resource({"color", ResourceKind::color_attachment, true}, color).ok()) {
+        return false;
+    }
+
+    const std::array<ResourceHandle, 1> compute_reads = {input};
+    const std::array<ResourceHandle, 1> compute_writes = {output};
+    PassHandle compute;
+    if (!graph.add_pass({"forward_plus_light_cull", compute_reads, compute_writes, {}, 0U, 1U},
+                        compute)
+             .ok()) {
+        return false;
+    }
+    const std::array<ResourceHandle, 1> forward_reads = {output};
+    const std::array<ResourceHandle, 1> forward_writes = {color};
+    PassHandle forward;
+    if (!graph.add_pass({"forward_opaque", forward_reads, forward_writes, {}, 1U, 0U}, forward)
+             .ok() ||
+        !graph.compile().ok()) {
+        return false;
+    }
+    const auto order = graph.execution_order();
+    return order.size() == 2U && order[0].index == compute.index &&
+           order[1].index == forward.index && graph.pass_dispatch_calls(compute) == 1U;
 }
 
 } // namespace
@@ -179,7 +213,8 @@ bool test_gpu_cull_dependency() noexcept
 int main()
 {
     return test_deterministic_order_and_resource_dependency() && test_validation_errors() &&
-                   test_cycle_and_same_pass_conflict() && test_gpu_cull_dependency()
+                   test_cycle_and_same_pass_conflict() && test_gpu_cull_dependency() &&
+                   test_lighting_prototype_dependencies()
                ? 0
                : 1;
 }

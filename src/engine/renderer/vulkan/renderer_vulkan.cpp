@@ -27,6 +27,7 @@
 #include "engine/renderer/render_graph/render_graph.hpp"
 #include "engine/renderer/renderer_metrics.hpp"
 #include "engine/renderer/procedural_instances.hpp"
+#include "engine/renderer/renderer_benchmark.hpp"
 #include "engine/renderer/vulkan/shader_pipeline.hpp"
 #include "engine/renderer/vulkan/triangle_shaders.hpp"
 #include "engine/renderer/vulkan/vulkan_pipeline_cache.hpp"
@@ -42,6 +43,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 #include <new>
 #include <optional>
@@ -59,6 +61,7 @@ constexpr std::array<const char*, 1> device_extensions = {
 constexpr core::u32 frames_in_flight = 2;
 constexpr core::u32 timestamp_queries_per_frame = renderer::metrics::max_timed_passes * 2U;
 constexpr core::usize pipeline_cache_path_capacity = 512;
+constexpr core::u32 benchmark_output_capacity = 1'000'000U;
 
 [[nodiscard]] bool has_extension(const std::vector<VkExtensionProperties>& extensions,
                                  const char* name) noexcept
@@ -88,6 +91,16 @@ constexpr core::usize pipeline_cache_path_capacity = 512;
 struct ViewProjectionPushConstants final {
     math::Mat4 view_projection{};
 };
+
+struct BenchmarkComputePushConstants final {
+    core::u32 work_item_count = 0;
+    core::u32 input_count = 0;
+    core::u32 output_count = 0;
+    core::u32 path = 0;
+    core::u32 light_count = 0;
+};
+
+static_assert(sizeof(BenchmarkComputePushConstants) == 20U);
 
 static_assert(sizeof(ViewProjectionPushConstants) == 64U);
 static_assert(sizeof(ViewProjectionPushConstants) ==
@@ -215,6 +228,25 @@ struct Renderer::Impl final {
     VkDeviceSize gpu_indirect_slice_stride = 0;
     VkDeviceSize gpu_indirect_buffer_size = 0;
     VkMemoryPropertyFlags gpu_indirect_memory_properties = 0;
+    VkBuffer benchmark_input_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory benchmark_input_memory = VK_NULL_HANDLE;
+    void* benchmark_input_mapped = nullptr;
+    VkDeviceSize benchmark_input_size = 0;
+    VkMemoryPropertyFlags benchmark_input_memory_properties = 0;
+    VkBuffer benchmark_light_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory benchmark_light_memory = VK_NULL_HANDLE;
+    void* benchmark_light_mapped = nullptr;
+    VkDeviceSize benchmark_light_size = 0;
+    VkMemoryPropertyFlags benchmark_light_memory_properties = 0;
+    VkBuffer benchmark_output_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory benchmark_output_memory = VK_NULL_HANDLE;
+    VkDeviceSize benchmark_output_slice_stride = 0;
+    VkDeviceSize benchmark_output_size = 0;
+    VkPipeline benchmark_compute_pipeline = VK_NULL_HANDLE;
+    VkPipelineLayout benchmark_compute_pipeline_layout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout benchmark_descriptor_set_layout = VK_NULL_HANDLE;
+    VkDescriptorPool benchmark_descriptor_pool = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, frames_in_flight> benchmark_descriptor_sets{};
     renderer::vulkan::PipelineCacheIdentity pipeline_cache_identity{};
     VkQueryPool timestamp_query_pool = VK_NULL_HANDLE;
     PFN_vkResetQueryPool reset_query_pool = nullptr;
@@ -242,6 +274,7 @@ struct Renderer::Impl final {
     const renderer::vulkan::ShaderArtifact* vertex_shader_artifact = nullptr;
     const renderer::vulkan::ShaderArtifact* fragment_shader_artifact = nullptr;
     const renderer::vulkan::ShaderArtifact* compute_shader_artifact = nullptr;
+    const renderer::vulkan::ShaderArtifact* benchmark_compute_shader_artifact = nullptr;
     bool shader_hot_reload_enabled = false;
     scene::Scene bootstrap_scene;
     scene::Entity bootstrap_cube_entity{};
@@ -253,7 +286,13 @@ struct Renderer::Impl final {
     renderer::render_graph::ResourceHandle gpu_source_resource{};
     renderer::render_graph::ResourceHandle gpu_visible_resource{};
     renderer::render_graph::ResourceHandle gpu_indirect_resource{};
+    renderer::render_graph::ResourceHandle benchmark_input_resource{};
+    renderer::render_graph::ResourceHandle benchmark_output_resource{};
+    renderer::render_graph::ResourceHandle benchmark_gbuffer_resource{};
     renderer::render_graph::PassHandle gpu_cull_pass{};
+    renderer::render_graph::PassHandle benchmark_compute_pass{};
+    renderer::render_graph::PassHandle benchmark_gbuffer_pass{};
+    renderer::render_graph::PassHandle benchmark_lighting_pass{};
     renderer::render_graph::PassHandle forward_opaque_pass{};
     std::array<renderer::metrics::FrameTimingReport, frames_in_flight> frame_timing{};
     std::array<bool, frames_in_flight> timing_pending{};
@@ -264,6 +303,14 @@ struct Renderer::Impl final {
         renderer::gpu_culling::VisibilityMode::cpu;
     bool gpu_culling_available = false;
     bool gpu_culling_fallback = false;
+    bool benchmark_active = false;
+    renderer::benchmark::LightingPath benchmark_path =
+        renderer::benchmark::LightingPath::forward;
+    core::u32 benchmark_light_count = 0;
+    core::u32 benchmark_work_items = 0;
+    core::u64 startup_nanoseconds = 0;
+    std::array<renderer::benchmark::PointLight, renderer::benchmark::max_point_lights>
+        benchmark_lights{};
     rhi::BufferHandle cube_vertex_buffer{};
     rhi::BufferHandle cube_index_buffer{};
     rhi::PipelineHandle cube_pipeline{};
@@ -339,6 +386,11 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status create_gpu_culling_descriptors() noexcept;
     void destroy_gpu_culling_pipeline() noexcept;
     void resolve_gpu_visibility(core::u32 frame_index) noexcept;
+    [[nodiscard]] core::Status create_benchmark_resources() noexcept;
+    void destroy_benchmark_resources() noexcept;
+    [[nodiscard]] core::Status set_benchmark_case(
+        const renderer::benchmark::BenchmarkCase& benchmark_case) noexcept;
+    [[nodiscard]] core::Status run_renderer_benchmark(bool use_gpu_culling) noexcept;
     [[nodiscard]] core::Status create_bootstrap_material_resources() noexcept;
     [[nodiscard]] core::Status create_material_descriptors() noexcept;
     void destroy_material_resources() noexcept;
@@ -585,6 +637,7 @@ void Renderer::Impl::shutdown() noexcept
     }
 
     cleanup_swapchain();
+    destroy_benchmark_resources();
     destroy_gpu_culling_resources();
     destroy_procedural_instance_resources();
     destroy_timing_resources();
@@ -678,6 +731,7 @@ void Renderer::Impl::shutdown() noexcept
     vertex_shader_artifact = nullptr;
     fragment_shader_artifact = nullptr;
     compute_shader_artifact = nullptr;
+    benchmark_compute_shader_artifact = nullptr;
     shader_hot_reload_enabled = false;
     bootstrap_scene.clear();
     bootstrap_cube_entity = {};
@@ -999,12 +1053,17 @@ core::Status Renderer::Impl::select_shader_variants() noexcept
     const auto compute = renderer::vulkan::select_shader_variant(
         renderer::vulkan::bootstrap::compute_shader_variants,
         shader_capabilities);
-    if (vertex == nullptr || fragment == nullptr || compute == nullptr) {
+    const auto benchmark_compute = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::benchmark_compute_shader_variants,
+        shader_capabilities);
+    if (vertex == nullptr || fragment == nullptr || compute == nullptr ||
+        benchmark_compute == nullptr) {
         return core::Status{core::ErrorCode::shader_variant_unavailable};
     }
     vertex_shader_artifact = vertex;
     fragment_shader_artifact = fragment;
     compute_shader_artifact = compute;
+    benchmark_compute_shader_artifact = benchmark_compute;
     return core::Status{};
 }
 
@@ -1071,7 +1130,14 @@ core::Status Renderer::Impl::create_render_graph() noexcept
     gpu_source_resource = {};
     gpu_visible_resource = {};
     gpu_indirect_resource = {};
+    benchmark_input_resource = {};
+    benchmark_output_resource = {};
+    benchmark_gbuffer_resource = {};
     gpu_cull_pass = {};
+    benchmark_compute_pass = {};
+    benchmark_gbuffer_pass = {};
+    benchmark_lighting_pass = {};
+    forward_opaque_pass = {};
     if (!render_graph
              .add_resource({"swapchain_color", renderer::render_graph::ResourceKind::color_attachment,
                             true},
@@ -1085,7 +1151,7 @@ core::Status Renderer::Impl::create_render_graph() noexcept
         return core::Status{core::ErrorCode::vulkan_swapchain_failed};
     }
 
-    std::array<renderer::render_graph::ResourceHandle, 2> forward_reads{};
+    std::array<renderer::render_graph::ResourceHandle, 3> forward_reads{};
     core::u32 forward_read_count = 0U;
     if (visibility_mode == renderer::gpu_culling::VisibilityMode::gpu &&
         gpu_culling_available) {
@@ -1122,6 +1188,7 @@ core::Status Renderer::Impl::create_render_graph() noexcept
             .writes = cull_writes,
             .dependencies = {},
             .draw_calls = 0U,
+            .dispatch_calls = 1U,
         };
         if (!render_graph.add_pass(cull_pass, gpu_cull_pass).ok()) {
             return core::Status{core::ErrorCode::vulkan_swapchain_failed};
@@ -1130,20 +1197,98 @@ core::Status Renderer::Impl::create_render_graph() noexcept
         forward_read_count = 2U;
     }
 
+    const auto add_benchmark_resource = [this](const char* name,
+                                               renderer::render_graph::ResourceKind kind,
+                                               renderer::render_graph::ResourceHandle& handle) {
+        return render_graph.add_resource({name, kind, true}, handle).ok();
+    };
+    if (benchmark_active && benchmark_path != renderer::benchmark::LightingPath::forward) {
+        if (!add_benchmark_resource("benchmark_input",
+                                    renderer::render_graph::ResourceKind::storage_buffer,
+                                    benchmark_input_resource) ||
+            !add_benchmark_resource("benchmark_output",
+                                    renderer::render_graph::ResourceKind::storage_buffer,
+                                    benchmark_output_resource)) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+        std::array<renderer::render_graph::ResourceHandle, 3> compute_reads = {};
+        core::u32 compute_read_count = 1U;
+        compute_reads[0] = benchmark_input_resource;
+        if (visibility_mode == renderer::gpu_culling::VisibilityMode::gpu &&
+            gpu_culling_available) {
+            compute_reads[compute_read_count++] = gpu_visible_resource;
+            compute_reads[compute_read_count++] = gpu_indirect_resource;
+        }
+        const std::array<renderer::render_graph::ResourceHandle, 1> compute_writes = {
+            benchmark_output_resource,
+        };
+        const char* compute_name = benchmark_path == renderer::benchmark::LightingPath::forward_plus
+                                       ? "forward_plus_light_cull"
+                                       : benchmark_path == renderer::benchmark::LightingPath::clustered
+                                             ? "clustered_light_cull"
+                                             : "deferred_gbuffer";
+        const renderer::render_graph::PassDescription compute_pass{
+            .name = compute_name,
+            .reads = std::span<const renderer::render_graph::ResourceHandle>{compute_reads.data(),
+                                                                             compute_read_count},
+            .writes = compute_writes,
+            .dependencies = {},
+            .draw_calls = 0U,
+            .dispatch_calls = 1U,
+        };
+        if (!render_graph.add_pass(compute_pass,
+                                   benchmark_path == renderer::benchmark::LightingPath::deferred
+                                       ? benchmark_gbuffer_pass
+                                       : benchmark_compute_pass)
+                 .ok()) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+        if (benchmark_path == renderer::benchmark::LightingPath::forward_plus ||
+            benchmark_path == renderer::benchmark::LightingPath::clustered) {
+            forward_reads[forward_read_count++] = benchmark_output_resource;
+        } else {
+            benchmark_gbuffer_resource = benchmark_output_resource;
+        }
+    }
+
     const std::array<renderer::render_graph::ResourceHandle, 2> writes = {
         swapchain_color_resource,
         depth_resource,
     };
-    const renderer::render_graph::PassDescription forward_pass{
-        .name = "forward_opaque",
-        .reads = std::span<const renderer::render_graph::ResourceHandle>{forward_reads.data(),
-                                                                         forward_read_count},
-        .writes = writes,
-        .dependencies = {},
-        .draw_calls = 1U,
-    };
-    if (!render_graph.add_pass(forward_pass, forward_opaque_pass).ok() ||
-        !render_graph.compile().ok()) {
+    if (benchmark_active && benchmark_path == renderer::benchmark::LightingPath::deferred) {
+        std::array<renderer::render_graph::ResourceHandle, 3> deferred_reads = {};
+        core::u32 deferred_read_count = 1U;
+        deferred_reads[0] = benchmark_gbuffer_resource;
+        if (visibility_mode == renderer::gpu_culling::VisibilityMode::gpu &&
+            gpu_culling_available) {
+            deferred_reads[deferred_read_count++] = gpu_visible_resource;
+            deferred_reads[deferred_read_count++] = gpu_indirect_resource;
+        }
+        const renderer::render_graph::PassDescription lighting_pass{
+            .name = "deferred_lighting",
+            .reads = std::span<const renderer::render_graph::ResourceHandle>{deferred_reads.data(),
+                                                                             deferred_read_count},
+            .writes = writes,
+            .dependencies = {},
+            .draw_calls = 1U,
+        };
+        if (!render_graph.add_pass(lighting_pass, benchmark_lighting_pass).ok()) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+    } else {
+        const renderer::render_graph::PassDescription forward_pass{
+            .name = "forward_opaque",
+            .reads = std::span<const renderer::render_graph::ResourceHandle>{forward_reads.data(),
+                                                                             forward_read_count},
+            .writes = writes,
+            .dependencies = {},
+            .draw_calls = 1U,
+        };
+        if (!render_graph.add_pass(forward_pass, forward_opaque_pass).ok()) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+    }
+    if (!render_graph.compile().ok()) {
         return core::Status{core::ErrorCode::vulkan_swapchain_failed};
     }
     return core::Status{};
@@ -2422,6 +2567,519 @@ void Renderer::Impl::destroy_gpu_culling_resources() noexcept
     gpu_culling_available = false;
 }
 
+core::Status Renderer::Impl::create_benchmark_resources() noexcept
+{
+    if (!gpu_culling_available || benchmark_compute_shader_artifact == nullptr) {
+        return core::Status{core::ErrorCode::unsupported_platform};
+    }
+    destroy_benchmark_resources();
+
+    benchmark_input_size = static_cast<VkDeviceSize>(
+        renderer::procedural::maximum_instance_count * sizeof(std::uint32_t));
+    if (!create_buffer_resource(benchmark_input_size,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                benchmark_input_buffer,
+                                benchmark_input_memory,
+                                &benchmark_input_memory_properties)
+             .ok() ||
+        vkMapMemory(device,
+                    benchmark_input_memory,
+                    0,
+                    benchmark_input_size,
+                    0,
+                    &benchmark_input_mapped) != VK_SUCCESS) {
+        destroy_benchmark_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    auto* input = static_cast<std::uint32_t*>(benchmark_input_mapped);
+    for (core::u32 index = 0; index < renderer::procedural::maximum_instance_count; ++index) {
+        input[index] = index * 2654435761U;
+    }
+    if ((benchmark_input_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
+        const VkDeviceSize atom_size = std::max<VkDeviceSize>(
+            static_cast<VkDeviceSize>(instance_non_coherent_atom_size), 1U);
+        const VkDeviceSize flush_size = std::min(
+            benchmark_input_size,
+            ((benchmark_input_size + atom_size - 1U) / atom_size) * atom_size);
+        const VkMappedMemoryRange range{
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = benchmark_input_memory,
+            .offset = 0,
+            .size = flush_size,
+        };
+        if (vkFlushMappedMemoryRanges(device, 1, &range) != VK_SUCCESS) {
+            destroy_benchmark_resources();
+            return core::Status{core::ErrorCode::vulkan_device_failed};
+        }
+    }
+
+    benchmark_light_size = static_cast<VkDeviceSize>(
+        renderer::benchmark::max_point_lights * sizeof(renderer::benchmark::PointLight));
+    if (!create_buffer_resource(benchmark_light_size,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                benchmark_light_buffer,
+                                benchmark_light_memory,
+                                &benchmark_light_memory_properties)
+             .ok() ||
+        vkMapMemory(device,
+                    benchmark_light_memory,
+                    0,
+                    benchmark_light_size,
+                    0,
+                    &benchmark_light_mapped) != VK_SUCCESS) {
+        destroy_benchmark_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    std::memcpy(benchmark_light_mapped, benchmark_lights.data(), benchmark_light_size);
+    if ((benchmark_light_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
+        const VkDeviceSize atom_size = std::max<VkDeviceSize>(
+            static_cast<VkDeviceSize>(instance_non_coherent_atom_size), 1U);
+        const VkDeviceSize flush_size = ((benchmark_light_size + atom_size - 1U) / atom_size) *
+                                         atom_size;
+        const VkMappedMemoryRange range{
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = benchmark_light_memory,
+            .offset = 0,
+            .size = flush_size,
+        };
+        if (vkFlushMappedMemoryRanges(device, 1, &range) != VK_SUCCESS) {
+            destroy_benchmark_resources();
+            return core::Status{core::ErrorCode::vulkan_device_failed};
+        }
+    }
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physical_device, &properties);
+    const VkDeviceSize output_alignment = std::max<VkDeviceSize>(
+        static_cast<VkDeviceSize>(properties.limits.minStorageBufferOffsetAlignment), 16U);
+    const VkDeviceSize output_data_size =
+        static_cast<VkDeviceSize>(benchmark_output_capacity) * sizeof(std::uint32_t);
+    benchmark_output_slice_stride = ((output_data_size + output_alignment - 1U) /
+                                     output_alignment) *
+                                    output_alignment;
+    benchmark_output_size = benchmark_output_slice_stride * frames_in_flight;
+    if (!create_buffer_resource(benchmark_output_size,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                benchmark_output_buffer,
+                                benchmark_output_memory)
+             .ok()) {
+        destroy_benchmark_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    const std::array<VkDescriptorSetLayoutBinding, 3> bindings = {
+        VkDescriptorSetLayoutBinding{0,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_COMPUTE_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{1,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_COMPUTE_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{2,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_COMPUTE_BIT,
+                                     nullptr},
+    };
+    const VkDescriptorSetLayoutCreateInfo layout_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = static_cast<std::uint32_t>(bindings.size()),
+        .pBindings = bindings.data(),
+    };
+    if (vkCreateDescriptorSetLayout(device,
+                                    &layout_info,
+                                    nullptr,
+                                    &benchmark_descriptor_set_layout) != VK_SUCCESS) {
+        destroy_benchmark_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkDescriptorPoolSize pool_size{
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        static_cast<std::uint32_t>(bindings.size()) * frames_in_flight,
+    };
+    const VkDescriptorPoolCreateInfo pool_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = frames_in_flight,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+    };
+    if (vkCreateDescriptorPool(device,
+                               &pool_info,
+                               nullptr,
+                               &benchmark_descriptor_pool) != VK_SUCCESS) {
+        destroy_benchmark_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const std::array<VkDescriptorSetLayout, frames_in_flight> layouts = {
+        benchmark_descriptor_set_layout,
+        benchmark_descriptor_set_layout,
+    };
+    const VkDescriptorSetAllocateInfo allocate_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = benchmark_descriptor_pool,
+        .descriptorSetCount = frames_in_flight,
+        .pSetLayouts = layouts.data(),
+    };
+    if (vkAllocateDescriptorSets(device, &allocate_info, benchmark_descriptor_sets.data()) !=
+        VK_SUCCESS) {
+        destroy_benchmark_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    for (core::u32 index = 0; index < frames_in_flight; ++index) {
+        const std::array<VkDescriptorBufferInfo, 3> buffer_infos = {
+            VkDescriptorBufferInfo{benchmark_input_buffer, 0, benchmark_input_size},
+            VkDescriptorBufferInfo{benchmark_output_buffer,
+                                   benchmark_output_slice_stride * index,
+                                   output_data_size},
+            VkDescriptorBufferInfo{benchmark_light_buffer, 0, benchmark_light_size},
+        };
+        std::array<VkWriteDescriptorSet, 3> writes{};
+        for (core::u32 binding = 0; binding < writes.size(); ++binding) {
+            writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[binding].dstSet = benchmark_descriptor_sets[index];
+            writes[binding].dstBinding = binding;
+            writes[binding].descriptorCount = 1;
+            writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[binding].pBufferInfo = &buffer_infos[binding];
+        }
+        vkUpdateDescriptorSets(device,
+                               static_cast<std::uint32_t>(writes.size()),
+                               writes.data(),
+                               0,
+                               nullptr);
+    }
+
+    const VkPushConstantRange push_constant_range{
+        VK_SHADER_STAGE_COMPUTE_BIT,
+        0,
+        sizeof(BenchmarkComputePushConstants),
+    };
+    const VkPipelineLayoutCreateInfo pipeline_layout_info{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &benchmark_descriptor_set_layout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push_constant_range,
+    };
+    if (vkCreatePipelineLayout(device,
+                               &pipeline_layout_info,
+                               nullptr,
+                               &benchmark_compute_pipeline_layout) != VK_SUCCESS) {
+        destroy_benchmark_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkShaderModule shader_module = create_shader_module(
+        benchmark_compute_shader_artifact->spirv,
+        benchmark_compute_shader_artifact->spirv_word_count * sizeof(std::uint32_t));
+    if (shader_module == VK_NULL_HANDLE) {
+        destroy_benchmark_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkPipelineShaderStageCreateInfo stage_info{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = shader_module,
+        .pName = benchmark_compute_shader_artifact->entry_point.data(),
+    };
+    const VkComputePipelineCreateInfo pipeline_info{
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = stage_info,
+        .layout = benchmark_compute_pipeline_layout,
+    };
+    const VkResult pipeline_result = vkCreateComputePipelines(device,
+                                                              pipeline_cache,
+                                                              1,
+                                                              &pipeline_info,
+                                                              nullptr,
+                                                              &benchmark_compute_pipeline);
+    vkDestroyShaderModule(device, shader_module, nullptr);
+    if (pipeline_result != VK_SUCCESS) {
+        destroy_benchmark_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    set_debug_name(VK_OBJECT_TYPE_PIPELINE,
+                   reinterpret_cast<std::uint64_t>(benchmark_compute_pipeline),
+                   "GameEngine.BenchmarkComputePipeline");
+    return core::Status{};
+}
+
+void Renderer::Impl::destroy_benchmark_resources() noexcept
+{
+    if (device == VK_NULL_HANDLE) {
+        return;
+    }
+    if (benchmark_compute_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, benchmark_compute_pipeline, nullptr);
+        benchmark_compute_pipeline = VK_NULL_HANDLE;
+    }
+    if (benchmark_compute_pipeline_layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, benchmark_compute_pipeline_layout, nullptr);
+        benchmark_compute_pipeline_layout = VK_NULL_HANDLE;
+    }
+    if (benchmark_descriptor_pool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, benchmark_descriptor_pool, nullptr);
+        benchmark_descriptor_pool = VK_NULL_HANDLE;
+    }
+    if (benchmark_descriptor_set_layout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device, benchmark_descriptor_set_layout, nullptr);
+        benchmark_descriptor_set_layout = VK_NULL_HANDLE;
+    }
+    benchmark_descriptor_sets = {};
+    if (benchmark_input_mapped != nullptr && benchmark_input_memory != VK_NULL_HANDLE) {
+        vkUnmapMemory(device, benchmark_input_memory);
+    }
+    benchmark_input_mapped = nullptr;
+    if (benchmark_input_buffer != VK_NULL_HANDLE || benchmark_input_memory != VK_NULL_HANDLE) {
+        destroy_buffer_resource(benchmark_input_buffer, benchmark_input_memory);
+    }
+    if (benchmark_output_buffer != VK_NULL_HANDLE || benchmark_output_memory != VK_NULL_HANDLE) {
+        destroy_buffer_resource(benchmark_output_buffer, benchmark_output_memory);
+    }
+    benchmark_input_buffer = VK_NULL_HANDLE;
+    benchmark_input_memory = VK_NULL_HANDLE;
+    benchmark_input_size = 0;
+    benchmark_input_memory_properties = 0;
+    if (benchmark_light_mapped != nullptr && benchmark_light_memory != VK_NULL_HANDLE) {
+        vkUnmapMemory(device, benchmark_light_memory);
+    }
+    benchmark_light_mapped = nullptr;
+    if (benchmark_light_buffer != VK_NULL_HANDLE || benchmark_light_memory != VK_NULL_HANDLE) {
+        destroy_buffer_resource(benchmark_light_buffer, benchmark_light_memory);
+    }
+    benchmark_light_buffer = VK_NULL_HANDLE;
+    benchmark_light_memory = VK_NULL_HANDLE;
+    benchmark_light_size = 0;
+    benchmark_light_memory_properties = 0;
+    benchmark_output_buffer = VK_NULL_HANDLE;
+    benchmark_output_memory = VK_NULL_HANDLE;
+    benchmark_output_slice_stride = 0;
+    benchmark_output_size = 0;
+    benchmark_active = false;
+    benchmark_path = renderer::benchmark::LightingPath::forward;
+    benchmark_light_count = 0;
+    benchmark_work_items = 0;
+    benchmark_lights = {};
+}
+
+core::Status Renderer::Impl::set_benchmark_case(
+    const renderer::benchmark::BenchmarkCase& benchmark_case) noexcept
+{
+    if (benchmark_case.instance_count == 0U ||
+        benchmark_case.instance_count > renderer::procedural::maximum_instance_count ||
+        benchmark_case.light_count == 0U ||
+        benchmark_case.light_count > renderer::benchmark::max_point_lights ||
+        !renderer::benchmark::generate_point_lights(benchmark_case.light_count,
+                                                    benchmark_lights)) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+    if (benchmark_light_mapped == nullptr || benchmark_light_memory == VK_NULL_HANDLE) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    std::memcpy(benchmark_light_mapped, benchmark_lights.data(), benchmark_light_size);
+    if ((benchmark_light_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
+        const VkDeviceSize atom_size = std::max<VkDeviceSize>(
+            static_cast<VkDeviceSize>(instance_non_coherent_atom_size), 1U);
+        const VkDeviceSize flush_size = ((benchmark_light_size + atom_size - 1U) / atom_size) *
+                                         atom_size;
+        const VkMappedMemoryRange range{
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = benchmark_light_memory,
+            .offset = 0,
+            .size = flush_size,
+        };
+        if (vkFlushMappedMemoryRanges(device, 1, &range) != VK_SUCCESS) {
+            return core::Status{core::ErrorCode::vulkan_device_failed};
+        }
+    }
+    const core::Status workload_status = set_procedural_workload(benchmark_case.instance_count);
+    if (!workload_status) {
+        return workload_status;
+    }
+    benchmark_active = true;
+    benchmark_path = benchmark_case.path;
+    benchmark_light_count = benchmark_case.light_count;
+    benchmark_work_items = renderer::benchmark::dispatch_work_items(
+        benchmark_path,
+        swapchain_extent.width == 0U ? last_window_size.width : swapchain_extent.width,
+        swapchain_extent.height == 0U ? last_window_size.height : swapchain_extent.height,
+        benchmark_case.instance_count,
+        benchmark_case.light_count);
+    return create_render_graph();
+}
+
+core::Status Renderer::Impl::run_renderer_benchmark(bool use_gpu_culling) noexcept
+{
+    if (device == VK_NULL_HANDLE || !gpu_culling_available ||
+        !benchmark_compute_shader_artifact) {
+        std::fprintf(stderr,
+                     "[gameengine] [info] renderer benchmark: unavailable (compute support)\n");
+        return core::Status{core::ErrorCode::unsupported_platform};
+    }
+    if (vkDeviceWaitIdle(device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const core::Status resource_status = create_benchmark_resources();
+    if (!resource_status) {
+        return resource_status;
+    }
+
+    std::error_code directory_error;
+    std::filesystem::create_directories("build/renderer-benchmarks", directory_error);
+    if (directory_error) {
+        destroy_benchmark_resources();
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+    std::FILE* report_file = nullptr;
+#if defined(_WIN32)
+    static_cast<void>(fopen_s(&report_file,
+                              "build/renderer-benchmarks/lighting_benchmark_v1.txt",
+                              "w"));
+#else
+    report_file = std::fopen("build/renderer-benchmarks/lighting_benchmark_v1.txt", "w");
+#endif
+    if (report_file == nullptr) {
+        destroy_benchmark_resources();
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+
+    visibility_mode = use_gpu_culling ? renderer::gpu_culling::VisibilityMode::gpu
+                                      : renderer::gpu_culling::VisibilityMode::cpu;
+    gpu_culling_fallback = false;
+    timing_accumulator.reset();
+    VkPhysicalDeviceProperties device_properties{};
+    vkGetPhysicalDeviceProperties(physical_device, &device_properties);
+    VkPhysicalDeviceMemoryProperties memory_properties{};
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+    core::u64 device_local_heap_bytes = 0;
+    for (core::u32 index = 0; index < memory_properties.memoryHeapCount; ++index) {
+        if ((memory_properties.memoryHeaps[index].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0U) {
+            device_local_heap_bytes += memory_properties.memoryHeaps[index].size;
+        }
+    }
+    std::fprintf(report_file,
+                 "gameengine_renderer_benchmark_v1\nbackend=vulkan\ndevice=%s\nvendor_id=%u\n"
+                 "device_id=%u\nstartup_ns=%llu\nculling=%s\n",
+                 device_properties.deviceName,
+                 device_properties.vendorID,
+                 device_properties.deviceID,
+                 static_cast<unsigned long long>(startup_nanoseconds),
+                 use_gpu_culling ? "gpu" : "cpu");
+    std::fprintf(stdout,
+                 "[gameengine] [info] renderer benchmark v1 device=%s culling=%s\n",
+                 device_properties.deviceName,
+                 use_gpu_culling ? "gpu" : "cpu");
+
+    for (core::u32 case_index = 0; case_index < renderer::benchmark::case_count; ++case_index) {
+        const renderer::benchmark::BenchmarkCase benchmark_case =
+            renderer::benchmark::make_case(case_index);
+        if (vkDeviceWaitIdle(device) != VK_SUCCESS || !set_benchmark_case(benchmark_case)) {
+            std::fclose(report_file);
+            destroy_benchmark_resources();
+            benchmark_active = false;
+            static_cast<void>(create_render_graph());
+            return core::Status{core::ErrorCode::vulkan_device_failed};
+        }
+        timing_accumulator.reset();
+        for (core::u32 frame = 0; frame < renderer::benchmark::frames_per_case; ++frame) {
+            const core::Status frame_status = render_frame(last_window_size);
+            if (!frame_status) {
+                std::fclose(report_file);
+                destroy_benchmark_resources();
+                benchmark_active = false;
+                static_cast<void>(create_render_graph());
+                return frame_status;
+            }
+            if (frame + 1U == renderer::benchmark::warmup_frames) {
+                if (vkDeviceWaitIdle(device) != VK_SUCCESS) {
+                    std::fclose(report_file);
+                    destroy_benchmark_resources();
+                    benchmark_active = false;
+                    static_cast<void>(create_render_graph());
+                    return core::Status{core::ErrorCode::vulkan_device_failed};
+                }
+                resolve_all_timing();
+                timing_accumulator.reset();
+            }
+        }
+        if (vkDeviceWaitIdle(device) != VK_SUCCESS) {
+            std::fclose(report_file);
+            destroy_benchmark_resources();
+            benchmark_active = false;
+            static_cast<void>(create_render_graph());
+            return core::Status{core::ErrorCode::vulkan_device_failed};
+        }
+        resolve_all_timing();
+        const renderer::benchmark::ProcessMemorySnapshot memory =
+            renderer::benchmark::read_process_memory();
+        const core::u64 reserved_bytes = benchmark_input_size + benchmark_output_size +
+                                         gpu_visible_buffer_size + gpu_indirect_buffer_size;
+        std::fprintf(report_file,
+                     "case=%u path=%s instances=%u lights=%u frames=%llu draws=%llu dispatches=%llu "
+                     "visible=%llu culled=%llu ram_current=%llu ram_peak=%llu ram_available=%s "
+                     "vram_heap=%llu vram_reserved=%llu\n",
+                     case_index,
+                     renderer::benchmark::path_name(benchmark_path),
+                     benchmark_case.instance_count,
+                     benchmark_case.light_count,
+                     static_cast<unsigned long long>(timing_accumulator.frame_count),
+                     static_cast<unsigned long long>(timing_accumulator.total_draw_calls),
+                     static_cast<unsigned long long>(timing_accumulator.total_dispatch_calls),
+                     static_cast<unsigned long long>(timing_accumulator.visible_instances),
+                     static_cast<unsigned long long>(timing_accumulator.culled_instances),
+                     static_cast<unsigned long long>(memory.current_bytes),
+                     static_cast<unsigned long long>(memory.peak_bytes),
+                     memory.available ? "yes" : "no",
+                     static_cast<unsigned long long>(device_local_heap_bytes),
+                     static_cast<unsigned long long>(reserved_bytes));
+        for (const auto& pass : timing_accumulator.passes) {
+            if (pass.name.empty() || pass.sample_count == 0U) {
+                continue;
+            }
+            std::fprintf(report_file,
+                         "pass=%.*s cpu_avg_ns=%llu cpu_min_ns=%llu cpu_max_ns=%llu "
+                         "gpu_avg_ns=%llu gpu_samples=%llu draws=%llu dispatches=%llu\n",
+                         static_cast<int>(pass.name.size()),
+                         pass.name.data(),
+                         static_cast<unsigned long long>(pass.cpu_total_nanoseconds /
+                                                         pass.sample_count),
+                         static_cast<unsigned long long>(pass.cpu_min_nanoseconds),
+                         static_cast<unsigned long long>(pass.cpu_max_nanoseconds),
+                         static_cast<unsigned long long>(pass.gpu_sample_count == 0U
+                                                             ? 0U
+                                                             : pass.gpu_total_nanoseconds /
+                                                                   pass.gpu_sample_count),
+                         static_cast<unsigned long long>(pass.gpu_sample_count),
+                         static_cast<unsigned long long>(pass.draw_calls),
+                         static_cast<unsigned long long>(pass.dispatch_calls));
+        }
+        std::fprintf(stdout,
+                     "[gameengine] [info] benchmark case=%u path=%s instances=%u lights=%u "
+                     "frames=%llu draws=%llu dispatches=%llu\n",
+                     case_index,
+                     renderer::benchmark::path_name(benchmark_path),
+                     benchmark_case.instance_count,
+                     benchmark_case.light_count,
+                     static_cast<unsigned long long>(timing_accumulator.frame_count),
+                     static_cast<unsigned long long>(timing_accumulator.total_draw_calls),
+                     static_cast<unsigned long long>(timing_accumulator.total_dispatch_calls));
+    }
+
+    std::fclose(report_file);
+    destroy_benchmark_resources();
+    benchmark_active = false;
+    benchmark_path = renderer::benchmark::LightingPath::forward;
+    benchmark_light_count = 0;
+    benchmark_work_items = 0;
+    timing_accumulator.reset();
+    return create_render_graph();
+}
+
 core::Status Renderer::Impl::set_visibility_mode(
     renderer::gpu_culling::VisibilityMode mode) noexcept
 {
@@ -3596,6 +4254,9 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                  use_gpu_culling,
                  gpu_culling_fallback);
     timing.total_instances = active_instance_count;
+    timing.benchmark_active = benchmark_active;
+    timing.benchmark_path = benchmark_path;
+    timing.benchmark_light_count = benchmark_light_count;
     timing.instance_buffer_bytes = instance_buffer_size;
     timing.gpu_source_buffer_bytes = gpu_source_buffer_size;
     timing.gpu_visible_buffer_bytes = gpu_visible_buffer_size;
@@ -3768,10 +4429,103 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                     std::chrono::duration_cast<std::chrono::nanoseconds>(pass_end - pass_start)
                         .count()),
                 0U,
-                gpu_timestamps_enabled);
+                gpu_timestamps_enabled,
+                1U);
             continue;
         }
-        if (pass.index != forward_opaque_pass.index || pass_name != "forward_opaque") {
+        const bool is_benchmark_compute =
+            benchmark_active &&
+            (pass.index == benchmark_compute_pass.index || pass.index == benchmark_gbuffer_pass.index);
+        if (is_benchmark_compute) {
+            const auto pass_start = std::chrono::steady_clock::now();
+            const core::u32 query_base =
+                frame_index * timestamp_queries_per_frame + timing.pass_count * 2U;
+            if (gpu_timestamps_enabled) {
+                vkCmdWriteTimestamp(command_buffer,
+                                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                    timestamp_query_pool,
+                                    query_base);
+            }
+            const BenchmarkComputePushConstants push_constants{
+                .work_item_count = benchmark_work_items,
+                .input_count = active_instance_count,
+                .output_count = benchmark_output_capacity,
+                .path = static_cast<core::u32>(benchmark_path),
+                .light_count = benchmark_light_count,
+            };
+            begin_debug_label(command_buffer, pass_name == "deferred_gbuffer"
+                                                 ? "GameEngine.DeferredGBuffer"
+                                                 : "GameEngine.LightListBuild");
+            vkCmdBindPipeline(command_buffer,
+                              VK_PIPELINE_BIND_POINT_COMPUTE,
+                              benchmark_compute_pipeline);
+            vkCmdBindDescriptorSets(command_buffer,
+                                    VK_PIPELINE_BIND_POINT_COMPUTE,
+                                    benchmark_compute_pipeline_layout,
+                                    0,
+                                    1,
+                                    &benchmark_descriptor_sets[frame_index],
+                                    0,
+                                    nullptr);
+            vkCmdPushConstants(command_buffer,
+                               benchmark_compute_pipeline_layout,
+                               VK_SHADER_STAGE_COMPUTE_BIT,
+                               0,
+                               sizeof(push_constants),
+                               &push_constants);
+            vkCmdDispatch(command_buffer,
+                          renderer::gpu_culling::dispatch_group_count(benchmark_work_items),
+                          1,
+                          1);
+            const VkBufferMemoryBarrier output_barrier{
+                .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_SHADER_READ_BIT |
+                                 VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT |
+                                 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .buffer = benchmark_output_buffer,
+                .offset = benchmark_output_slice_stride * frame_index,
+                .size = static_cast<VkDeviceSize>(benchmark_output_capacity) *
+                        sizeof(std::uint32_t),
+            };
+            vkCmdPipelineBarrier(command_buffer,
+                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                                     VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
+                                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                 0,
+                                 0,
+                                 nullptr,
+                                 1,
+                                 &output_barrier,
+                                 0,
+                                 nullptr);
+            end_debug_label(command_buffer);
+            if (gpu_timestamps_enabled) {
+                vkCmdWriteTimestamp(command_buffer,
+                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                    timestamp_query_pool,
+                                    query_base + 1U);
+            }
+            const auto pass_end = std::chrono::steady_clock::now();
+            timing.add_pass(
+                pass_name,
+                static_cast<core::u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(pass_end - pass_start)
+                        .count()),
+                0U,
+                gpu_timestamps_enabled,
+                1U);
+            continue;
+        }
+        const bool is_forward_pass = pass.index == forward_opaque_pass.index &&
+                                     pass_name == "forward_opaque";
+        const bool is_deferred_pass = pass.index == benchmark_lighting_pass.index &&
+                                      pass_name == "deferred_lighting";
+        if (!is_forward_pass && !is_deferred_pass) {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         const auto pass_start = std::chrono::steady_clock::now();
@@ -4038,6 +4792,7 @@ core::Status Renderer::initialize(const platform::Platform& platform,
         return core::Status{core::ErrorCode::invalid_argument};
     }
 
+    const auto startup_start = std::chrono::steady_clock::now();
     impl_ = new (std::nothrow) Impl{};
     if (impl_ == nullptr) {
         return core::Status{core::ErrorCode::allocation_failed};
@@ -4052,6 +4807,10 @@ core::Status Renderer::initialize(const platform::Platform& platform,
         impl_ = nullptr;
         return status;
     }
+    impl_->startup_nanoseconds = static_cast<core::u64>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() -
+                                                              startup_start)
+            .count());
     initialized_ = true;
     return core::Status{};
 }
@@ -4309,6 +5068,15 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
         }
         std::fputc('\n', stderr);
     }
+}
+
+core::Status run_renderer_benchmark(const gameengine::rhi::Renderer& renderer,
+                                    bool use_gpu_culling) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    return renderer.impl_->run_renderer_benchmark(use_gpu_culling);
 }
 
 } // namespace gameengine::renderer::diagnostics

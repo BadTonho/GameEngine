@@ -96,3 +96,46 @@ buffer sizes and the CPU fallback state. The diagnostic bridge is internal; the 
 ABI do not expose the report. The current baseline remains CPU visibility and one forward pass;
 Forward+, clustered and deferred lighting, shadows, IBL and quality fallbacks require later
 measurements before becoming architecture commitments.
+
+## Lighting benchmark prototypes
+
+Phase 7D adds an isolated development benchmark. It does not change the normal renderer path or
+the public RHI. The benchmark uses the same procedural cube and generates point lights in a stable
+golden-angle sequence. It evaluates four paths in a fixed order (`forward`, `forward_plus`,
+`clustered`, `deferred`) for 1k, 10k and 100k instances combined with 1, 32 and 256 lights,
+using 10 warmup frames and 30 measured frames per case. CPU culling is the default; passing
+`--gpu-culling` selects the opt-in GPU culling path when compute resources are available.
+
+The command is:
+
+```text
+gameengine_runtime --renderer-benchmark
+gameengine_runtime --renderer-benchmark --gpu-culling
+```
+
+The benchmark records startup, pass CPU/GPU timing when timestamps are supported, draw/dispatch
+counts, workload sizes and resource bytes. RAM and device-local heap data are reported as
+`unavailable` when the platform or Vulkan implementation does not expose them. Output is written
+to stdout and to the ignored local file
+`build/renderer-benchmarks/lighting_benchmark_v1.txt`; no benchmark numbers are versioned.
+
+The experimental graph shapes are:
+
+```text
+scene
+  ↓
+visibility mode
+  ↓
+CPU culling or gpu_cull
+  ↓
+light-list compute / G-buffer proxy
+  ↓
+forward or deferred lighting
+  ↓
+Vulkan command buffer
+```
+
+Forward+ uses 16x16 tiles, Clustered uses 16x16x24 clusters, and Deferred keeps a minimal
+G-buffer-shaped benchmark pass. These prototypes measure structure and cost only; they are not a
+final quality implementation. No path is selected automatically. Shadows, IBL, quality levels,
+VRAM policy and the final lighting architecture remain pending measurements on reference hardware.

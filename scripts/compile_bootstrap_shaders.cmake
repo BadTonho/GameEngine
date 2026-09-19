@@ -8,6 +8,7 @@ endif()
 set(_expected_slang_version "2026.13.1-1-g84792eb15")
 set(_shader_source "${_repository_dir}/assets/shaders/bootstrap/triangle.slang")
 set(_compute_shader_source "${_repository_dir}/assets/shaders/bootstrap/cull.slang")
+set(_benchmark_shader_source "${_repository_dir}/assets/shaders/bootstrap/benchmark.slang")
 set(_default_header "${_repository_dir}/src/engine/renderer/vulkan/triangle_shaders.hpp")
 set(_default_reflection_dir "${_repository_dir}/build/shader-reflection")
 set(_default_cache_dir "${_repository_dir}/build/shader-cache")
@@ -58,6 +59,9 @@ endif()
 if(NOT EXISTS "${_compute_shader_source}")
     message(FATAL_ERROR "Compute shader source does not exist: ${_compute_shader_source}")
 endif()
+if(NOT EXISTS "${_benchmark_shader_source}")
+    message(FATAL_ERROR "Benchmark shader source does not exist: ${_benchmark_shader_source}")
+endif()
 
 execute_process(
     COMMAND "${_slangc}" -version
@@ -86,6 +90,7 @@ get_filename_component(_header_directory "${_shader_header}" DIRECTORY)
 file(MAKE_DIRECTORY "${_header_directory}")
 file(SHA256 "${_shader_source}" _source_sha256)
 file(SHA256 "${_compute_shader_source}" _compute_source_sha256)
+file(SHA256 "${_benchmark_shader_source}" _benchmark_source_sha256)
 
 set(_base_manifest
     "schema=1\n"
@@ -153,12 +158,20 @@ function(_validate_shader_outputs _stage _entry _output _reflection)
                     "Vertex reflection is missing instance input '${_input_name}': ${_reflection}")
             endif()
         endforeach()
-    elseif(_stage STREQUAL "compute")
+    elseif(_stage STREQUAL "compute" AND _entry STREQUAL "compute_main")
         foreach(_resource_name IN ITEMS source_instances visible_instances indirect_commands)
             string(FIND "${_reflection_content}" "\"name\": \"${_resource_name}\"" _resource_position)
             if(_resource_position EQUAL -1)
                 message(FATAL_ERROR
                     "Compute reflection is missing resource '${_resource_name}': ${_reflection}")
+            endif()
+        endforeach()
+    elseif(_stage STREQUAL "compute" AND _entry STREQUAL "benchmark_compute_main")
+        foreach(_resource_name IN ITEMS benchmark_input benchmark_output benchmark_lights)
+            string(FIND "${_reflection_content}" "\"name\": \"${_resource_name}\"" _resource_position)
+            if(_resource_position EQUAL -1)
+                message(FATAL_ERROR
+                    "Benchmark reflection is missing resource '${_resource_name}': ${_reflection}")
             endif()
         endforeach()
     endif()
@@ -235,9 +248,11 @@ endfunction()
 _make_shader_identity("${_source_sha256}" vertex vertex_main _vertex_id _vertex_manifest)
 _make_shader_identity("${_source_sha256}" fragment fragment_main _fragment_id _fragment_manifest)
 _make_shader_identity("${_compute_source_sha256}" compute compute_main _compute_id _compute_manifest)
+_make_shader_identity("${_benchmark_source_sha256}" compute benchmark_compute_main _benchmark_compute_id _benchmark_compute_manifest)
 _compile_shader("${_shader_source}" vertex vertex_main "${_vertex_id}" "${_vertex_manifest}" _vertex_spirv _vertex_reflection)
 _compile_shader("${_shader_source}" fragment fragment_main "${_fragment_id}" "${_fragment_manifest}" _fragment_spirv _fragment_reflection)
 _compile_shader("${_compute_shader_source}" compute compute_main "${_compute_id}" "${_compute_manifest}" _compute_spirv _compute_reflection)
+_compile_shader("${_benchmark_shader_source}" compute benchmark_compute_main "${_benchmark_compute_id}" "${_benchmark_compute_manifest}" _benchmark_compute_spirv _benchmark_compute_reflection)
 
 function(_read_spirv_words _path _symbol _result)
     file(READ "${_path}" _hex HEX)
@@ -261,6 +276,7 @@ endfunction()
 _read_spirv_words("${_vertex_spirv}" vertex_shader _vertex_array)
 _read_spirv_words("${_fragment_spirv}" fragment_shader _fragment_array)
 _read_spirv_words("${_compute_spirv}" compute_shader _compute_array)
+_read_spirv_words("${_benchmark_compute_spirv}" benchmark_compute_shader _benchmark_compute_array)
 
 file(WRITE "${_shader_header}" "#pragma once\n\n")
 file(APPEND "${_shader_header}"
@@ -274,6 +290,7 @@ file(APPEND "${_shader_header}"
     "inline constexpr std::string_view shader_configuration = \"${_configuration}\";\n"
     "inline constexpr std::string_view shader_source_sha256 = \"${_source_sha256}\";\n"
     "inline constexpr std::string_view compute_shader_source_sha256 = \"${_compute_source_sha256}\";\n"
+    "inline constexpr std::string_view benchmark_compute_shader_source_sha256 = \"${_benchmark_source_sha256}\";\n"
     "inline constexpr std::string_view shader_vertex_layout = \"position3_normal3_uv2+instance_model4\";\n"
     "inline constexpr std::uint32_t shader_push_constant_size = 64U;\n"
     "inline constexpr std::string_view shader_vertex_inputs =\n"
@@ -284,7 +301,11 @@ file(APPEND "${_shader_header}"
     "inline constexpr std::string_view compute_shader_resource_layout =\n"
     "    \"set0:storage_buffer+storage_buffer+storage_buffer\";\n"
     "inline constexpr std::uint32_t compute_shader_workgroup_size = 64U;\n")
-file(APPEND "${_shader_header}" "${_vertex_array}${_fragment_array}${_compute_array}\n")
+file(APPEND "${_shader_header}"
+    "inline constexpr std::string_view benchmark_compute_resource_layout =\n"
+    "    \"set0:storage_buffer+storage_buffer+storage_buffer\";\n"
+    "inline constexpr std::uint32_t benchmark_compute_workgroup_size = 64U;\n")
+file(APPEND "${_shader_header}" "${_vertex_array}${_fragment_array}${_compute_array}${_benchmark_compute_array}\n")
 file(APPEND "${_shader_header}"
     "inline constexpr std::string_view vertex_shader_id = \"${_vertex_id}\";\n"
     "inline constexpr std::string_view fragment_shader_id = \"${_fragment_id}\";\n"
@@ -309,6 +330,14 @@ file(APPEND "${_shader_header}"
     "};\n"
     "inline constexpr std::array<ShaderArtifact, 1> compute_shader_variants = {\n"
     "    compute_shader_artifact,\n"
+    "};\n"
+    "inline constexpr std::string_view benchmark_compute_shader_id = \"${_benchmark_compute_id}\";\n"
+    "inline constexpr ShaderArtifact benchmark_compute_shader_artifact{\n"
+    "    benchmark_compute_shader_id, ShaderStage::compute, \"benchmark_compute_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, benchmark_compute_shader.data(), benchmark_compute_shader.size()\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> benchmark_compute_shader_variants = {\n"
+    "    benchmark_compute_shader_artifact,\n"
     "};\n\n"
     "} // namespace gameengine::renderer::vulkan::bootstrap\n")
 

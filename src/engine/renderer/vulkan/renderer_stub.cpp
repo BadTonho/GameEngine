@@ -109,4 +109,11 @@ void print_metrics(const gameengine::rhi::Renderer&) noexcept
     std::fprintf(stderr, "[gameengine] [info] renderer metrics unavailable\n");
 }
 
+core::Status run_renderer_benchmark(const gameengine::rhi::Renderer&, bool) noexcept
+{
+    std::fprintf(stderr,
+                 "[gameengine] [info] renderer benchmark: unavailable (Vulkan disabled)\n");
+    return core::Status{};
+}
+
 } // namespace gameengine::renderer::diagnostics

@@ -277,6 +277,22 @@ for opaque depth-tested geometry. The lighting architecture, shadows, IBL, quali
 policy and performance comparison between Forward+, Clustered and Deferred remain open Phase 7
 work.
 
+### Phase 7D validation status
+
+- [x] Add a deterministic internal `--renderer-benchmark` protocol with 36 fixed workload cases.
+- [x] Generate procedural point lights and report Forward, Forward+, Clustered and Deferred
+  prototype pass structure without requiring external models or textures.
+- [x] Add offline Slang compute artifacts for the benchmark and keep the generated header as the
+  runtime fallback.
+- [x] Report startup, CPU/GPU pass timing, draws, dispatches and available RAM/VRAM/resource
+  metrics without versioning numeric benchmark results.
+- [ ] Choose the production lighting architecture from reference-hardware measurements.
+- [ ] Implement production-quality Forward+, Clustered or Deferred lighting, shadows and IBL.
+
+The benchmark is intentionally isolated from the normal renderer. Unsupported Vulkan builds print
+`unavailable` and exit successfully; no automatic architecture decision is made from synthetic
+workloads.
+
 ### Completion criteria
 
 The renderer supports a larger scene, provides scalable graphics paths and reports measured per-pass costs on reference hardware.

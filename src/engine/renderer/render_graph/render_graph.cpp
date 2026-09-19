@@ -84,6 +84,7 @@ core::Status RenderGraph::add_pass(const PassDescription& description, PassHandl
     pass.writes.assign(description.writes.begin(), description.writes.end());
     pass.dependencies.assign(description.dependencies.begin(), description.dependencies.end());
     pass.draw_calls = description.draw_calls;
+    pass.dispatch_calls = description.dispatch_calls;
     passes_.push_back(std::move(pass));
     handle.index = static_cast<core::u32>(passes_.size() - 1U);
     last_error_ = CompileError::none;
@@ -234,6 +235,11 @@ std::span<const ResourceHandle> RenderGraph::pass_writes(PassHandle handle) cons
 core::u32 RenderGraph::pass_draw_calls(PassHandle handle) const noexcept
 {
     return valid_pass(handle) ? passes_[handle.index].draw_calls : 0U;
+}
+
+core::u32 RenderGraph::pass_dispatch_calls(PassHandle handle) const noexcept
+{
+    return valid_pass(handle) ? passes_[handle.index].dispatch_calls : 0U;
 }
 
 bool RenderGraph::valid_resource(ResourceHandle handle) const noexcept

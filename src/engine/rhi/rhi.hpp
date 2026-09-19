@@ -23,6 +23,9 @@ void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
 [[nodiscard]] core::Status set_procedural_workload(const gameengine::rhi::Renderer& renderer,
                                                    core::u32 instance_count) noexcept;
 void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
+[[nodiscard]] core::Status run_renderer_benchmark(
+    const gameengine::rhi::Renderer& renderer,
+    bool use_gpu_culling) noexcept;
 
 } // namespace gameengine::renderer::diagnostics
 
@@ -163,6 +166,9 @@ private:
         const Renderer& renderer,
         core::u32 instance_count) noexcept;
     friend void renderer::diagnostics::print_metrics(const Renderer& renderer) noexcept;
+    friend core::Status renderer::diagnostics::run_renderer_benchmark(
+        const Renderer& renderer,
+        bool use_gpu_culling) noexcept;
 
     Impl* impl_ = nullptr;
     bool initialized_ = false;

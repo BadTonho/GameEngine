@@ -25,24 +25,29 @@ int main(int argc, char** argv)
 #if GAMEENGINE_PLATFORM_HAS_WINDOW
     bool smoke_test = false;
     bool metrics_test = false;
+    bool renderer_benchmark = false;
     bool gpu_culling = false;
     for (int index = 1; index < argc; ++index) {
         if (std::strcmp(argv[index], "--smoke-test") == 0) {
             smoke_test = true;
         } else if (std::strcmp(argv[index], "--metrics") == 0) {
             metrics_test = true;
+        } else if (std::strcmp(argv[index], "--renderer-benchmark") == 0) {
+            renderer_benchmark = true;
         } else if (std::strcmp(argv[index], "--gpu-culling") == 0) {
             gpu_culling = true;
         } else {
             gameengine::core::log(gameengine::core::LogLevel::error,
-                                  "unknown argument; use --smoke-test, --metrics or --gpu-culling");
+                                  "unknown argument; use --smoke-test, --metrics, "
+                                  "--renderer-benchmark or --gpu-culling");
             core.shutdown();
             return 2;
         }
     }
-    if (smoke_test && metrics_test) {
+    if ((smoke_test && metrics_test) || (smoke_test && renderer_benchmark) ||
+        (metrics_test && renderer_benchmark)) {
         gameengine::core::log(gameengine::core::LogLevel::error,
-                              "--smoke-test and --metrics cannot be combined");
+                              "--smoke-test, --metrics and --renderer-benchmark are exclusive");
         core.shutdown();
         return 2;
     }
@@ -89,6 +94,23 @@ int main(int argc, char** argv)
             return 6;
         }
     }
+    if (renderer_benchmark) {
+        const gameengine::core::Status benchmark_status =
+            gameengine::renderer::diagnostics::run_renderer_benchmark(renderer, gpu_culling);
+        if (!benchmark_status &&
+            benchmark_status.code != gameengine::core::ErrorCode::unsupported_platform) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  gameengine::core::to_string(benchmark_status.code));
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+        renderer.shutdown();
+        platform.shutdown();
+        core.shutdown();
+        return 0;
+    }
 #endif
 
     gameengine::core::Clock clock;
@@ -107,6 +129,14 @@ int main(int argc, char** argv)
     (void)metrics_warmup_frames;
     (void)metrics_measured_frames;
     (void)metrics_frames_per_workload;
+
+    if (renderer_benchmark) {
+        gameengine::core::log(gameengine::core::LogLevel::info,
+                              "renderer benchmark: unavailable (Vulkan disabled)");
+        platform.shutdown();
+        core.shutdown();
+        return 0;
+    }
 #endif
 #if GAMEENGINE_RENDERER_HAS_VULKAN
     if (metrics_test) {
@@ -170,6 +200,8 @@ int main(int argc, char** argv)
             platform.request_close();
 #if !GAMEENGINE_RENDERER_HAS_VULKAN
         } else if (metrics_test) {
+            platform.request_close();
+        } else if (renderer_benchmark) {
             platform.request_close();
 #endif
         } else {

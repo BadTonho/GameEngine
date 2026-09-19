@@ -61,6 +61,7 @@ struct PassDescription final {
     std::span<const ResourceHandle> writes{};
     std::span<const PassHandle> dependencies{};
     core::u32 draw_calls = 0;
+    core::u32 dispatch_calls = 0;
 };
 
 class RenderGraph final {
@@ -87,6 +88,7 @@ public:
     [[nodiscard]] std::span<const ResourceHandle> pass_reads(PassHandle handle) const noexcept;
     [[nodiscard]] std::span<const ResourceHandle> pass_writes(PassHandle handle) const noexcept;
     [[nodiscard]] core::u32 pass_draw_calls(PassHandle handle) const noexcept;
+    [[nodiscard]] core::u32 pass_dispatch_calls(PassHandle handle) const noexcept;
 
 private:
     struct StoredPass final {
@@ -95,6 +97,7 @@ private:
         std::vector<ResourceHandle> writes;
         std::vector<PassHandle> dependencies;
         core::u32 draw_calls = 0;
+        core::u32 dispatch_calls = 0;
     };
 
     [[nodiscard]] bool valid_resource(ResourceHandle handle) const noexcept;

@@ -23,7 +23,7 @@ The complete direction is documented in [Idea.md](Idea.md). The implementation s
 
 ## Current status
 
-Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7A now adds the first measurable renderer foundation:
+Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7D now includes the first measurable renderer foundation and deterministic lighting-path benchmark:
 
 - CMake 3.25+ project using C++20 without compiler extensions;
 - `gameengine_core` with fixed-width types, status values, diagnostics, clock and input state;
@@ -42,6 +42,8 @@ Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7
 - internal `Vec3`/`Mat4` math with right-handed Vulkan-compatible perspective and look-at transforms;
 - deterministic procedural instancing with a persistent per-frame host-visible instance buffer and CPU frustum culling;
 - opt-in Vulkan compute culling with atomic compaction, persistent GPU buffers and indexed indirect drawing, with CPU fallback;
+- an internal `--renderer-benchmark` mode comparing procedural Forward, Forward+, Clustered and Deferred prototypes over deterministic 1k/10k/100k instance and 1/32/256 light workloads;
+- versioned benchmark reports in `build/renderer-benchmarks/lighting_benchmark_v1.txt`, with explicit unavailable markers for unsupported RAM/VRAM metrics;
 - generation-checked handles and fence-based deferred resource destruction;
 - Vulkan object names and command labels through `VK_EXT_debug_utils`;
 - `gameengine_tests`, `gameengine_asset_tests`, `gameengine_rhi_tests`, `gameengine_math_tests`, `gameengine_scene_tests`, render graph, renderer metrics, platform and shader pipeline tests without an external test framework;
@@ -56,7 +58,7 @@ The following are intentionally outside the current procedural renderer scope:
 - asset-file texture/material loading;
 - runtime shader file loading, automatic polling and editor integration;
 - prepared asset runtime integration, editor, Lua and a final ECS storage choice;
-- shadows, IBL, quality levels and the final Forward+/Clustered/Deferred decision;
+- shadows, IBL, quality levels and the final Forward+/Clustered/Deferred decision based on reference hardware;
 - physics, audio, networking or gameplay APIs;
 - a functional C ABI.
 
