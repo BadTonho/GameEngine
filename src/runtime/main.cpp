@@ -5,6 +5,7 @@
 #include "engine/renderer/renderer_metrics.hpp"
 #include "engine/rhi/rhi.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <cstdint>
@@ -64,8 +65,27 @@ int main(int argc, char** argv)
 
     gameengine::core::Clock clock;
     std::uint32_t metrics_frame_count = 0;
-    constexpr std::uint32_t metrics_warmup_frames = 30;
-    constexpr std::uint32_t metrics_total_frames = 90;
+    std::size_t metrics_workload_index = 0;
+    constexpr std::array<std::uint32_t, 3> metrics_workloads = {1'000U, 10'000U, 100'000U};
+    constexpr std::uint32_t metrics_warmup_frames = 10;
+    constexpr std::uint32_t metrics_measured_frames = 30;
+    constexpr std::uint32_t metrics_frames_per_workload =
+        metrics_warmup_frames + metrics_measured_frames;
+#if GAMEENGINE_RENDERER_HAS_VULKAN
+    if (metrics_test) {
+        const gameengine::core::Status workload_status =
+            gameengine::renderer::diagnostics::set_procedural_workload(
+                renderer, metrics_workloads[metrics_workload_index]);
+        if (!workload_status) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  gameengine::core::to_string(workload_status.code));
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+    }
+#endif
     do {
         platform.poll_events();
         const gameengine::core::f64 delta_seconds = clock.tick();
@@ -86,12 +106,30 @@ int main(int argc, char** argv)
         }
         if (metrics_test) {
             ++metrics_frame_count;
+            if (metrics_frame_count >= metrics_frames_per_workload) {
+                gameengine::renderer::diagnostics::print_metrics(renderer);
+                ++metrics_workload_index;
+                if (metrics_workload_index < metrics_workloads.size()) {
+                    const gameengine::core::Status workload_status =
+                        gameengine::renderer::diagnostics::set_procedural_workload(
+                            renderer, metrics_workloads[metrics_workload_index]);
+                    if (!workload_status) {
+                        gameengine::core::log(gameengine::core::LogLevel::error,
+                                              gameengine::core::to_string(workload_status.code));
+                        renderer.shutdown();
+                        platform.shutdown();
+                        core.shutdown();
+                        return 6;
+                    }
+                    metrics_frame_count = 0;
+                } else {
+                    platform.request_close();
+                }
+            }
         }
 #endif
 
         if (smoke_test) {
-            platform.request_close();
-        } else if (metrics_test && metrics_frame_count >= metrics_total_frames) {
             platform.request_close();
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -99,9 +137,6 @@ int main(int argc, char** argv)
     } while (!platform.should_close());
 
 #if GAMEENGINE_RENDERER_HAS_VULKAN
-    if (metrics_test) {
-        gameengine::renderer::diagnostics::print_metrics(renderer);
-    }
     renderer.shutdown();
 #endif
     platform.shutdown();

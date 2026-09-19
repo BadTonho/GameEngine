@@ -25,6 +25,7 @@
 #include "engine/math/math.hpp"
 #include "engine/renderer/render_graph/render_graph.hpp"
 #include "engine/renderer/renderer_metrics.hpp"
+#include "engine/renderer/procedural_instances.hpp"
 #include "engine/renderer/vulkan/shader_pipeline.hpp"
 #include "engine/renderer/vulkan/triangle_shaders.hpp"
 #include "engine/renderer/vulkan/vulkan_pipeline_cache.hpp"
@@ -39,9 +40,11 @@
 #include <cstddef>
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 #include <limits>
 #include <new>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -80,12 +83,13 @@ constexpr core::usize pipeline_cache_path_capacity = 512;
 #endif
 }
 
-struct BootstrapPushConstants final {
-    math::Mat4 model{};
+struct ViewProjectionPushConstants final {
     math::Mat4 view_projection{};
 };
 
-static_assert(sizeof(BootstrapPushConstants) == 128U);
+static_assert(sizeof(ViewProjectionPushConstants) == 64U);
+static_assert(sizeof(ViewProjectionPushConstants) ==
+              renderer::vulkan::bootstrap::shader_push_constant_size);
 
 } // namespace
 
@@ -181,6 +185,13 @@ struct Renderer::Impl final {
     VkDescriptorSet material_descriptor_set = VK_NULL_HANDLE;
     VkBuffer material_uniform_buffer = VK_NULL_HANDLE;
     VkDeviceMemory material_uniform_memory = VK_NULL_HANDLE;
+    VkBuffer instance_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory instance_memory = VK_NULL_HANDLE;
+    void* instance_mapped = nullptr;
+    VkDeviceSize instance_slice_stride = 0;
+    VkDeviceSize instance_buffer_size = 0;
+    VkDeviceSize instance_non_coherent_atom_size = 1;
+    VkMemoryPropertyFlags instance_memory_properties = 0;
     VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
     renderer::vulkan::PipelineCacheIdentity pipeline_cache_identity{};
     VkQueryPool timestamp_query_pool = VK_NULL_HANDLE;
@@ -220,6 +231,8 @@ struct Renderer::Impl final {
     std::array<renderer::metrics::FrameTimingReport, frames_in_flight> frame_timing{};
     std::array<bool, frames_in_flight> timing_pending{};
     renderer::metrics::TimingAccumulator timing_accumulator{};
+    std::vector<renderer::procedural::ProceduralInstance> procedural_instances;
+    core::u32 active_instance_count = renderer::procedural::default_instance_count;
     rhi::BufferHandle cube_vertex_buffer{};
     rhi::BufferHandle cube_index_buffer{};
     rhi::PipelineHandle cube_pipeline{};
@@ -283,6 +296,9 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status create_sync_objects() noexcept;
     [[nodiscard]] core::Status create_bootstrap_cube_resources() noexcept;
     [[nodiscard]] core::Status create_bootstrap_scene() noexcept;
+    [[nodiscard]] core::Status create_procedural_instance_resources() noexcept;
+    void destroy_procedural_instance_resources() noexcept;
+    [[nodiscard]] core::Status set_procedural_workload(core::u32 instance_count) noexcept;
     [[nodiscard]] core::Status create_bootstrap_material_resources() noexcept;
     [[nodiscard]] core::Status create_material_descriptors() noexcept;
     void destroy_material_resources() noexcept;
@@ -301,7 +317,9 @@ struct Renderer::Impl final {
                                                        VkBufferUsageFlags usage,
                                                        VkMemoryPropertyFlags properties,
                                                        VkBuffer& buffer,
-                                                       VkDeviceMemory& memory) noexcept;
+                                                       VkDeviceMemory& memory,
+                                                       VkMemoryPropertyFlags* allocated_properties =
+                                                           nullptr) noexcept;
     void destroy_buffer_resource(VkBuffer buffer, VkDeviceMemory memory) noexcept;
     void destroy_image_resource(ImageSlot& slot) noexcept;
     [[nodiscard]] core::Status create_image_view(ImageSlot& slot) noexcept;
@@ -468,6 +486,10 @@ core::Status Renderer::Impl::initialize(
     if (!status) {
         return status;
     }
+    status = create_procedural_instance_resources();
+    if (!status) {
+        return status;
+    }
     status = create_bootstrap_cube_resources();
     if (!status) {
         return status;
@@ -519,6 +541,7 @@ void Renderer::Impl::shutdown() noexcept
     }
 
     cleanup_swapchain();
+    destroy_procedural_instance_resources();
     destroy_timing_resources();
     destroy_material_resources();
     destroy_live_resources();
@@ -570,6 +593,15 @@ void Renderer::Impl::shutdown() noexcept
     frame_timing = {};
     timing_pending = {};
     timing_accumulator.reset();
+    instance_buffer = VK_NULL_HANDLE;
+    instance_memory = VK_NULL_HANDLE;
+    instance_mapped = nullptr;
+    instance_slice_stride = 0;
+    instance_buffer_size = 0;
+    instance_non_coherent_atom_size = 1;
+    instance_memory_properties = 0;
+    procedural_instances.clear();
+    active_instance_count = renderer::procedural::default_instance_count;
     shader_capabilities = {};
     vertex_shader_artifact = nullptr;
     fragment_shader_artifact = nullptr;
@@ -1436,11 +1468,15 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
         return core::Status{core::ErrorCode::vulkan_swapchain_failed};
     }
 
-    VkVertexInputBindingDescription vertex_binding{};
-    vertex_binding.binding = 0;
-    vertex_binding.stride = sizeof(scene::TexturedVertex);
-    vertex_binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    const std::array<VkVertexInputAttributeDescription, 3> vertex_attributes = {
+    const std::array<VkVertexInputBindingDescription, 2> vertex_bindings = {
+        VkVertexInputBindingDescription{0,
+                                        sizeof(scene::TexturedVertex),
+                                        VK_VERTEX_INPUT_RATE_VERTEX},
+        VkVertexInputBindingDescription{1,
+                                        sizeof(renderer::procedural::InstanceData),
+                                        VK_VERTEX_INPUT_RATE_INSTANCE},
+    };
+    const std::array<VkVertexInputAttributeDescription, 7> vertex_attributes = {
         VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
         VkVertexInputAttributeDescription{1,
                                           0,
@@ -1450,6 +1486,10 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
                                           0,
                                           VK_FORMAT_R32G32_SFLOAT,
                                           sizeof(math::Vec3) * 2U},
+        VkVertexInputAttributeDescription{3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0},
+        VkVertexInputAttributeDescription{4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(float) * 4U},
+        VkVertexInputAttributeDescription{5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(float) * 8U},
+        VkVertexInputAttributeDescription{6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(float) * 12U},
     };
     VkPipelineShaderStageCreateInfo vertex_stage{};
     vertex_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1465,8 +1505,9 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertex_input.vertexBindingDescriptionCount = 1;
-    vertex_input.pVertexBindingDescriptions = &vertex_binding;
+    vertex_input.vertexBindingDescriptionCount =
+        static_cast<std::uint32_t>(vertex_bindings.size());
+    vertex_input.pVertexBindingDescriptions = vertex_bindings.data();
     vertex_input.vertexAttributeDescriptionCount =
         static_cast<std::uint32_t>(vertex_attributes.size());
     vertex_input.pVertexAttributeDescriptions = vertex_attributes.data();
@@ -1528,7 +1569,7 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
         VkPushConstantRange push_constant_range{};
         push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         push_constant_range.offset = 0;
-        push_constant_range.size = sizeof(BootstrapPushConstants);
+        push_constant_range.size = sizeof(ViewProjectionPushConstants);
         VkPipelineLayoutCreateInfo layout_info{};
         layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         layout_info.setLayoutCount = 1;
@@ -1739,6 +1780,99 @@ core::Status Renderer::Impl::create_bootstrap_scene() noexcept
         !bootstrap_scene.update_transforms()) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_procedural_instance_resources() noexcept
+{
+    procedural_instances.resize(renderer::procedural::maximum_instance_count);
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physical_device, &properties);
+    const VkDeviceSize atom_size = std::max<VkDeviceSize>(
+        static_cast<VkDeviceSize>(properties.limits.nonCoherentAtomSize), 1U);
+    const VkDeviceSize instance_data_size =
+        static_cast<VkDeviceSize>(sizeof(renderer::procedural::InstanceData)) *
+        renderer::procedural::maximum_instance_count;
+    instance_slice_stride = ((instance_data_size + atom_size - 1U) / atom_size) * atom_size;
+    instance_buffer_size = instance_slice_stride * frames_in_flight;
+    instance_non_coherent_atom_size = atom_size;
+
+    core::Status status = create_buffer_resource(instance_buffer_size,
+                                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                                  instance_buffer,
+                                                  instance_memory,
+                                                  &instance_memory_properties);
+    if (!status) {
+        return status;
+    }
+
+    if (vkMapMemory(device,
+                    instance_memory,
+                    0,
+                    instance_buffer_size,
+                    0,
+                    &instance_mapped) != VK_SUCCESS) {
+        destroy_buffer_resource(instance_buffer, instance_memory);
+        instance_buffer = VK_NULL_HANDLE;
+        instance_memory = VK_NULL_HANDLE;
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    set_debug_name(VK_OBJECT_TYPE_BUFFER,
+                   reinterpret_cast<std::uint64_t>(instance_buffer),
+                   "GameEngine.ProceduralInstanceBuffer");
+
+    status = set_procedural_workload(renderer::procedural::default_instance_count);
+    if (!status) {
+        destroy_procedural_instance_resources();
+        return status;
+    }
+    return core::Status{};
+}
+
+void Renderer::Impl::destroy_procedural_instance_resources() noexcept
+{
+    if (device == VK_NULL_HANDLE) {
+        return;
+    }
+    if (instance_mapped != nullptr && instance_memory != VK_NULL_HANDLE) {
+        vkUnmapMemory(device, instance_memory);
+    }
+    instance_mapped = nullptr;
+    if (instance_buffer != VK_NULL_HANDLE || instance_memory != VK_NULL_HANDLE) {
+        destroy_buffer_resource(instance_buffer, instance_memory);
+    }
+    instance_buffer = VK_NULL_HANDLE;
+    instance_memory = VK_NULL_HANDLE;
+    instance_slice_stride = 0;
+    instance_buffer_size = 0;
+    instance_non_coherent_atom_size = 1;
+    instance_memory_properties = 0;
+    procedural_instances.clear();
+    active_instance_count = renderer::procedural::default_instance_count;
+}
+
+core::Status Renderer::Impl::set_procedural_workload(core::u32 instance_count) noexcept
+{
+    if (instance_count == 0U || instance_count > renderer::procedural::maximum_instance_count ||
+        procedural_instances.size() < instance_count) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+    if (!bootstrap_scene.update_transforms()) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+    const scene::TransformComponent* cube_transform =
+        bootstrap_scene.transform(bootstrap_cube_entity);
+    if (cube_transform == nullptr ||
+        !renderer::procedural::generate_instances(
+            instance_count,
+            cube_transform->world_matrix,
+            std::span<renderer::procedural::ProceduralInstance>{procedural_instances.data(),
+                                                                  instance_count})) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+    active_instance_count = instance_count;
     return core::Status{};
 }
 
@@ -1955,7 +2089,8 @@ core::Status Renderer::Impl::create_buffer_resource(VkDeviceSize size,
                                                     VkBufferUsageFlags usage,
                                                     VkMemoryPropertyFlags properties,
                                                     VkBuffer& buffer,
-                                                    VkDeviceMemory& memory) noexcept
+                                                    VkDeviceMemory& memory,
+                                                    VkMemoryPropertyFlags* allocated_properties) noexcept
 {
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -1973,6 +2108,12 @@ core::Status Renderer::Impl::create_buffer_resource(VkDeviceSize size,
     if (!status) {
         destroy_buffer_resource(buffer, memory);
         return status;
+    }
+
+    if (allocated_properties != nullptr) {
+        VkPhysicalDeviceMemoryProperties memory_properties{};
+        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+        *allocated_properties = memory_properties.memoryTypes[memory_type].propertyFlags;
     }
 
     VkMemoryAllocateInfo allocation_info{};
@@ -2838,16 +2979,13 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
     if (!bootstrap_scene.update_transforms()) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    const scene::TransformComponent* cube_transform =
-        bootstrap_scene.transform(bootstrap_cube_entity);
     const scene::TransformComponent* camera_transform =
         bootstrap_scene.transform(bootstrap_camera_entity);
     const scene::CameraComponent* camera_component =
         bootstrap_scene.camera(bootstrap_camera_entity);
     const scene::DirectionalLightComponent* light_component =
         bootstrap_scene.directional_light(bootstrap_light_entity);
-    if (cube_transform == nullptr || camera_transform == nullptr || camera_component == nullptr ||
-        light_component == nullptr) {
+    if (camera_transform == nullptr || camera_component == nullptr || light_component == nullptr) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     const math::Vec3 camera_position{
@@ -2880,12 +3018,70 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
     std::memcpy(material_mapped, &material_constants, sizeof(material_constants));
     vkUnmapMemory(device, material_uniform_memory);
 
+    const core::f32 aspect_ratio = static_cast<core::f32>(swapchain_extent.width) /
+                                    static_cast<core::f32>(swapchain_extent.height);
+    const math::Mat4 view = math::look_at_rh(
+        camera_position, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+    const math::Mat4 projection = math::perspective_rh_zo(
+        camera_component->vertical_field_of_view_radians,
+        aspect_ratio,
+        camera_component->near_plane,
+        camera_component->far_plane);
+    const math::Mat4 view_projection = math::multiply(projection, view);
+
+    frame_timing[frame_index].reset(gpu_timestamps_enabled);
+    frame_timing[frame_index].total_instances = active_instance_count;
+    frame_timing[frame_index].instance_buffer_bytes = instance_buffer_size;
+    const auto visibility_start = std::chrono::steady_clock::now();
+    math::Frustum frustum{};
+    static_cast<void>(math::extract_frustum_rh_zo(view_projection, frustum));
+    const VkDeviceSize instance_offset = instance_slice_stride * frame_index;
+    if (instance_mapped == nullptr || instance_buffer == VK_NULL_HANDLE ||
+        instance_offset + sizeof(renderer::procedural::InstanceData) * active_instance_count >
+            instance_buffer_size) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    auto* visible_data = reinterpret_cast<renderer::procedural::InstanceData*>(
+        static_cast<std::byte*>(instance_mapped) + instance_offset);
+    core::u32 visible_count = 0U;
+    if (!renderer::procedural::cull_instances(
+            std::span<const renderer::procedural::ProceduralInstance>{procedural_instances.data(),
+                                                                       active_instance_count},
+            frustum,
+            std::span<renderer::procedural::InstanceData>{visible_data, active_instance_count},
+            visible_count)) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const auto visibility_end = std::chrono::steady_clock::now();
+    frame_timing[frame_index].visible_instances = visible_count;
+    frame_timing[frame_index].culled_instances = active_instance_count - visible_count;
+    frame_timing[frame_index].visibility_cpu_nanoseconds = static_cast<core::u64>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(visibility_end - visibility_start)
+            .count());
+    if ((instance_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U &&
+        visible_count > 0U) {
+        const VkDeviceSize written_size =
+            static_cast<VkDeviceSize>(sizeof(renderer::procedural::InstanceData)) * visible_count;
+        const VkDeviceSize flush_size = std::min(
+            instance_slice_stride,
+            ((written_size + instance_non_coherent_atom_size - 1U) /
+             instance_non_coherent_atom_size) *
+                instance_non_coherent_atom_size);
+        const VkMappedMemoryRange range{
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = instance_memory,
+            .offset = instance_offset,
+            .size = flush_size,
+        };
+        if (vkFlushMappedMemoryRanges(device, 1, &range) != VK_SUCCESS) {
+            return VK_ERROR_DEVICE_LOST;
+        }
+    }
+
     const auto execution_order = render_graph.execution_order();
     if (execution_order.size() > renderer::metrics::max_timed_passes) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    frame_timing[frame_index].reset(gpu_timestamps_enabled);
-
     VkCommandBufferBeginInfo begin_info{};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     VkResult result = vkBeginCommandBuffer(command_buffer, &begin_info);
@@ -2928,24 +3124,21 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         scissor.extent = swapchain_extent;
         vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
-        const VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(command_buffer, 0, 1, &vertex_buffer->buffer, &offset);
-        vkCmdBindIndexBuffer(command_buffer, index_buffer->buffer, 0, VK_INDEX_TYPE_UINT16);
-        const core::f32 aspect_ratio = static_cast<core::f32>(swapchain_extent.width) /
-                                        static_cast<core::f32>(swapchain_extent.height);
-        const math::Mat4 model = cube_transform->world_matrix;
-        const math::Mat4 view = math::look_at_rh(
-            camera_position, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
-        const math::Mat4 projection = math::perspective_rh_zo(
-            camera_component->vertical_field_of_view_radians,
-            aspect_ratio,
-            camera_component->near_plane,
-            camera_component->far_plane);
-        const math::Mat4 view_projection = math::multiply(projection, view);
-        const BootstrapPushConstants push_constants{
-            .model = model,
-            .view_projection = view_projection,
+        const std::array<VkBuffer, 2> vertex_buffers = {
+            vertex_buffer->buffer,
+            instance_buffer,
         };
+        const std::array<VkDeviceSize, 2> vertex_offsets = {
+            0,
+            instance_offset,
+        };
+        vkCmdBindVertexBuffers(command_buffer,
+                               0,
+                               static_cast<std::uint32_t>(vertex_buffers.size()),
+                               vertex_buffers.data(),
+                               vertex_offsets.data());
+        vkCmdBindIndexBuffer(command_buffer, index_buffer->buffer, 0, VK_INDEX_TYPE_UINT16);
+        const ViewProjectionPushConstants push_constants{.view_projection = view_projection};
         begin_debug_label(command_buffer, "GameEngine.ForwardOpaque");
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
         vkCmdBindDescriptorSets(command_buffer,
@@ -2962,12 +3155,14 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                            0,
                            sizeof(push_constants),
                            &push_constants);
-        vkCmdDrawIndexed(command_buffer,
-                         static_cast<std::uint32_t>(scene::bootstrap_cube_indices.size()),
-                         1,
-                         0,
-                         0,
-                         0);
+        if (visible_count > 0U) {
+            vkCmdDrawIndexed(command_buffer,
+                             static_cast<std::uint32_t>(scene::bootstrap_cube_indices.size()),
+                             visible_count,
+                             0,
+                             0,
+                             0);
+        }
         end_debug_label(command_buffer);
         vkCmdEndRenderPass(command_buffer);
         if (gpu_timestamps_enabled) {
@@ -2984,7 +3179,7 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         frame_timing[frame_index].add_pass(
             render_graph.pass_name(pass),
             static_cast<core::u64>(cpu_nanoseconds),
-            render_graph.pass_draw_calls(pass),
+            visible_count > 0U ? 1U : 0U,
             gpu_timestamps_enabled);
     }
 
@@ -3305,6 +3500,24 @@ void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept
     renderer.impl_->timing_accumulator.reset();
 }
 
+core::Status set_procedural_workload(const gameengine::rhi::Renderer& renderer,
+                                     core::u32 instance_count) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    if (renderer.impl_->device == VK_NULL_HANDLE ||
+        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    renderer.impl_->resolve_all_timing();
+    const core::Status status = renderer.impl_->set_procedural_workload(instance_count);
+    if (status) {
+        renderer.impl_->timing_accumulator.reset();
+    }
+    return status;
+}
+
 void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
 {
     if (renderer.impl_ == nullptr) {
@@ -3319,11 +3532,30 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
     renderer.impl_->resolve_all_timing();
     const auto& accumulator = renderer.impl_->timing_accumulator;
     std::fprintf(stderr,
-                 "[gameengine] [info] renderer metrics: frames=%llu draw_calls=%llu "
-                 "gpu_timestamps=%s\n",
+                 "[gameengine] [info] renderer metrics: instances=%u frames=%llu "
+                 "draw_calls=%llu visible_avg=%llu culled_avg=%llu "
+                 "instance_buffer_bytes=%llu gpu_timestamps=%s\n",
+                 renderer.impl_->active_instance_count,
                  static_cast<unsigned long long>(accumulator.frame_count),
                  static_cast<unsigned long long>(accumulator.total_draw_calls),
+                 static_cast<unsigned long long>(accumulator.frame_count == 0U
+                                                     ? 0U
+                                                     : accumulator.visible_instances /
+                                                           accumulator.frame_count),
+                 static_cast<unsigned long long>(accumulator.frame_count == 0U
+                                                     ? 0U
+                                                     : accumulator.culled_instances /
+                                                           accumulator.frame_count),
+                 static_cast<unsigned long long>(accumulator.instance_buffer_bytes),
                  accumulator.gpu_timestamps_available ? "available" : "unavailable");
+    if (accumulator.frame_count > 0U) {
+        std::fprintf(stderr,
+                     "[gameengine] [info] visibility_cpu_ns(avg/min/max)=%llu/%llu/%llu\n",
+                     static_cast<unsigned long long>(accumulator.visibility_cpu_total_nanoseconds /
+                                                     accumulator.frame_count),
+                     static_cast<unsigned long long>(accumulator.visibility_cpu_min_nanoseconds),
+                     static_cast<unsigned long long>(accumulator.visibility_cpu_max_nanoseconds));
+    }
     for (const auto& pass : accumulator.passes) {
         if (pass.name.empty() || pass.sample_count == 0U) {
             continue;

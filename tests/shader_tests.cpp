@@ -38,7 +38,11 @@ int main()
 
     if (vertex_shader_artifact.entry_point != "vertex_main" ||
         fragment_shader_artifact.entry_point != "fragment_main" ||
-        shader_vertex_layout != "position3_normal3_uv2" ||
+        shader_vertex_layout != "position3_normal3_uv2+instance_model4" ||
+        shader_push_constant_size != 64U ||
+        shader_vertex_inputs !=
+            "location0:position3,location1:normal3,location2:uv2,location3:model_column0,"
+            "location4:model_column1,location5:model_column2,location6:model_column3" ||
         shader_resource_layout != "set0:uniform_buffer+sampled_image+sampler" ||
         vertex_shader_artifact.required_capabilities !=
             gameengine::renderer::vulkan::shader_capability_vulkan_1_0 ||

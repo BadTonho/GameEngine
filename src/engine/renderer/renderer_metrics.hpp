@@ -5,6 +5,7 @@
 #include <limits>
 #include <string_view>
 
+#include "engine/core/status.hpp"
 #include "engine/core/types.hpp"
 
 namespace gameengine::rhi {
@@ -27,6 +28,11 @@ struct FrameTimingReport final {
     std::array<PassTiming, max_timed_passes> passes{};
     core::u32 pass_count = 0;
     core::u32 draw_calls = 0;
+    core::u32 total_instances = 0;
+    core::u32 visible_instances = 0;
+    core::u32 culled_instances = 0;
+    core::u64 visibility_cpu_nanoseconds = 0;
+    core::u64 instance_buffer_bytes = 0;
     bool gpu_timestamps_available = false;
 
     void reset(bool gpu_available) noexcept
@@ -34,6 +40,11 @@ struct FrameTimingReport final {
         passes = {};
         pass_count = 0;
         draw_calls = 0;
+        total_instances = 0;
+        visible_instances = 0;
+        culled_instances = 0;
+        visibility_cpu_nanoseconds = 0;
+        instance_buffer_bytes = 0;
         gpu_timestamps_available = gpu_available;
     }
 
@@ -71,6 +82,13 @@ struct TimingAccumulator final {
     std::array<PassTimingAggregate, max_timed_passes> passes{};
     core::u64 frame_count = 0;
     core::u64 total_draw_calls = 0;
+    core::u64 total_instances = 0;
+    core::u64 visible_instances = 0;
+    core::u64 culled_instances = 0;
+    core::u64 visibility_cpu_total_nanoseconds = 0;
+    core::u64 visibility_cpu_min_nanoseconds = std::numeric_limits<core::u64>::max();
+    core::u64 visibility_cpu_max_nanoseconds = 0;
+    core::u64 instance_buffer_bytes = 0;
     bool gpu_timestamps_available = false;
 
     void reset() noexcept
@@ -78,6 +96,13 @@ struct TimingAccumulator final {
         passes = {};
         frame_count = 0;
         total_draw_calls = 0;
+        total_instances = 0;
+        visible_instances = 0;
+        culled_instances = 0;
+        visibility_cpu_total_nanoseconds = 0;
+        visibility_cpu_min_nanoseconds = std::numeric_limits<core::u64>::max();
+        visibility_cpu_max_nanoseconds = 0;
+        instance_buffer_bytes = 0;
         gpu_timestamps_available = false;
     }
 
@@ -85,6 +110,15 @@ struct TimingAccumulator final {
     {
         ++frame_count;
         total_draw_calls += report.draw_calls;
+        total_instances += report.total_instances;
+        visible_instances += report.visible_instances;
+        culled_instances += report.culled_instances;
+        visibility_cpu_total_nanoseconds += report.visibility_cpu_nanoseconds;
+        visibility_cpu_min_nanoseconds =
+            std::min(visibility_cpu_min_nanoseconds, report.visibility_cpu_nanoseconds);
+        visibility_cpu_max_nanoseconds =
+            std::max(visibility_cpu_max_nanoseconds, report.visibility_cpu_nanoseconds);
+        instance_buffer_bytes = report.instance_buffer_bytes;
         gpu_timestamps_available = gpu_timestamps_available ||
                                     report.gpu_timestamps_available;
         for (core::u32 index = 0; index < report.pass_count; ++index) {
@@ -152,6 +186,8 @@ struct TimingAccumulator final {
 namespace gameengine::renderer::diagnostics {
 
 void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
+[[nodiscard]] core::Status set_procedural_workload(const gameengine::rhi::Renderer& renderer,
+                                                   core::u32 instance_count) noexcept;
 void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
 
 } // namespace gameengine::renderer::diagnostics

@@ -92,6 +92,12 @@ namespace gameengine::renderer::diagnostics {
 
 void begin_metrics(const gameengine::rhi::Renderer&) noexcept {}
 
+core::Status set_procedural_workload(const gameengine::rhi::Renderer&,
+                                     core::u32) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
 void print_metrics(const gameengine::rhi::Renderer&) noexcept
 {
     std::fprintf(stderr, "[gameengine] [info] renderer metrics unavailable\n");

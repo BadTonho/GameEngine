@@ -126,6 +126,8 @@ target_include_directories(gameengine_rhi
 
 add_library(gameengine_renderer STATIC
     src/engine/rhi/rhi.hpp
+    src/engine/renderer/procedural_instances.cpp
+    src/engine/renderer/procedural_instances.hpp
     src/engine/renderer/render_graph/render_graph.cpp
     src/engine/renderer/render_graph/render_graph.hpp
     src/engine/renderer/renderer_metrics.hpp
@@ -265,6 +267,19 @@ if(GAMEENGINE_BUILD_TESTS)
     gameengine_configure_target(gameengine_renderer_metrics_tests)
     add_test(NAME gameengine_renderer_metrics COMMAND gameengine_renderer_metrics_tests)
 
+    add_executable(gameengine_renderer_instances_tests
+        tests/renderer_instances_tests.cpp
+    )
+    target_link_libraries(gameengine_renderer_instances_tests PRIVATE
+        gameengine_renderer
+        gameengine_core
+    )
+    target_include_directories(gameengine_renderer_instances_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    gameengine_configure_target(gameengine_renderer_instances_tests)
+    add_test(NAME gameengine_renderer_instances COMMAND gameengine_renderer_instances_tests)
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         find_program(GAMEENGINE_XVFB_RUN xvfb-run)
 
@@ -381,6 +396,7 @@ if(GAMEENGINE_BUILD_TESTS)
     set_tests_properties(gameengine_scene PROPERTIES LABELS "unit")
     set_tests_properties(gameengine_render_graph PROPERTIES LABELS "unit")
     set_tests_properties(gameengine_renderer_metrics PROPERTIES LABELS "unit")
+    set_tests_properties(gameengine_renderer_instances PROPERTIES LABELS "unit")
     if(TEST gameengine_shader_pipeline)
         set_tests_properties(gameengine_shader_pipeline PROPERTIES LABELS "shader")
     endif()

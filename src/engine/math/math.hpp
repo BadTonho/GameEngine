@@ -54,6 +54,16 @@ struct Mat4 final {
 static_assert(sizeof(Mat4) == sizeof(core::f32) * 16U);
 static_assert(sizeof(Quaternion) == sizeof(core::f32) * 4U);
 
+struct Plane final {
+    Vec3 normal{};
+    core::f32 distance = 0.0F;
+};
+
+struct Frustum final {
+    std::array<Plane, 6> planes{};
+    bool valid = false;
+};
+
 [[nodiscard]] constexpr Mat4 multiply(const Mat4& left, const Mat4& right) noexcept
 {
     Mat4 result{};
@@ -82,9 +92,40 @@ static_assert(sizeof(Quaternion) == sizeof(core::f32) * 4U);
     return {value.x * scalar, value.y * scalar, value.z * scalar};
 }
 
+[[nodiscard]] inline bool is_finite(const Vec3& value) noexcept
+{
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+[[nodiscard]] inline bool is_finite(const Mat4& value) noexcept
+{
+    for (const core::f32 component : value.values) {
+        if (!std::isfinite(component)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] constexpr core::f32 dot(const Vec3& left, const Vec3& right) noexcept
 {
     return left.x * right.x + left.y * right.y + left.z * right.z;
+}
+
+[[nodiscard]] inline Vec3 transform_point(const Mat4& matrix, const Vec3& point) noexcept
+{
+    const core::f32 x = matrix.at(0, 0) * point.x + matrix.at(0, 1) * point.y +
+                        matrix.at(0, 2) * point.z + matrix.at(0, 3);
+    const core::f32 y = matrix.at(1, 0) * point.x + matrix.at(1, 1) * point.y +
+                        matrix.at(1, 2) * point.z + matrix.at(1, 3);
+    const core::f32 z = matrix.at(2, 0) * point.x + matrix.at(2, 1) * point.y +
+                        matrix.at(2, 2) * point.z + matrix.at(2, 3);
+    const core::f32 w = matrix.at(3, 0) * point.x + matrix.at(3, 1) * point.y +
+                        matrix.at(3, 2) * point.z + matrix.at(3, 3);
+    if (std::fabs(w) <= 0.000001F || !std::isfinite(w)) {
+        return {x, y, z};
+    }
+    return {x / w, y / w, z / w};
 }
 
 [[nodiscard]] constexpr Vec3 cross(const Vec3& left, const Vec3& right) noexcept
@@ -237,9 +278,9 @@ static_assert(sizeof(Quaternion) == sizeof(core::f32) * 4U);
     result.at(0, 2) = side.z;
     result.at(1, 2) = corrected_up.z;
     result.at(2, 2) = -forward.z;
-    result.at(3, 0) = -dot(side, eye);
-    result.at(3, 1) = -dot(corrected_up, eye);
-    result.at(3, 2) = dot(forward, eye);
+    result.at(0, 3) = -dot(side, eye);
+    result.at(1, 3) = -dot(corrected_up, eye);
+    result.at(2, 3) = dot(forward, eye);
     return result;
 }
 
@@ -254,9 +295,74 @@ static_assert(sizeof(Quaternion) == sizeof(core::f32) * 4U);
     result.at(0, 0) = focal_length / aspect_ratio;
     result.at(1, 1) = -focal_length;
     result.at(2, 2) = far_plane / (near_plane - far_plane);
-    result.at(3, 2) = (near_plane * far_plane) / (near_plane - far_plane);
-    result.at(2, 3) = -1.0F;
+    result.at(2, 3) = (near_plane * far_plane) / (near_plane - far_plane);
+    result.at(3, 2) = -1.0F;
     return result;
+}
+
+[[nodiscard]] inline bool extract_frustum_rh_zo(const Mat4& view_projection,
+                                                Frustum& result) noexcept
+{
+    result = {};
+    if (!is_finite(view_projection)) {
+        return false;
+    }
+
+    const auto make_plane = [](core::f32 a,
+                               core::f32 b,
+                               core::f32 c,
+                               core::f32 d,
+                               Plane& plane) noexcept {
+        const core::f32 length_squared = a * a + b * b + c * c;
+        if (!std::isfinite(length_squared) || length_squared <= 0.00000001F) {
+            return false;
+        }
+        const core::f32 inverse_length = 1.0F / std::sqrt(length_squared);
+        plane.normal = {a * inverse_length, b * inverse_length, c * inverse_length};
+        plane.distance = d * inverse_length;
+        return std::isfinite(plane.distance) && is_finite(plane.normal);
+    };
+
+    const auto row_value = [&view_projection](core::u32 row, core::u32 column) noexcept {
+        return view_projection.at(row, column);
+    };
+    const auto make_sum_plane = [&make_plane, &row_value](core::u32 row,
+                                                           core::f32 sign,
+                                                           Plane& plane) noexcept {
+        return make_plane(row_value(0, 3) + sign * row_value(0, row),
+                          row_value(1, 3) + sign * row_value(1, row),
+                          row_value(2, 3) + sign * row_value(2, row),
+                          row_value(3, 3) + sign * row_value(3, row),
+                          plane);
+    };
+
+    const bool valid = make_sum_plane(0, 1.0F, result.planes[0]) &&
+                       make_sum_plane(0, -1.0F, result.planes[1]) &&
+                       make_sum_plane(1, 1.0F, result.planes[2]) &&
+                       make_sum_plane(1, -1.0F, result.planes[3]) &&
+                       make_plane(row_value(0, 2),
+                                  row_value(1, 2),
+                                  row_value(2, 2),
+                                  row_value(3, 2),
+                                  result.planes[4]) &&
+                       make_sum_plane(2, -1.0F, result.planes[5]);
+    result.valid = valid;
+    return valid;
+}
+
+[[nodiscard]] inline bool sphere_visible(const Frustum& frustum,
+                                         const Vec3& center,
+                                         core::f32 radius) noexcept
+{
+    if (!frustum.valid || !is_finite(center) || !std::isfinite(radius) || radius < 0.0F) {
+        return true;
+    }
+    for (const Plane& plane : frustum.planes) {
+        if (dot(plane.normal, center) + plane.distance < -radius) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace gameengine::math

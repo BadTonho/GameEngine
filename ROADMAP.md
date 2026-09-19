@@ -236,8 +236,8 @@ Goal: build the rendering architecture that supports high quality without imposi
 - [x] Define real pass dependencies before freezing the render graph.
 - [ ] Implement the chosen lighting path based on benchmarks.
 - [ ] Implement IBL and shadows.
-- [ ] Implement instancing.
-- [ ] Implement frustum culling.
+- [x] Implement procedural instancing with deterministic 1k/10k/100k workloads.
+- [x] Implement CPU frustum culling with a conservative invalid-frustum fallback.
 - [ ] Evaluate GPU culling and indirect drawing.
 - [ ] Evaluate Forward+, Clustered or Deferred for different scene classes.
 - [ ] Create quality levels and fallbacks.
@@ -254,8 +254,18 @@ Goal: build the rendering architecture that supports high quality without imposi
 - [x] Add the development-only `gameengine_runtime --metrics` report.
 - [x] Validate Debug build, CTest, Vulkan smoke/resize and the metrics workload locally.
 
-The lighting architecture, instancing, culling, shadows, IBL, quality levels and performance
-comparison between Forward+, Clustered and Deferred remain open Phase 7 work.
+### Phase 7B validation status
+
+- [x] Render the procedural cube through two Vulkan vertex bindings with instance-rate model data.
+- [x] Keep persistent host-visible instance storage partitioned by frame in flight.
+- [x] Generate centered 3D workloads of 1,000, 10,000 and 100,000 instances deterministically.
+- [x] Measure CPU visibility, visible/culled counts, draw calls and optional GPU pass timing.
+- [x] Validate instance layout, frustum extraction, fallback visibility and validation-clean Vulkan
+  smoke/resize/metrics execution.
+
+GPU culling, indirect drawing, the lighting architecture, shadows, IBL, quality levels, VRAM
+policy and performance comparison between Forward+, Clustered and Deferred remain open Phase 7
+work.
 
 ### Completion criteria
 

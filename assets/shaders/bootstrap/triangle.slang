@@ -3,11 +3,14 @@ struct VertexInput
     [[vk::location(0)]] float3 position;
     [[vk::location(1)]] float3 normal;
     [[vk::location(2)]] float2 uv;
+    [[vk::location(3)]] float4 model_column0;
+    [[vk::location(4)]] float4 model_column1;
+    [[vk::location(5)]] float4 model_column2;
+    [[vk::location(6)]] float4 model_column3;
 };
 
 struct PushConstants
 {
-    float4x4 model;
     float4x4 view_projection;
 };
 
@@ -50,11 +53,16 @@ struct FragmentInput
 VertexOutput vertex_main(VertexInput input)
 {
     VertexOutput output;
-    const float4 world_position = mul(push_constants.model, float4(input.position, 1.0));
-    const float3x3 model_3x3 = (float3x3)push_constants.model;
+    const float4 world_position = input.model_column0 * input.position.x +
+                                  input.model_column1 * input.position.y +
+                                  input.model_column2 * input.position.z +
+                                  input.model_column3;
+    const float3 world_normal = input.model_column0.xyz * input.normal.x +
+                                input.model_column1.xyz * input.normal.y +
+                                input.model_column2.xyz * input.normal.z;
     output.position = mul(push_constants.view_projection, world_position);
     output.world_position = world_position.xyz;
-    output.world_normal = normalize(mul(model_3x3, input.normal));
+    output.world_normal = normalize(world_normal);
     output.uv = input.uv;
     return output;
 }

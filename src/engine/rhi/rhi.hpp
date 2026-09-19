@@ -13,6 +13,8 @@ class Renderer;
 namespace gameengine::renderer::diagnostics {
 
 void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
+[[nodiscard]] core::Status set_procedural_workload(const gameengine::rhi::Renderer& renderer,
+                                                   core::u32 instance_count) noexcept;
 void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
 
 } // namespace gameengine::renderer::diagnostics
@@ -147,6 +149,9 @@ public:
 
 private:
     friend void renderer::diagnostics::begin_metrics(const Renderer& renderer) noexcept;
+    friend core::Status renderer::diagnostics::set_procedural_workload(
+        const Renderer& renderer,
+        core::u32 instance_count) noexcept;
     friend void renderer::diagnostics::print_metrics(const Renderer& renderer) noexcept;
 
     Impl* impl_ = nullptr;

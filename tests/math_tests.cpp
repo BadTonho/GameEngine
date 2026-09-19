@@ -29,13 +29,13 @@ int main()
 
     const Mat4 view = look_at_rh({0.0F, 0.0F, 4.0F}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
     if (!near(view.at(0, 0), 1.0F) || !near(view.at(1, 1), 1.0F) ||
-        !near(view.at(2, 2), 1.0F) || !near(view.at(3, 2), -4.0F)) {
+        !near(view.at(2, 2), 1.0F) || !near(view.at(2, 3), -4.0F)) {
         return 2;
     }
 
     const Mat4 projection = perspective_rh_zo(1.04719755F, 16.0F / 9.0F, 0.1F, 100.0F);
     if (!near(projection.at(1, 1), -projection.at(0, 0) * (16.0F / 9.0F), 0.001F) ||
-        !near(projection.at(2, 3), -1.0F) || projection.at(3, 2) >= 0.0F) {
+        projection.at(2, 3) >= 0.0F || !near(projection.at(3, 2), -1.0F)) {
         return 3;
     }
 
