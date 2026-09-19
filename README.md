@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 8B editor tools in progress.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a procedural instanced cube, CPU frustum culling, opt-in GPU culling/indirect drawing, production Low/Medium/High Forward+ profiles, measured render passes and a separate minimal editor. It is not ready to create a complete game yet.
+> **Status: early development — Phase 9B optional audio in progress.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a procedural instanced cube, CPU frustum culling, opt-in GPU culling/indirect drawing, production Low/Medium/High Forward+ profiles, measured render passes, a separate minimal editor and an optional procedural audio module. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -23,7 +23,7 @@ The complete direction is documented in [Idea.md](Idea.md). The implementation s
 
 ## Current status
 
-Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7E promotes the Low/Medium/High Forward+ profiles while keeping Clustered and Deferred benchmark-only:
+Phase 0 through Phase 6, the Phase 7 renderer foundation and the Phase 8 editor foundation are implemented in the current procedural scope. Phase 9A transform animation is complete and Phase 9B adds optional procedural audio. Phase 7E promotes the Low/Medium/High Forward+ profiles while keeping Clustered and Deferred benchmark-only:
 
 - CMake 3.25+ project using C++20 without compiler extensions;
 - `gameengine_core` with fixed-width types, status values, diagnostics, clock and input state;
@@ -50,6 +50,8 @@ Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7
 - fixed-capacity editor console with stderr mirroring and a render/session profiler panel using CPU/GPU timing fallbacks and process-memory availability markers;
 - optional `gameengine_animation` module with deterministic TRS keyframes, quaternion interpolation,
   runtime/editor integration, fixed-step tests and 1k/10k/100k transform benchmarks;
+- optional `gameengine_audio` module with deterministic PCM sine voices, fixed-capacity mixing,
+  generation-checked voice handles, WASAPI/ALSA backends and a stub fallback;
 - deterministic 16x16 Forward+ tile-list preparation, procedural point-light data, a 1024² directional shadow map, a mipmapped 64² procedural cubemap and versioned Forward+/shadow/environment Slang artifacts;
 - versioned benchmark reports in `build/renderer-benchmarks/lighting_benchmark_v1.txt`, with explicit unavailable markers for unsupported RAM/VRAM metrics;
 - generation-checked handles and fence-based deferred resource destruction;
@@ -67,7 +69,7 @@ The following are intentionally outside the current procedural renderer scope:
 - runtime shader file loading and automatic polling;
 - prepared asset runtime integration, asset editing/import, undo/redo, Lua and a final ECS storage choice;
 - VRAM policy and the hardware baseline for the final lighting decision;
-- physics, audio, networking or gameplay APIs;
+- physics, networking or gameplay APIs;
 - skeleton/skinning animation, animation assets, timelines and keyframe authoring;
 - a functional C ABI.
 
@@ -85,7 +87,7 @@ The following are intentionally outside the current procedural renderer scope:
 | Shader source | Slang, compiled offline | Phase 4 in use |
 | First graphics backend | Vulkan | In use |
 
-Vulkan, X11 and Mesa are system dependencies for the Linux rendering build. Slang is required only to regenerate offline shader artifacts; it is never a runtime dependency. Rust is optional and is required only for the offline asset tools; Lua is not required.
+Vulkan, X11 and Mesa are system dependencies for the Linux rendering build. ALSA development headers are optional; when unavailable, the audio module builds with its stub backend. Slang is required only to regenerate offline shader artifacts; it is never a runtime dependency. Rust is optional and is required only for the offline asset tools; Lua is not required.
 
 ## Quick start
 
@@ -195,7 +197,7 @@ On Linux, the GCC Debug executable is located at:
 build/linux-gcc-debug/gameengine_runtime
 ```
 
-CTest covers the core, asset, RHI, math, scene, render graph, metrics, procedural-instancing, runtime, Vulkan, shader pipeline and platform paths:
+CTest covers the core, asset, RHI, math, scene, animation, audio, render graph, metrics, procedural-instancing, runtime, Vulkan, shader pipeline and platform paths:
 
 1. `gameengine_core`: verifies the core initialization and shutdown lifecycle;
 2. `gameengine_assets`: validates synthetic versioned asset containers and zero-copy views;
@@ -210,6 +212,7 @@ CTest covers the core, asset, RHI, math, scene, render graph, metrics, procedura
 11. `gameengine_runtime_metrics`: verifies the three CPU procedural metrics workloads and their Vulkan lifecycle;
 12. `gameengine_runtime_gpu_metrics`: verifies the opt-in GPU culling metrics workloads and fallback lifecycle;
 13. `gameengine_shader_pipeline`: verifies variant selection and pipeline-cache identity validation;
+14. `gameengine_audio`: verifies deterministic PCM mixing, voice generations, capacity limits, stop behavior and stub metrics;
 
 The Windows-only unit checks additionally cover the native Win32 platform path. The 3D integration test verifies depth resources, indexed drawing, swapchain recreation and validation-clean shutdown.
 
@@ -246,6 +249,22 @@ Transform animation is optional and enabled by default in development presets. D
 and do not link the animation module. When enabled, the runtime and editor start the deterministic
 two-second procedural cube clip automatically. The editor pauses the clip before keyboard transform
 edits and saves only the current `.gescene` pose; clip data is not serialized yet.
+
+Procedural audio is optional and enabled by default in development builds. Disable it with
+`-DGAMEENGINE_BUILD_AUDIO=OFF`; the runtime and editor then omit the audio module. The normal
+runtime stays silent. Run the explicit diagnostic with:
+
+```text
+gameengine_runtime --audio-smoke-test
+gameengine_editor --project <directory>/gameengine.geproject --audio-smoke-test
+```
+
+The diagnostic generates a quiet 440 Hz sine tone in memory, reports the selected backend and
+returns success with `unavailable` when the device or native backend is missing. Windows uses
+WASAPI shared mode; Linux uses ALSA when its development package is present. No WAV/OGG file,
+audio asset or Rust tool is required. The optional benchmark can be built with
+`-DGAMEENGINE_BUILD_BENCHMARKS=ON` and runs fixed 1/16/64 voice mixer workloads. See
+[the audio architecture](docs/architecture/audio.md) for ownership and callback details.
 
 ```text
 gameengine_runtime --smoke-test --renderer-quality low

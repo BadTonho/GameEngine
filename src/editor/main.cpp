@@ -1,6 +1,9 @@
 #include "engine/core/core.hpp"
 #include "engine/core/clock.hpp"
 #include "engine/core/diagnostics.hpp"
+#if GAMEENGINE_BUILD_AUDIO
+#include "engine/audio/audio.hpp"
+#endif
 #if GAMEENGINE_BUILD_ANIMATION
 #include "engine/animation/animation.hpp"
 #endif
@@ -17,6 +20,8 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <cstdio>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -25,6 +30,7 @@ struct Arguments final {
     std::filesystem::path project_path{};
     std::filesystem::path new_directory{};
     bool smoke_test = false;
+    bool audio_smoke_test = false;
 };
 
 struct EditorEvents final {
@@ -53,19 +59,23 @@ void editor_event_callback(const gameengine::input::Event& event, void* user_dat
             arguments.new_directory = argv[++index];
         } else if (std::strcmp(argv[index], "--smoke-test") == 0) {
             arguments.smoke_test = true;
+        } else if (std::strcmp(argv[index], "--audio-smoke-test") == 0) {
+            arguments.audio_smoke_test = true;
         } else {
             return false;
         }
     }
-    return (!arguments.project_path.empty() && arguments.new_directory.empty()) ||
-           (!arguments.new_directory.empty() && arguments.project_path.empty());
+    const bool project_mode = !arguments.project_path.empty() && arguments.new_directory.empty();
+    const bool new_project_mode = !arguments.new_directory.empty() && arguments.project_path.empty();
+    return (project_mode || new_project_mode) &&
+           !(arguments.smoke_test && arguments.audio_smoke_test);
 }
 
 void print_usage() noexcept
 {
     gameengine::core::log(gameengine::core::LogLevel::info,
                           "usage: gameengine_editor --project <file.geproject> [--smoke-test] or "
-                          "--new-project <directory>");
+                          "--new-project <directory> [--audio-smoke-test]");
 }
 
 } // namespace
@@ -100,6 +110,58 @@ int main(int argc, char** argv)
     gameengine::editor::ConsoleBuffer console;
     gameengine::editor::record_console_message(
         console, gameengine::core::LogLevel::info, "PROJECT READY");
+#if GAMEENGINE_BUILD_AUDIO
+    gameengine::audio::AudioSystem audio;
+    const gameengine::core::Status audio_status = audio.initialize();
+    gameengine::editor::record_console_status(
+        console,
+        audio_status ? gameengine::core::LogLevel::info : gameengine::core::LogLevel::error,
+        audio_status ? (audio.available() ? "AUDIO BACKEND READY" : "AUDIO UNAVAILABLE")
+                     : "AUDIO INITIALIZE FAILED",
+        audio_status);
+    if (arguments.audio_smoke_test) {
+        if (!audio_status || !audio.available()) {
+            gameengine::core::log(gameengine::core::LogLevel::info,
+                                  "editor audio: unavailable");
+            audio.shutdown();
+            core.shutdown();
+            return 0;
+        }
+        gameengine::audio::VoiceHandle voice{};
+        const gameengine::core::Status play_status = audio.play_tone(
+            {.frequency_hz = 440.0F,
+             .duration_seconds = 0.25F,
+             .gain = 0.15F,
+             .pan = 0.0F,
+             .pitch = 1.0F,
+             .loop = false},
+            voice);
+        if (!play_status) {
+            audio.shutdown();
+            core.shutdown();
+            return 6;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        static_cast<void>(audio.stop(voice));
+        const gameengine::audio::AudioMetrics metrics = audio.metrics();
+        std::fprintf(stdout,
+                     "editor audio backend=%.*s frames=%llu underruns=%llu\n",
+                     static_cast<int>(metrics.backend.size()),
+                     metrics.backend.data(),
+                     static_cast<unsigned long long>(metrics.frames_played),
+                     static_cast<unsigned long long>(metrics.underruns));
+        audio.shutdown();
+        core.shutdown();
+        return 0;
+    }
+#else
+    if (arguments.audio_smoke_test) {
+        gameengine::core::log(gameengine::core::LogLevel::info,
+                              "editor audio: unavailable (audio module disabled)");
+        core.shutdown();
+        return 0;
+    }
+#endif
     gameengine::editor::AssetCatalog catalog;
     const gameengine::core::Status catalog_status =
         catalog.refresh(project.project_path().parent_path());
@@ -327,6 +389,17 @@ int main(int argc, char** argv)
             static_cast<void>(animation_system.pause(animation_entity));
         }
 #endif
+#if GAMEENGINE_BUILD_AUDIO
+        const gameengine::core::Status audio_update_status = audio.update(delta);
+        if (!audio_update_status) {
+            gameengine::editor::record_console_status(
+                console,
+                gameengine::core::LogLevel::error,
+                "AUDIO UPDATE FAILED",
+                audio_update_status);
+            platform.request_close();
+        }
+#endif
         if (input.is_key_down(gameengine::input::KeyCode::left)) {
             static_cast<void>(project.move_selected(-delta, 0.0F, 0.0F));
         }
@@ -377,6 +450,9 @@ int main(int argc, char** argv)
 
 #if GAMEENGINE_RENDERER_HAS_VULKAN
     platform.shutdown();
+#endif
+#if GAMEENGINE_BUILD_AUDIO
+    audio.shutdown();
 #endif
     core.shutdown();
     return 0;

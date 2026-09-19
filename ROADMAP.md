@@ -6,10 +6,11 @@ The roadmap does not define deadlines. Each phase is a technical milestone. A ph
 
 ## Current status
 
-The repository completed Phase 2 through Phase 6 and is consolidating the measurable Phase 7
-renderer while implementing the Phase 8 editor. Forward+ is the selected production direction,
-with the procedural cube and generated lights remaining the reference fixture. Low/Medium/High
-resources are implemented; the final hardware baseline and VRAM policy remain open.
+The repository completed Phase 2 through Phase 6, the Phase 7 renderer foundation and the Phase 8
+editor foundation. Phase 9A transform animation is complete and Phase 9B procedural audio is now
+implemented as an optional module. Forward+ is the selected production direction, with the
+procedural cube, generated lights and generated audio tone remaining reference fixtures. The
+final hardware baseline, VRAM policy and later optional runtime modules remain open.
 
 ## Evolution rules
 
@@ -363,7 +364,7 @@ Each module must have an API, build target, tests, documentation, measured cost 
 
 - [x] Animation transform/keyframe foundation with an optional C++ target, deterministic procedural
   clip, runtime/editor integration, fixed-step tests and measured synthetic workloads.
-- [ ] Audio.
+- [x] Procedural audio foundation with fixed PCM mixing, native backends, stub fallback and diagnostics.
 - [ ] Physics integration.
 - [ ] Optional Lua gameplay scripting.
 - [ ] Navigation.
@@ -384,8 +385,23 @@ A project can select the required modules in its build and packaging without loa
 - [x] Add unit tests, optional 1k/10k/100k benchmarks and documentation with an explicit removal
   path.
 
-Audio, physics, Lua, navigation, networking, video, skeletons, skinning and serialized animation
-assets remain later Phase 9 modules.
+Physics, Lua, navigation, networking, video, skeletons, skinning and serialized animation assets
+remain later Phase 9 modules.
+
+### Phase 9B validation status
+
+- [x] Add `gameengine_audio` behind `GAMEENGINE_BUILD_AUDIO` without changing the RHI, C ABI or
+  asset formats.
+- [x] Add deterministic 48 kHz stereo procedural sine mixing with fixed voice storage, generation
+  handles, command queue and no allocation in the callback path.
+- [x] Add WASAPI and optional ALSA backends with a stub fallback and explicit unavailable reporting.
+- [x] Add runtime/editor audio smoke diagnostics, unit tests, an optional 1/16/64 voice benchmark
+  and architecture documentation.
+- [ ] Complete Linux native-backend validation on a reference ALSA environment and sanitizer
+  validation for the optional audio thread.
+
+Audio files, codecs, streaming, 3D spatialization, DSP effects, music graphs and prepared audio
+assets remain future work.
 
 ## Phase 10 — Continuous quality, security and performance
 

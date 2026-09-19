@@ -7,6 +7,7 @@ option(GAMEENGINE_BUILD_VULKAN "Build the Vulkan renderer" ON)
 option(GAMEENGINE_BUILD_BENCHMARKS "Build optional scene benchmarks" OFF)
 option(GAMEENGINE_BUILD_EDITOR "Build the separate GameEngine editor" ON)
 option(GAMEENGINE_BUILD_ANIMATION "Build the optional transform animation module" ON)
+option(GAMEENGINE_BUILD_AUDIO "Build the optional procedural audio module" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,6 +62,52 @@ target_include_directories(gameengine_core
 )
 
 gameengine_configure_target(gameengine_core)
+
+if(GAMEENGINE_BUILD_AUDIO)
+    find_package(Threads REQUIRED)
+    add_library(gameengine_audio STATIC
+        src/engine/audio/audio.cpp
+        src/engine/audio/audio.hpp
+        src/engine/audio/audio_backend.hpp
+    )
+    target_link_libraries(gameengine_audio PUBLIC gameengine_core Threads::Threads)
+    target_include_directories(gameengine_audio
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    )
+    target_compile_definitions(gameengine_audio PUBLIC GAMEENGINE_BUILD_AUDIO=1)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        target_sources(gameengine_audio PRIVATE src/engine/audio/audio_backend_wasapi.cpp)
+        target_link_libraries(gameengine_audio PRIVATE ole32)
+        target_compile_definitions(gameengine_audio PRIVATE GAMEENGINE_AUDIO_HAS_NATIVE_BACKEND=1)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(GAMEENGINE_ALSA QUIET IMPORTED_TARGET alsa)
+        endif()
+        if(TARGET PkgConfig::GAMEENGINE_ALSA)
+            target_sources(gameengine_audio PRIVATE src/engine/audio/audio_backend_alsa.cpp)
+            target_link_libraries(gameengine_audio PRIVATE PkgConfig::GAMEENGINE_ALSA)
+            target_compile_definitions(gameengine_audio PRIVATE GAMEENGINE_AUDIO_HAS_NATIVE_BACKEND=1)
+        else()
+            target_sources(gameengine_audio PRIVATE src/engine/audio/audio_backend_stub.cpp)
+            target_compile_definitions(gameengine_audio PRIVATE GAMEENGINE_AUDIO_HAS_NATIVE_BACKEND=0)
+        endif()
+    else()
+        target_sources(gameengine_audio PRIVATE src/engine/audio/audio_backend_stub.cpp)
+        target_compile_definitions(gameengine_audio PRIVATE GAMEENGINE_AUDIO_HAS_NATIVE_BACKEND=0)
+    endif()
+    gameengine_configure_target(gameengine_audio)
+
+    if(GAMEENGINE_BUILD_BENCHMARKS)
+        add_executable(gameengine_audio_benchmark
+            benchmarks/audio_benchmark.cpp
+        )
+        target_link_libraries(gameengine_audio_benchmark PRIVATE gameengine_audio)
+        gameengine_configure_target(gameengine_audio_benchmark)
+    endif()
+endif()
 
 add_library(gameengine_assets STATIC
     src/engine/assets/asset_reader.cpp
@@ -230,6 +277,10 @@ if(GAMEENGINE_BUILD_ANIMATION)
     target_link_libraries(gameengine_runtime PRIVATE gameengine_animation)
     target_compile_definitions(gameengine_runtime PRIVATE GAMEENGINE_BUILD_ANIMATION=1)
 endif()
+if(GAMEENGINE_BUILD_AUDIO)
+    target_link_libraries(gameengine_runtime PRIVATE gameengine_audio)
+    target_compile_definitions(gameengine_runtime PRIVATE GAMEENGINE_BUILD_AUDIO=1)
+endif()
 gameengine_configure_target(gameengine_runtime)
 
 if(GAMEENGINE_BUILD_EDITOR)
@@ -268,6 +319,10 @@ if(GAMEENGINE_BUILD_EDITOR)
     if(GAMEENGINE_BUILD_ANIMATION)
         target_link_libraries(gameengine_editor PRIVATE gameengine_animation)
         target_compile_definitions(gameengine_editor PRIVATE GAMEENGINE_BUILD_ANIMATION=1)
+    endif()
+    if(GAMEENGINE_BUILD_AUDIO)
+        target_link_libraries(gameengine_editor PRIVATE gameengine_audio)
+        target_compile_definitions(gameengine_editor PRIVATE GAMEENGINE_BUILD_AUDIO=1)
     endif()
     gameengine_configure_target(gameengine_editor)
 endif()
@@ -383,6 +438,18 @@ if(GAMEENGINE_BUILD_TESTS)
         )
         gameengine_configure_target(gameengine_animation_tests)
         add_test(NAME gameengine_animation COMMAND gameengine_animation_tests)
+    endif()
+
+    if(GAMEENGINE_BUILD_AUDIO)
+        add_executable(gameengine_audio_tests
+            tests/audio_tests.cpp
+        )
+        target_link_libraries(gameengine_audio_tests PRIVATE gameengine_audio gameengine_core)
+        target_include_directories(gameengine_audio_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        gameengine_configure_target(gameengine_audio_tests)
+        add_test(NAME gameengine_audio COMMAND gameengine_audio_tests)
     endif()
 
     add_executable(gameengine_render_graph_tests

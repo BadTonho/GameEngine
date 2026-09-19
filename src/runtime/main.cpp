@@ -1,6 +1,9 @@
 #include "engine/core/core.hpp"
 #include "engine/core/clock.hpp"
 #include "engine/core/diagnostics.hpp"
+#if GAMEENGINE_BUILD_AUDIO
+#include "engine/audio/audio.hpp"
+#endif
 #include "engine/platform/platform.hpp"
 #if GAMEENGINE_BUILD_ANIMATION
 #include "engine/animation/animation.hpp"
@@ -15,7 +18,59 @@
 #include <chrono>
 #include <cstring>
 #include <cstdint>
+#include <cstdio>
 #include <thread>
+
+#if GAMEENGINE_BUILD_AUDIO
+namespace {
+
+int run_audio_smoke_test() noexcept
+{
+    gameengine::audio::AudioSystem audio;
+    const gameengine::core::Status initialize_status = audio.initialize();
+    if (!initialize_status) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              gameengine::core::to_string(initialize_status.code));
+        return 1;
+    }
+    if (!audio.available()) {
+        gameengine::core::log(gameengine::core::LogLevel::info,
+                              "audio: unavailable (stub backend or no output device)");
+        audio.shutdown();
+        return 0;
+    }
+
+    gameengine::audio::VoiceHandle voice{};
+    const gameengine::core::Status play_status = audio.play_tone(
+        {.frequency_hz = 440.0F,
+         .duration_seconds = 0.25F,
+         .gain = 0.15F,
+         .pan = 0.0F,
+         .pitch = 1.0F,
+         .loop = false},
+        voice);
+    if (!play_status) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              gameengine::core::to_string(play_status.code));
+        audio.shutdown();
+        return 1;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    static_cast<void>(audio.stop(voice));
+    const gameengine::audio::AudioMetrics metrics = audio.metrics();
+    std::fprintf(stdout,
+                 "audio backend=%.*s available=%s frames=%llu underruns=%llu\n",
+                 static_cast<int>(metrics.backend.size()),
+                 metrics.backend.data(),
+                 metrics.available ? "true" : "false",
+                 static_cast<unsigned long long>(metrics.frames_played),
+                 static_cast<unsigned long long>(metrics.underruns));
+    audio.shutdown();
+    return 0;
+}
+
+} // namespace
+#endif
 
 int main(int argc, char** argv)
 {
@@ -33,6 +88,7 @@ int main(int argc, char** argv)
     bool metrics_test = false;
     bool renderer_benchmark = false;
     bool gpu_culling = false;
+    bool audio_smoke_test = false;
     gameengine::renderer::quality::RendererQuality renderer_quality =
         gameengine::renderer::quality::RendererQuality::medium;
     for (int index = 1; index < argc; ++index) {
@@ -44,6 +100,8 @@ int main(int argc, char** argv)
             renderer_benchmark = true;
         } else if (std::strcmp(argv[index], "--gpu-culling") == 0) {
             gpu_culling = true;
+        } else if (std::strcmp(argv[index], "--audio-smoke-test") == 0) {
+            audio_smoke_test = true;
         } else if (std::strcmp(argv[index], "--renderer-quality") == 0) {
             if (index + 1 >= argc ||
                 !gameengine::renderer::quality::parse(argv[++index], renderer_quality)) {
@@ -54,8 +112,9 @@ int main(int argc, char** argv)
             }
         } else {
             gameengine::core::log(gameengine::core::LogLevel::error,
-                                  "unknown argument; use --smoke-test, --metrics, "
-                                  "--renderer-benchmark, --gpu-culling or "
+                              "unknown argument; use --smoke-test, --metrics, "
+                                  "--renderer-benchmark, --gpu-culling, "
+                                  "--audio-smoke-test or "
                                   "--renderer-quality low|medium|high");
             core.shutdown();
             return 2;
@@ -67,6 +126,25 @@ int main(int argc, char** argv)
                               "--smoke-test, --metrics and --renderer-benchmark are exclusive");
         core.shutdown();
         return 2;
+    }
+    if (audio_smoke_test &&
+        (smoke_test || metrics_test || renderer_benchmark || gpu_culling)) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              "--audio-smoke-test is exclusive with renderer modes");
+        core.shutdown();
+        return 2;
+    }
+
+    if (audio_smoke_test) {
+#if GAMEENGINE_BUILD_AUDIO
+        const int audio_result = run_audio_smoke_test();
+#else
+        gameengine::core::log(gameengine::core::LogLevel::info,
+                              "audio: unavailable (audio module disabled)");
+        const int audio_result = 0;
+#endif
+        core.shutdown();
+        return audio_result;
     }
 
     gameengine::platform::Platform platform;
