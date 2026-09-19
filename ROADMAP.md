@@ -158,13 +158,13 @@ Goal: move beyond the triangle and render a small scene with correct visual foun
 - [x] Create a camera and transformations.
 - [x] Create vertex and index buffers.
 - [ ] Load a prepared mesh.
-- [ ] Load a texture and sampler.
-- [ ] Create a basic material.
+- [x] Generate a procedural texture and sampler.
+- [x] Create a procedural material.
 - [x] Create a depth buffer and depth testing.
-- [ ] Create basic lighting.
-- [ ] Implement initial PBR.
-- [ ] Implement HDR and tone mapping.
-- [ ] Create a small reference scene.
+- [x] Create basic directional lighting.
+- [x] Implement initial PBR.
+- [x] Implement HDR and tone mapping.
+- [x] Create a small procedural reference scene.
 - [ ] Measure CPU, GPU, RAM, VRAM, draw calls and startup.
 - [ ] Add a reference capture for visual regression detection.
 
@@ -172,9 +172,11 @@ Goal: move beyond the triangle and render a small scene with correct visual foun
 
 - [x] Implement custom `Vec3`/`Mat4` math with right-handed Vulkan `0..1` depth projection.
 - [x] Render a deterministic procedural indexed cube with a static camera.
-- [x] Use push constants for the 64-byte view-projection matrix.
+- [x] Use push constants for the 128-byte model and view-projection matrices.
+- [x] Bind a procedural checkerboard texture and internal PBR material through Vulkan descriptors.
+- [x] Apply directional lighting and deterministic HDR tone mapping in Slang.
 - [x] Validate Debug and Release builds, shader regeneration and CTest locally.
-- [ ] Add prepared mesh, texture, material, lighting, PBR, HDR and reference capture systems.
+- [ ] Add prepared mesh loading, performance metrics and reference capture systems.
 
 ### Completion criteria
 

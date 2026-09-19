@@ -1,5 +1,6 @@
 #include "engine/math/math.hpp"
 #include "engine/scene/bootstrap_cube.hpp"
+#include "engine/scene/bootstrap_material.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -53,7 +54,22 @@ int main()
             vertex.position.z < -1.0F || vertex.position.z > 1.0F) {
             return 6;
         }
+        const float normal_length = std::sqrt(dot(vertex.normal, vertex.normal));
+        if (!near(normal_length, 1.0F) || vertex.uv.x < 0.0F || vertex.uv.x > 1.0F ||
+            vertex.uv.y < 0.0F || vertex.uv.y > 1.0F) {
+            return 7;
+        }
     }
+
+    static_assert(sizeof(gameengine::math::Vec2) == sizeof(float) * 2U);
+    static_assert(sizeof(gameengine::scene::TexturedVertex) == sizeof(float) * 8U);
+
+    static_assert(gameengine::scene::bootstrap_checkerboard.size() ==
+                  gameengine::scene::bootstrap_texture_byte_count);
+    static_assert(gameengine::scene::bootstrap_checkerboard[0] !=
+                  gameengine::scene::bootstrap_checkerboard[
+                      8U * gameengine::scene::bootstrap_texture_channels]);
+    static_assert(gameengine::scene::BootstrapMaterialConstants{}.base_color_factor[0] == 1.0F);
 
     return 0;
 }

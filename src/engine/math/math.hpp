@@ -7,6 +7,11 @@
 
 namespace gameengine::math {
 
+struct Vec2 final {
+    core::f32 x = 0.0F;
+    core::f32 y = 0.0F;
+};
+
 struct Vec3 final {
     core::f32 x = 0.0F;
     core::f32 y = 0.0F;

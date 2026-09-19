@@ -28,6 +28,7 @@
 #include "engine/renderer/vulkan/vulkan_pipeline_cache.hpp"
 #include "engine/renderer/vulkan/vulkan_utils.hpp"
 #include "engine/scene/bootstrap_cube.hpp"
+#include "engine/scene/bootstrap_material.hpp"
 
 #include <algorithm>
 #include <array>
@@ -73,6 +74,13 @@ constexpr core::usize pipeline_cache_path_capacity = 512;
     return false;
 #endif
 }
+
+struct BootstrapPushConstants final {
+    math::Mat4 model{};
+    math::Mat4 view_projection{};
+};
+
+static_assert(sizeof(BootstrapPushConstants) == 128U);
 
 } // namespace
 
@@ -163,6 +171,11 @@ struct Renderer::Impl final {
     VkImageView depth_image_view = VK_NULL_HANDLE;
     VkRenderPass render_pass = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout material_descriptor_set_layout = VK_NULL_HANDLE;
+    VkDescriptorPool material_descriptor_pool = VK_NULL_HANDLE;
+    VkDescriptorSet material_descriptor_set = VK_NULL_HANDLE;
+    VkBuffer material_uniform_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory material_uniform_memory = VK_NULL_HANDLE;
     VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
     renderer::vulkan::PipelineCacheIdentity pipeline_cache_identity{};
     std::vector<VkFramebuffer> framebuffers;
@@ -189,6 +202,8 @@ struct Renderer::Impl final {
     rhi::BufferHandle cube_vertex_buffer{};
     rhi::BufferHandle cube_index_buffer{};
     rhi::PipelineHandle cube_pipeline{};
+    rhi::ImageHandle bootstrap_albedo_image{};
+    rhi::SamplerHandle bootstrap_albedo_sampler{};
     PFN_vkSetDebugUtilsObjectNameEXT set_debug_utils_object_name = nullptr;
     PFN_vkCmdBeginDebugUtilsLabelEXT cmd_begin_debug_utils_label = nullptr;
     PFN_vkCmdEndDebugUtilsLabelEXT cmd_end_debug_utils_label = nullptr;
@@ -238,6 +253,9 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status create_command_buffers() noexcept;
     [[nodiscard]] core::Status create_sync_objects() noexcept;
     [[nodiscard]] core::Status create_bootstrap_cube_resources() noexcept;
+    [[nodiscard]] core::Status create_bootstrap_material_resources() noexcept;
+    [[nodiscard]] core::Status create_material_descriptors() noexcept;
+    void destroy_material_resources() noexcept;
     [[nodiscard]] core::Status rebuild_pipelines() noexcept;
     [[nodiscard]] core::Status build_pipeline_object(const PipelineSlot& slot,
                                                      VkPipeline& pipeline) noexcept;
@@ -411,6 +429,18 @@ core::Status Renderer::Impl::initialize(
     if (!status) {
         return status;
     }
+    status = create_bootstrap_cube_resources();
+    if (!status) {
+        return status;
+    }
+    status = create_bootstrap_material_resources();
+    if (!status) {
+        return status;
+    }
+    status = create_material_descriptors();
+    if (!status) {
+        return status;
+    }
     status = create_swapchain(window_size);
     if (!status) {
         return status;
@@ -419,11 +449,6 @@ core::Status Renderer::Impl::initialize(
     if (!status) {
         return status;
     }
-    status = create_bootstrap_cube_resources();
-    if (!status) {
-        return status;
-    }
-
     return validation_error ? core::Status{core::ErrorCode::vulkan_validation_failed}
                             : core::Status{};
 }
@@ -453,6 +478,7 @@ void Renderer::Impl::shutdown() noexcept
     }
 
     cleanup_swapchain();
+    destroy_material_resources();
     destroy_live_resources();
 
     if (device != VK_NULL_HANDLE && pipeline_layout != VK_NULL_HANDLE) {
@@ -498,6 +524,8 @@ void Renderer::Impl::shutdown() noexcept
     cube_vertex_buffer = {};
     cube_index_buffer = {};
     cube_pipeline = {};
+    bootstrap_albedo_image = {};
+    bootstrap_albedo_sampler = {};
     validation_error = false;
 }
 
@@ -1205,14 +1233,18 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
 
     VkVertexInputBindingDescription vertex_binding{};
     vertex_binding.binding = 0;
-    vertex_binding.stride = sizeof(scene::ColoredVertex);
+    vertex_binding.stride = sizeof(scene::TexturedVertex);
     vertex_binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    const std::array<VkVertexInputAttributeDescription, 2> vertex_attributes = {
+    const std::array<VkVertexInputAttributeDescription, 3> vertex_attributes = {
         VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
         VkVertexInputAttributeDescription{1,
                                           0,
                                           VK_FORMAT_R32G32B32_SFLOAT,
                                           sizeof(math::Vec3)},
+        VkVertexInputAttributeDescription{2,
+                                          0,
+                                          VK_FORMAT_R32G32_SFLOAT,
+                                          sizeof(math::Vec3) * 2U},
     };
     VkPipelineShaderStageCreateInfo vertex_stage{};
     vertex_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1291,9 +1323,11 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
         VkPushConstantRange push_constant_range{};
         push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         push_constant_range.offset = 0;
-        push_constant_range.size = sizeof(math::Mat4);
+        push_constant_range.size = sizeof(BootstrapPushConstants);
         VkPipelineLayoutCreateInfo layout_info{};
         layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layout_info.setLayoutCount = 1;
+        layout_info.pSetLayouts = &material_descriptor_set_layout;
         layout_info.pushConstantRangeCount = 1;
         layout_info.pPushConstantRanges = &push_constant_range;
         if (vkCreatePipelineLayout(device, &layout_info, nullptr, &pipeline_layout) != VK_SUCCESS) {
@@ -1423,7 +1457,7 @@ core::Status Renderer::Impl::create_bootstrap_cube_resources() noexcept
     }
 
     const auto vertex_bytes = std::as_bytes(
-        std::span<const scene::ColoredVertex>{scene::bootstrap_cube_vertices});
+        std::span<const scene::TexturedVertex>{scene::bootstrap_cube_vertices});
     status = upload_buffer(cube_vertex_buffer, vertex_bytes);
     if (!status) {
         return status;
@@ -1445,6 +1479,199 @@ core::Status Renderer::Impl::create_bootstrap_cube_resources() noexcept
         return status;
     }
     return core::Status{};
+}
+
+core::Status Renderer::Impl::create_bootstrap_material_resources() noexcept
+{
+    const rhi::ImageDescription image_description{
+        .width = scene::bootstrap_texture_width,
+        .height = scene::bootstrap_texture_height,
+        .format = rhi::ImageFormat::rgba8_unorm,
+    };
+    core::Status status = create_image(image_description, bootstrap_albedo_image);
+    if (!status) {
+        return status;
+    }
+    status = upload_image(bootstrap_albedo_image, scene::bootstrap_checkerboard);
+    if (!status) {
+        return status;
+    }
+    status = create_sampler(
+        {.min_filter = rhi::SamplerFilter::linear, .mag_filter = rhi::SamplerFilter::linear},
+        bootstrap_albedo_sampler);
+    if (!status) {
+        return status;
+    }
+
+    status = create_buffer_resource(sizeof(scene::BootstrapMaterialConstants),
+                                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                    material_uniform_buffer,
+                                    material_uniform_memory);
+    if (!status) {
+        return status;
+    }
+
+    const scene::BootstrapMaterialConstants material_constants{};
+    void* mapped = nullptr;
+    if (vkMapMemory(device,
+                    material_uniform_memory,
+                    0,
+                    sizeof(material_constants),
+                    0,
+                    &mapped) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    std::memcpy(mapped, &material_constants, sizeof(material_constants));
+    vkUnmapMemory(device, material_uniform_memory);
+    set_debug_name(VK_OBJECT_TYPE_BUFFER,
+                   reinterpret_cast<std::uint64_t>(material_uniform_buffer),
+                   "GameEngine.BootstrapMaterialUniformBuffer");
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_material_descriptors() noexcept
+{
+    ImageSlot* image = nullptr;
+    SamplerSlot* sampler = nullptr;
+    if (!validate_image(bootstrap_albedo_image, image) ||
+        !validate_sampler(bootstrap_albedo_sampler, sampler) ||
+        material_uniform_buffer == VK_NULL_HANDLE) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+
+    const std::array<VkDescriptorSetLayoutBinding, 3> bindings = {
+        VkDescriptorSetLayoutBinding{0,
+                                     VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{1,
+                                     VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                     1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{2,
+                                     VK_DESCRIPTOR_TYPE_SAMPLER,
+                                     1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     nullptr},
+    };
+    VkDescriptorSetLayoutCreateInfo layout_info{};
+    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.bindingCount = static_cast<std::uint32_t>(bindings.size());
+    layout_info.pBindings = bindings.data();
+    if (vkCreateDescriptorSetLayout(device,
+                                    &layout_info,
+                                    nullptr,
+                                    &material_descriptor_set_layout) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    const std::array<VkDescriptorPoolSize, 3> pool_sizes = {
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, 1},
+    };
+    VkDescriptorPoolCreateInfo pool_info{};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.maxSets = 1;
+    pool_info.poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size());
+    pool_info.pPoolSizes = pool_sizes.data();
+    if (vkCreateDescriptorPool(device,
+                                &pool_info,
+                                nullptr,
+                                &material_descriptor_pool) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    VkDescriptorSetAllocateInfo allocate_info{};
+    allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocate_info.descriptorPool = material_descriptor_pool;
+    allocate_info.descriptorSetCount = 1;
+    allocate_info.pSetLayouts = &material_descriptor_set_layout;
+    if (vkAllocateDescriptorSets(device, &allocate_info, &material_descriptor_set) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    VkDescriptorBufferInfo buffer_info{};
+    buffer_info.buffer = material_uniform_buffer;
+    buffer_info.offset = 0;
+    buffer_info.range = sizeof(scene::BootstrapMaterialConstants);
+    VkDescriptorImageInfo image_info{};
+    image_info.imageView = image->view;
+    image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkDescriptorImageInfo sampler_info{};
+    sampler_info.sampler = sampler->sampler;
+    const std::array<VkWriteDescriptorSet, 3> writes = {
+        VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             nullptr,
+                             material_descriptor_set,
+                             0,
+                             0,
+                             1,
+                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                             nullptr,
+                             &buffer_info,
+                             nullptr},
+        VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             nullptr,
+                             material_descriptor_set,
+                             1,
+                             0,
+                             1,
+                             VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                             &image_info,
+                             nullptr,
+                             nullptr},
+        VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             nullptr,
+                             material_descriptor_set,
+                             2,
+                             0,
+                             1,
+                             VK_DESCRIPTOR_TYPE_SAMPLER,
+                             &sampler_info,
+                             nullptr,
+                             nullptr},
+    };
+    vkUpdateDescriptorSets(device,
+                           static_cast<std::uint32_t>(writes.size()),
+                           writes.data(),
+                           0,
+                           nullptr);
+    set_debug_name(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT,
+                   reinterpret_cast<std::uint64_t>(material_descriptor_set_layout),
+                   "GameEngine.BootstrapMaterialSetLayout");
+    set_debug_name(VK_OBJECT_TYPE_DESCRIPTOR_POOL,
+                   reinterpret_cast<std::uint64_t>(material_descriptor_pool),
+                   "GameEngine.BootstrapMaterialPool");
+    return core::Status{};
+}
+
+void Renderer::Impl::destroy_material_resources() noexcept
+{
+    if (device == VK_NULL_HANDLE) {
+        return;
+    }
+    material_descriptor_set = VK_NULL_HANDLE;
+    if (material_descriptor_pool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, material_descriptor_pool, nullptr);
+        material_descriptor_pool = VK_NULL_HANDLE;
+    }
+    if (material_descriptor_set_layout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device, material_descriptor_set_layout, nullptr);
+        material_descriptor_set_layout = VK_NULL_HANDLE;
+    }
+    if (material_uniform_buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, material_uniform_buffer, nullptr);
+        material_uniform_buffer = VK_NULL_HANDLE;
+    }
+    if (material_uniform_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, material_uniform_memory, nullptr);
+        material_uniform_memory = VK_NULL_HANDLE;
+    }
 }
 
 core::Status Renderer::Impl::find_memory_type(std::uint32_t type_filter,
@@ -2383,16 +2610,27 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         {2.5F, 2.0F, 4.0F}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
     const math::Mat4 projection = math::perspective_rh_zo(
         1.04719755F, aspect_ratio, 0.1F, 100.0F);
-    const math::Mat4 view_projection =
-        math::multiply(projection, math::multiply(view, model));
+    const math::Mat4 view_projection = math::multiply(projection, view);
+    const BootstrapPushConstants push_constants{
+        .model = model,
+        .view_projection = view_projection,
+    };
     begin_debug_label(command_buffer, "GameEngine.Cube");
     vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
+    vkCmdBindDescriptorSets(command_buffer,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipeline_layout,
+                            0,
+                            1,
+                            &material_descriptor_set,
+                            0,
+                            nullptr);
     vkCmdPushConstants(command_buffer,
                        pipeline_layout,
                        VK_SHADER_STAGE_VERTEX_BIT,
                        0,
-                       sizeof(view_projection),
-                       view_projection.values.data());
+                       sizeof(push_constants),
+                       &push_constants);
     vkCmdDrawIndexed(command_buffer,
                      static_cast<std::uint32_t>(scene::bootstrap_cube_indices.size()),
                      1,

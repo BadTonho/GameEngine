@@ -1,48 +1,54 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 #include "engine/math/math.hpp"
 
 namespace gameengine::scene {
 
-struct ColoredVertex final {
+struct TexturedVertex final {
     math::Vec3 position{};
-    math::Vec3 color{};
+    math::Vec3 normal{};
+    math::Vec2 uv{};
 };
 
-inline constexpr std::array<ColoredVertex, 24> bootstrap_cube_vertices = {
+static_assert(sizeof(TexturedVertex) == 32U);
+static_assert(offsetof(TexturedVertex, normal) == sizeof(math::Vec3));
+static_assert(offsetof(TexturedVertex, uv) == sizeof(math::Vec3) * 2U);
+
+inline constexpr std::array<TexturedVertex, 24> bootstrap_cube_vertices = {
     // Front (+Z)
-    ColoredVertex{{-1.0F, -1.0F, 1.0F}, {1.0F, 0.2F, 0.2F}},
-    ColoredVertex{{1.0F, -1.0F, 1.0F}, {1.0F, 0.2F, 0.2F}},
-    ColoredVertex{{1.0F, 1.0F, 1.0F}, {1.0F, 0.2F, 0.2F}},
-    ColoredVertex{{-1.0F, 1.0F, 1.0F}, {1.0F, 0.2F, 0.2F}},
+    TexturedVertex{{-1.0F, -1.0F, 1.0F}, {0.0F, 0.0F, 1.0F}, {0.0F, 1.0F}},
+    TexturedVertex{{1.0F, -1.0F, 1.0F}, {0.0F, 0.0F, 1.0F}, {1.0F, 1.0F}},
+    TexturedVertex{{1.0F, 1.0F, 1.0F}, {0.0F, 0.0F, 1.0F}, {1.0F, 0.0F}},
+    TexturedVertex{{-1.0F, 1.0F, 1.0F}, {0.0F, 0.0F, 1.0F}, {0.0F, 0.0F}},
     // Back (-Z)
-    ColoredVertex{{1.0F, -1.0F, -1.0F}, {0.2F, 1.0F, 0.2F}},
-    ColoredVertex{{-1.0F, -1.0F, -1.0F}, {0.2F, 1.0F, 0.2F}},
-    ColoredVertex{{-1.0F, 1.0F, -1.0F}, {0.2F, 1.0F, 0.2F}},
-    ColoredVertex{{1.0F, 1.0F, -1.0F}, {0.2F, 1.0F, 0.2F}},
+    TexturedVertex{{1.0F, -1.0F, -1.0F}, {0.0F, 0.0F, -1.0F}, {0.0F, 1.0F}},
+    TexturedVertex{{-1.0F, -1.0F, -1.0F}, {0.0F, 0.0F, -1.0F}, {1.0F, 1.0F}},
+    TexturedVertex{{-1.0F, 1.0F, -1.0F}, {0.0F, 0.0F, -1.0F}, {1.0F, 0.0F}},
+    TexturedVertex{{1.0F, 1.0F, -1.0F}, {0.0F, 0.0F, -1.0F}, {0.0F, 0.0F}},
     // Left (-X)
-    ColoredVertex{{-1.0F, -1.0F, -1.0F}, {0.2F, 0.4F, 1.0F}},
-    ColoredVertex{{-1.0F, -1.0F, 1.0F}, {0.2F, 0.4F, 1.0F}},
-    ColoredVertex{{-1.0F, 1.0F, 1.0F}, {0.2F, 0.4F, 1.0F}},
-    ColoredVertex{{-1.0F, 1.0F, -1.0F}, {0.2F, 0.4F, 1.0F}},
+    TexturedVertex{{-1.0F, -1.0F, -1.0F}, {-1.0F, 0.0F, 0.0F}, {0.0F, 1.0F}},
+    TexturedVertex{{-1.0F, -1.0F, 1.0F}, {-1.0F, 0.0F, 0.0F}, {1.0F, 1.0F}},
+    TexturedVertex{{-1.0F, 1.0F, 1.0F}, {-1.0F, 0.0F, 0.0F}, {1.0F, 0.0F}},
+    TexturedVertex{{-1.0F, 1.0F, -1.0F}, {-1.0F, 0.0F, 0.0F}, {0.0F, 0.0F}},
     // Right (+X)
-    ColoredVertex{{1.0F, -1.0F, 1.0F}, {1.0F, 0.8F, 0.2F}},
-    ColoredVertex{{1.0F, -1.0F, -1.0F}, {1.0F, 0.8F, 0.2F}},
-    ColoredVertex{{1.0F, 1.0F, -1.0F}, {1.0F, 0.8F, 0.2F}},
-    ColoredVertex{{1.0F, 1.0F, 1.0F}, {1.0F, 0.8F, 0.2F}},
+    TexturedVertex{{1.0F, -1.0F, 1.0F}, {1.0F, 0.0F, 0.0F}, {0.0F, 1.0F}},
+    TexturedVertex{{1.0F, -1.0F, -1.0F}, {1.0F, 0.0F, 0.0F}, {1.0F, 1.0F}},
+    TexturedVertex{{1.0F, 1.0F, -1.0F}, {1.0F, 0.0F, 0.0F}, {1.0F, 0.0F}},
+    TexturedVertex{{1.0F, 1.0F, 1.0F}, {1.0F, 0.0F, 0.0F}, {0.0F, 0.0F}},
     // Top (+Y)
-    ColoredVertex{{-1.0F, 1.0F, 1.0F}, {0.8F, 0.2F, 1.0F}},
-    ColoredVertex{{1.0F, 1.0F, 1.0F}, {0.8F, 0.2F, 1.0F}},
-    ColoredVertex{{1.0F, 1.0F, -1.0F}, {0.8F, 0.2F, 1.0F}},
-    ColoredVertex{{-1.0F, 1.0F, -1.0F}, {0.8F, 0.2F, 1.0F}},
+    TexturedVertex{{-1.0F, 1.0F, 1.0F}, {0.0F, 1.0F, 0.0F}, {0.0F, 1.0F}},
+    TexturedVertex{{1.0F, 1.0F, 1.0F}, {0.0F, 1.0F, 0.0F}, {1.0F, 1.0F}},
+    TexturedVertex{{1.0F, 1.0F, -1.0F}, {0.0F, 1.0F, 0.0F}, {1.0F, 0.0F}},
+    TexturedVertex{{-1.0F, 1.0F, -1.0F}, {0.0F, 1.0F, 0.0F}, {0.0F, 0.0F}},
     // Bottom (-Y)
-    ColoredVertex{{-1.0F, -1.0F, -1.0F}, {0.2F, 0.9F, 1.0F}},
-    ColoredVertex{{1.0F, -1.0F, -1.0F}, {0.2F, 0.9F, 1.0F}},
-    ColoredVertex{{1.0F, -1.0F, 1.0F}, {0.2F, 0.9F, 1.0F}},
-    ColoredVertex{{-1.0F, -1.0F, 1.0F}, {0.2F, 0.9F, 1.0F}},
+    TexturedVertex{{-1.0F, -1.0F, -1.0F}, {0.0F, -1.0F, 0.0F}, {0.0F, 1.0F}},
+    TexturedVertex{{1.0F, -1.0F, -1.0F}, {0.0F, -1.0F, 0.0F}, {1.0F, 1.0F}},
+    TexturedVertex{{1.0F, -1.0F, 1.0F}, {0.0F, -1.0F, 0.0F}, {1.0F, 0.0F}},
+    TexturedVertex{{-1.0F, -1.0F, 1.0F}, {0.0F, -1.0F, 0.0F}, {0.0F, 0.0F}},
 };
 
 inline constexpr std::array<std::uint16_t, 36> bootstrap_cube_indices = {
