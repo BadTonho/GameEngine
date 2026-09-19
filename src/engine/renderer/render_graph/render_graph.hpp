@@ -13,6 +13,9 @@ constexpr core::u32 invalid_handle_index = 0xffffffffU;
 enum class ResourceKind : core::u8 {
     color_attachment = 0,
     depth_attachment,
+    storage_buffer,
+    vertex_buffer,
+    indirect_buffer,
 };
 
 struct ResourceHandle final {

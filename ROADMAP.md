@@ -238,7 +238,7 @@ Goal: build the rendering architecture that supports high quality without imposi
 - [ ] Implement IBL and shadows.
 - [x] Implement procedural instancing with deterministic 1k/10k/100k workloads.
 - [x] Implement CPU frustum culling with a conservative invalid-frustum fallback.
-- [ ] Evaluate GPU culling and indirect drawing.
+- [x] Evaluate GPU culling and indirect drawing.
 - [ ] Evaluate Forward+, Clustered or Deferred for different scene classes.
 - [ ] Create quality levels and fallbacks.
 - [x] Add optional GPU timestamps and per-pass reports with a CPU fallback.
@@ -263,7 +263,17 @@ Goal: build the rendering architecture that supports high quality without imposi
 - [x] Validate instance layout, frustum extraction, fallback visibility and validation-clean Vulkan
   smoke/resize/metrics execution.
 
-GPU culling, indirect drawing, the lighting architecture, shadows, IBL, quality levels, VRAM
+### Phase 7C validation status
+
+- [x] Add opt-in Vulkan compute culling with a Vulkan 1.0-compatible atomic append path.
+- [x] Add persistent source, visible and indirect buffers with per-frame output slices.
+- [x] Connect `gpu_cull` to `forward_opaque` through the internal render graph and synchronize
+  compute writes with vertex/indirect reads.
+- [x] Add GPU/CPU visibility metrics, `--gpu-culling`, indirect drawing and CPU fallback.
+- [x] Validate Debug smoke, GPU metrics and validation-clean shutdown locally.
+
+The GPU visible-instance order is not a contract because the current atomic compaction is intended
+for opaque depth-tested geometry. The lighting architecture, shadows, IBL, quality levels, VRAM
 policy and performance comparison between Forward+, Clustered and Deferred remain open Phase 7
 work.
 

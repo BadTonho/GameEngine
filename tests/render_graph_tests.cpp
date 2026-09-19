@@ -138,12 +138,48 @@ bool test_cycle_and_same_pass_conflict() noexcept
     return true;
 }
 
+bool test_gpu_cull_dependency() noexcept
+{
+    RenderGraph graph;
+    ResourceHandle source;
+    ResourceHandle visible;
+    ResourceHandle indirect;
+    ResourceHandle color;
+    if (!graph.add_resource({"instance_source", ResourceKind::storage_buffer, true}, source)
+             .ok() ||
+        !graph.add_resource({"visible_instances", ResourceKind::vertex_buffer, true}, visible)
+             .ok() ||
+        !graph.add_resource({"indirect_command", ResourceKind::indirect_buffer, true}, indirect)
+             .ok() ||
+        !graph.add_resource({"color", ResourceKind::color_attachment, true}, color).ok()) {
+        return false;
+    }
+    const std::array<ResourceHandle, 1> cull_reads = {source};
+    const std::array<ResourceHandle, 2> cull_writes = {visible, indirect};
+    PassHandle cull;
+    if (!graph.add_pass({"gpu_cull", cull_reads, cull_writes, {}, 0U}, cull).ok()) {
+        return false;
+    }
+    const std::array<ResourceHandle, 2> forward_reads = {visible, indirect};
+    const std::array<ResourceHandle, 1> forward_writes = {color};
+    PassHandle forward;
+    if (!graph.add_pass({"forward_opaque", forward_reads, forward_writes, {}, 1U}, forward)
+             .ok() ||
+        !graph.compile().ok()) {
+        return false;
+    }
+    const auto order = graph.execution_order();
+    return order.size() == 2U && order[0].index == cull.index &&
+           order[1].index == forward.index && graph.pass_draw_calls(cull) == 0U &&
+           graph.pass_draw_calls(forward) == 1U;
+}
+
 } // namespace
 
 int main()
 {
     return test_deterministic_order_and_resource_dependency() && test_validation_errors() &&
-                   test_cycle_and_same_pass_conflict()
+                   test_cycle_and_same_pass_conflict() && test_gpu_cull_dependency()
                ? 0
                : 1;
 }

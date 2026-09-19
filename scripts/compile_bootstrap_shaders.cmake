@@ -7,6 +7,7 @@ endif()
 
 set(_expected_slang_version "2026.13.1-1-g84792eb15")
 set(_shader_source "${_repository_dir}/assets/shaders/bootstrap/triangle.slang")
+set(_compute_shader_source "${_repository_dir}/assets/shaders/bootstrap/cull.slang")
 set(_default_header "${_repository_dir}/src/engine/renderer/vulkan/triangle_shaders.hpp")
 set(_default_reflection_dir "${_repository_dir}/build/shader-reflection")
 set(_default_cache_dir "${_repository_dir}/build/shader-cache")
@@ -54,6 +55,9 @@ endif()
 if(NOT EXISTS "${_shader_source}")
     message(FATAL_ERROR "Shader source does not exist: ${_shader_source}")
 endif()
+if(NOT EXISTS "${_compute_shader_source}")
+    message(FATAL_ERROR "Compute shader source does not exist: ${_compute_shader_source}")
+endif()
 
 execute_process(
     COMMAND "${_slangc}" -version
@@ -81,18 +85,18 @@ file(MAKE_DIRECTORY "${_cache_dir}/${_configuration}")
 get_filename_component(_header_directory "${_shader_header}" DIRECTORY)
 file(MAKE_DIRECTORY "${_header_directory}")
 file(SHA256 "${_shader_source}" _source_sha256)
+file(SHA256 "${_compute_shader_source}" _compute_source_sha256)
 
 set(_base_manifest
     "schema=1\n"
-    "source_sha256=${_source_sha256}\n"
     "slang_version=${_slang_version}\n"
     "target=spirv\n"
     "profile=spirv_1_0+GLSL_450\n"
     "capabilities=vulkan_1_0\n"
     "configuration=${_configuration}\n")
 
-function(_make_shader_identity _stage _entry _id_result _manifest_result)
-    set(_manifest "${_base_manifest}stage=${_stage}\nentry=${_entry}\n")
+function(_make_shader_identity _source_hash _stage _entry _id_result _manifest_result)
+    set(_manifest "${_base_manifest}source_sha256=${_source_hash}\nstage=${_stage}\nentry=${_entry}\n")
     string(SHA256 _id "${_manifest}")
     set(${_id_result} "${_id}" PARENT_SCOPE)
     set(${_manifest_result} "${_manifest}" PARENT_SCOPE)
@@ -149,10 +153,18 @@ function(_validate_shader_outputs _stage _entry _output _reflection)
                     "Vertex reflection is missing instance input '${_input_name}': ${_reflection}")
             endif()
         endforeach()
+    elseif(_stage STREQUAL "compute")
+        foreach(_resource_name IN ITEMS source_instances visible_instances indirect_commands)
+            string(FIND "${_reflection_content}" "\"name\": \"${_resource_name}\"" _resource_position)
+            if(_resource_position EQUAL -1)
+                message(FATAL_ERROR
+                    "Compute reflection is missing resource '${_resource_name}': ${_reflection}")
+            endif()
+        endforeach()
     endif()
 endfunction()
 
-function(_compile_shader _stage _entry _id _manifest _output_result _reflection_result)
+function(_compile_shader _source _stage _entry _id _manifest _output_result _reflection_result)
     set(_artifact_dir "${_cache_dir}/${_configuration}/${_id}")
     set(_cached_output "${_artifact_dir}/shader.spv")
     set(_cached_reflection "${_artifact_dir}/reflection.json")
@@ -182,7 +194,7 @@ function(_compile_shader _stage _entry _id _manifest _output_result _reflection_
         endif()
         execute_process(
             COMMAND "${_slangc}"
-                    "${_shader_source}"
+                    "${_source}"
                     -target spirv
                     -profile spirv_1_0+GLSL_450
                     -stage "${_stage}"
@@ -220,10 +232,12 @@ function(_compile_shader _stage _entry _id _manifest _output_result _reflection_
     set(${_reflection_result} "${_cached_reflection}" PARENT_SCOPE)
 endfunction()
 
-_make_shader_identity(vertex vertex_main _vertex_id _vertex_manifest)
-_make_shader_identity(fragment fragment_main _fragment_id _fragment_manifest)
-_compile_shader(vertex vertex_main "${_vertex_id}" "${_vertex_manifest}" _vertex_spirv _vertex_reflection)
-_compile_shader(fragment fragment_main "${_fragment_id}" "${_fragment_manifest}" _fragment_spirv _fragment_reflection)
+_make_shader_identity("${_source_sha256}" vertex vertex_main _vertex_id _vertex_manifest)
+_make_shader_identity("${_source_sha256}" fragment fragment_main _fragment_id _fragment_manifest)
+_make_shader_identity("${_compute_source_sha256}" compute compute_main _compute_id _compute_manifest)
+_compile_shader("${_shader_source}" vertex vertex_main "${_vertex_id}" "${_vertex_manifest}" _vertex_spirv _vertex_reflection)
+_compile_shader("${_shader_source}" fragment fragment_main "${_fragment_id}" "${_fragment_manifest}" _fragment_spirv _fragment_reflection)
+_compile_shader("${_compute_shader_source}" compute compute_main "${_compute_id}" "${_compute_manifest}" _compute_spirv _compute_reflection)
 
 function(_read_spirv_words _path _symbol _result)
     file(READ "${_path}" _hex HEX)
@@ -246,6 +260,7 @@ endfunction()
 
 _read_spirv_words("${_vertex_spirv}" vertex_shader _vertex_array)
 _read_spirv_words("${_fragment_spirv}" fragment_shader _fragment_array)
+_read_spirv_words("${_compute_spirv}" compute_shader _compute_array)
 
 file(WRITE "${_shader_header}" "#pragma once\n\n")
 file(APPEND "${_shader_header}"
@@ -258,17 +273,22 @@ file(APPEND "${_shader_header}"
     "// Do not edit this file manually.\n"
     "inline constexpr std::string_view shader_configuration = \"${_configuration}\";\n"
     "inline constexpr std::string_view shader_source_sha256 = \"${_source_sha256}\";\n"
+    "inline constexpr std::string_view compute_shader_source_sha256 = \"${_compute_source_sha256}\";\n"
     "inline constexpr std::string_view shader_vertex_layout = \"position3_normal3_uv2+instance_model4\";\n"
     "inline constexpr std::uint32_t shader_push_constant_size = 64U;\n"
     "inline constexpr std::string_view shader_vertex_inputs =\n"
     "    \"location0:position3,location1:normal3,location2:uv2,location3:model_column0,\"\n"
     "    \"location4:model_column1,location5:model_column2,location6:model_column3\";\n"
     "inline constexpr std::string_view shader_resource_layout =\n"
-    "    \"set0:uniform_buffer+sampled_image+sampler\";\n")
-file(APPEND "${_shader_header}" "${_vertex_array}${_fragment_array}\n")
+    "    \"set0:uniform_buffer+sampled_image+sampler\";\n"
+    "inline constexpr std::string_view compute_shader_resource_layout =\n"
+    "    \"set0:storage_buffer+storage_buffer+storage_buffer\";\n"
+    "inline constexpr std::uint32_t compute_shader_workgroup_size = 64U;\n")
+file(APPEND "${_shader_header}" "${_vertex_array}${_fragment_array}${_compute_array}\n")
 file(APPEND "${_shader_header}"
     "inline constexpr std::string_view vertex_shader_id = \"${_vertex_id}\";\n"
     "inline constexpr std::string_view fragment_shader_id = \"${_fragment_id}\";\n"
+    "inline constexpr std::string_view compute_shader_id = \"${_compute_id}\";\n"
     "inline constexpr ShaderArtifact vertex_shader_artifact{\n"
     "    vertex_shader_id, ShaderStage::vertex, \"vertex_main\",\n"
     "    shader_capability_vulkan_1_0, 0, vertex_shader.data(), vertex_shader.size()\n"
@@ -282,6 +302,13 @@ file(APPEND "${_shader_header}"
     "};\n"
     "inline constexpr std::array<ShaderArtifact, 1> fragment_shader_variants = {\n"
     "    fragment_shader_artifact,\n"
+    "};\n"
+    "inline constexpr ShaderArtifact compute_shader_artifact{\n"
+    "    compute_shader_id, ShaderStage::compute, \"compute_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, compute_shader.data(), compute_shader.size()\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> compute_shader_variants = {\n"
+    "    compute_shader_artifact,\n"
     "};\n\n"
     "} // namespace gameengine::renderer::vulkan::bootstrap\n")
 

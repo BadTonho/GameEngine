@@ -23,11 +23,26 @@ int main(int argc, char** argv)
     }
 
 #if GAMEENGINE_PLATFORM_HAS_WINDOW
-    const bool smoke_test = argc == 2 && std::strcmp(argv[1], "--smoke-test") == 0;
-    const bool metrics_test = argc == 2 && std::strcmp(argv[1], "--metrics") == 0;
-    if (argc > 1 && !smoke_test && !metrics_test) {
+    bool smoke_test = false;
+    bool metrics_test = false;
+    bool gpu_culling = false;
+    for (int index = 1; index < argc; ++index) {
+        if (std::strcmp(argv[index], "--smoke-test") == 0) {
+            smoke_test = true;
+        } else if (std::strcmp(argv[index], "--metrics") == 0) {
+            metrics_test = true;
+        } else if (std::strcmp(argv[index], "--gpu-culling") == 0) {
+            gpu_culling = true;
+        } else {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  "unknown argument; use --smoke-test, --metrics or --gpu-culling");
+            core.shutdown();
+            return 2;
+        }
+    }
+    if (smoke_test && metrics_test) {
         gameengine::core::log(gameengine::core::LogLevel::error,
-                              "unknown argument; use --smoke-test or --metrics");
+                              "--smoke-test and --metrics cannot be combined");
         core.shutdown();
         return 2;
     }
@@ -61,6 +76,19 @@ int main(int argc, char** argv)
         core.shutdown();
         return 5;
     }
+    if (gpu_culling) {
+        const gameengine::core::Status visibility_status =
+            gameengine::renderer::diagnostics::set_visibility_mode(
+                renderer, gameengine::renderer::gpu_culling::VisibilityMode::gpu);
+        if (!visibility_status) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  gameengine::core::to_string(visibility_status.code));
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+    }
 #endif
 
     gameengine::core::Clock clock;
@@ -71,6 +99,15 @@ int main(int argc, char** argv)
     constexpr std::uint32_t metrics_measured_frames = 30;
     constexpr std::uint32_t metrics_frames_per_workload =
         metrics_warmup_frames + metrics_measured_frames;
+#if !GAMEENGINE_RENDERER_HAS_VULKAN
+    (void)metrics_frame_count;
+    (void)metrics_test;
+    (void)metrics_workload_index;
+    (void)metrics_workloads;
+    (void)metrics_warmup_frames;
+    (void)metrics_measured_frames;
+    (void)metrics_frames_per_workload;
+#endif
 #if GAMEENGINE_RENDERER_HAS_VULKAN
     if (metrics_test) {
         const gameengine::core::Status workload_status =
@@ -131,6 +168,10 @@ int main(int argc, char** argv)
 
         if (smoke_test) {
             platform.request_close();
+#if !GAMEENGINE_RENDERER_HAS_VULKAN
+        } else if (metrics_test) {
+            platform.request_close();
+#endif
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }

@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 7B renderer foundation in use.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a deterministic procedural instanced cube, CPU frustum culling, versioned asset formats/tools, an internal scene graph and a measured single-pass render graph. It is not ready to create a complete game yet.
+> **Status: early development — Phase 7C renderer foundation in use.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a procedural instanced cube, CPU frustum culling, opt-in GPU culling/indirect drawing, versioned asset formats/tools, an internal scene graph and measured render passes. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -41,6 +41,7 @@ Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7
 - development metrics mode through `gameengine_runtime --metrics`, covering 1k, 10k and 100k procedural instances;
 - internal `Vec3`/`Mat4` math with right-handed Vulkan-compatible perspective and look-at transforms;
 - deterministic procedural instancing with a persistent per-frame host-visible instance buffer and CPU frustum culling;
+- opt-in Vulkan compute culling with atomic compaction, persistent GPU buffers and indexed indirect drawing, with CPU fallback;
 - generation-checked handles and fence-based deferred resource destruction;
 - Vulkan object names and command labels through `VK_EXT_debug_utils`;
 - `gameengine_tests`, `gameengine_asset_tests`, `gameengine_rhi_tests`, `gameengine_math_tests`, `gameengine_scene_tests`, render graph, renderer metrics, platform and shader pipeline tests without an external test framework;
@@ -55,7 +56,7 @@ The following are intentionally outside the current procedural renderer scope:
 - asset-file texture/material loading;
 - runtime shader file loading, automatic polling and editor integration;
 - prepared asset runtime integration, editor, Lua and a final ECS storage choice;
-- GPU culling, indirect drawing, shadows, IBL, quality levels and the final Forward+/Clustered/Deferred decision;
+- shadows, IBL, quality levels and the final Forward+/Clustered/Deferred decision;
 - physics, audio, networking or gameplay APIs;
 - a functional C ABI.
 
@@ -194,8 +195,10 @@ CTest covers the core, asset, RHI, math, scene, render graph, metrics, procedura
 7. `gameengine_platform_x11`: verifies the platform lifecycle and idempotent shutdown;
 8. `gameengine_vulkan_resize`: verifies resource creation/upload/destruction, procedural material descriptors, swapchain recreation, pipeline-cache load/persist/discard behavior and explicit development reload;
 9. `gameengine_renderer_instances`: verifies deterministic 1k/100k workloads, frustum extraction and CPU visibility ordering;
-10. `gameengine_runtime_metrics`: verifies the three procedural metrics workloads and their Vulkan lifecycle;
-11. `gameengine_shader_pipeline`: verifies variant selection and pipeline-cache identity validation;
+10. `gameengine_renderer_gpu_culling`: verifies GPU-facing layouts, dispatch sizing and indirect command initialization;
+11. `gameengine_runtime_metrics`: verifies the three CPU procedural metrics workloads and their Vulkan lifecycle;
+12. `gameengine_runtime_gpu_metrics`: verifies the opt-in GPU culling metrics workloads and fallback lifecycle;
+13. `gameengine_shader_pipeline`: verifies variant selection and pipeline-cache identity validation;
 
 The Windows-only unit checks additionally cover the native Win32 platform path. The 3D integration test verifies depth resources, indexed drawing, swapchain recreation and validation-clean shutdown.
 
@@ -218,7 +221,7 @@ The generator writes the checked-in `src/engine/renderer/vulkan/triangle_shaders
 
 The regular runtime build does not require `slangc` because the generated header is already included in the repository. The Vulkan renderer stores a device-specific pipeline cache in `gameengine.pipeline.cache` by default; `RendererConfiguration::pipeline_cache_path` can select another path. The C++ configuration also exposes explicit development-only `reload_shaders()` support. The bootstrap mesh, checkerboard texture and material constants are generated in memory; no asset file is required. The C ABI is unchanged.
 
-`gameengine_runtime --metrics` executes 10 warmup frames and 30 measured frames for each procedural workload of 1,000, 10,000 and 100,000 instances. Each block reports CPU visibility time, visible/culled instances, draw calls and optional GPU timing for `forward_opaque`.
+`gameengine_runtime --metrics` executes 10 warmup frames and 30 measured frames for each procedural workload of 1,000, 10,000 and 100,000 instances. Each block reports CPU visibility time, visible/culled instances, draw calls and optional GPU timing for `forward_opaque`. Add `--gpu-culling` to select the opt-in compute path; its output includes the `gpu_cull` pass, dispatch preparation time, persistent buffer sizes and CPU fallback state when the device has no compute support.
 
 ### Offline asset tools
 

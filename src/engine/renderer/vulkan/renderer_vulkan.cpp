@@ -23,6 +23,7 @@
 
 #include "engine/core/diagnostics.hpp"
 #include "engine/math/math.hpp"
+#include "engine/renderer/gpu_culling.hpp"
 #include "engine/renderer/render_graph/render_graph.hpp"
 #include "engine/renderer/renderer_metrics.hpp"
 #include "engine/renderer/procedural_instances.hpp"
@@ -56,6 +57,7 @@ constexpr std::array<const char*, 1> device_extensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 constexpr core::u32 frames_in_flight = 2;
+constexpr core::u32 timestamp_queries_per_frame = renderer::metrics::max_timed_passes * 2U;
 constexpr core::usize pipeline_cache_path_capacity = 512;
 
 [[nodiscard]] bool has_extension(const std::vector<VkExtensionProperties>& extensions,
@@ -193,6 +195,26 @@ struct Renderer::Impl final {
     VkDeviceSize instance_non_coherent_atom_size = 1;
     VkMemoryPropertyFlags instance_memory_properties = 0;
     VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
+    VkPipeline gpu_cull_pipeline = VK_NULL_HANDLE;
+    VkPipelineLayout gpu_cull_pipeline_layout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout gpu_cull_descriptor_set_layout = VK_NULL_HANDLE;
+    VkDescriptorPool gpu_cull_descriptor_pool = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, frames_in_flight> gpu_cull_descriptor_sets{};
+    VkBuffer gpu_source_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory gpu_source_memory = VK_NULL_HANDLE;
+    void* gpu_source_mapped = nullptr;
+    VkDeviceSize gpu_source_buffer_size = 0;
+    VkMemoryPropertyFlags gpu_source_memory_properties = 0;
+    VkBuffer gpu_visible_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory gpu_visible_memory = VK_NULL_HANDLE;
+    VkDeviceSize gpu_visible_slice_stride = 0;
+    VkDeviceSize gpu_visible_buffer_size = 0;
+    VkBuffer gpu_indirect_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory gpu_indirect_memory = VK_NULL_HANDLE;
+    void* gpu_indirect_mapped = nullptr;
+    VkDeviceSize gpu_indirect_slice_stride = 0;
+    VkDeviceSize gpu_indirect_buffer_size = 0;
+    VkMemoryPropertyFlags gpu_indirect_memory_properties = 0;
     renderer::vulkan::PipelineCacheIdentity pipeline_cache_identity{};
     VkQueryPool timestamp_query_pool = VK_NULL_HANDLE;
     PFN_vkResetQueryPool reset_query_pool = nullptr;
@@ -219,6 +241,7 @@ struct Renderer::Impl final {
     renderer::vulkan::ShaderDeviceCapabilities shader_capabilities{};
     const renderer::vulkan::ShaderArtifact* vertex_shader_artifact = nullptr;
     const renderer::vulkan::ShaderArtifact* fragment_shader_artifact = nullptr;
+    const renderer::vulkan::ShaderArtifact* compute_shader_artifact = nullptr;
     bool shader_hot_reload_enabled = false;
     scene::Scene bootstrap_scene;
     scene::Entity bootstrap_cube_entity{};
@@ -227,12 +250,20 @@ struct Renderer::Impl final {
     renderer::render_graph::RenderGraph render_graph;
     renderer::render_graph::ResourceHandle swapchain_color_resource{};
     renderer::render_graph::ResourceHandle depth_resource{};
+    renderer::render_graph::ResourceHandle gpu_source_resource{};
+    renderer::render_graph::ResourceHandle gpu_visible_resource{};
+    renderer::render_graph::ResourceHandle gpu_indirect_resource{};
+    renderer::render_graph::PassHandle gpu_cull_pass{};
     renderer::render_graph::PassHandle forward_opaque_pass{};
     std::array<renderer::metrics::FrameTimingReport, frames_in_flight> frame_timing{};
     std::array<bool, frames_in_flight> timing_pending{};
     renderer::metrics::TimingAccumulator timing_accumulator{};
     std::vector<renderer::procedural::ProceduralInstance> procedural_instances;
     core::u32 active_instance_count = renderer::procedural::default_instance_count;
+    renderer::gpu_culling::VisibilityMode visibility_mode =
+        renderer::gpu_culling::VisibilityMode::cpu;
+    bool gpu_culling_available = false;
+    bool gpu_culling_fallback = false;
     rhi::BufferHandle cube_vertex_buffer{};
     rhi::BufferHandle cube_index_buffer{};
     rhi::PipelineHandle cube_pipeline{};
@@ -299,6 +330,15 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status create_procedural_instance_resources() noexcept;
     void destroy_procedural_instance_resources() noexcept;
     [[nodiscard]] core::Status set_procedural_workload(core::u32 instance_count) noexcept;
+    [[nodiscard]] core::Status create_gpu_culling_resources() noexcept;
+    void destroy_gpu_culling_resources() noexcept;
+    [[nodiscard]] core::Status set_visibility_mode(
+        renderer::gpu_culling::VisibilityMode mode) noexcept;
+    [[nodiscard]] core::Status upload_gpu_source_instances() noexcept;
+    [[nodiscard]] core::Status create_gpu_culling_pipeline() noexcept;
+    [[nodiscard]] core::Status create_gpu_culling_descriptors() noexcept;
+    void destroy_gpu_culling_pipeline() noexcept;
+    void resolve_gpu_visibility(core::u32 frame_index) noexcept;
     [[nodiscard]] core::Status create_bootstrap_material_resources() noexcept;
     [[nodiscard]] core::Status create_material_descriptors() noexcept;
     void destroy_material_resources() noexcept;
@@ -490,6 +530,10 @@ core::Status Renderer::Impl::initialize(
     if (!status) {
         return status;
     }
+    status = create_gpu_culling_resources();
+    if (!status) {
+        return status;
+    }
     status = create_bootstrap_cube_resources();
     if (!status) {
         return status;
@@ -541,6 +585,7 @@ void Renderer::Impl::shutdown() noexcept
     }
 
     cleanup_swapchain();
+    destroy_gpu_culling_resources();
     destroy_procedural_instance_resources();
     destroy_timing_resources();
     destroy_material_resources();
@@ -582,6 +627,26 @@ void Renderer::Impl::shutdown() noexcept
     last_window_size = {};
     pipeline_cache_path = {};
     pipeline_cache_identity = {};
+    gpu_cull_pipeline = VK_NULL_HANDLE;
+    gpu_cull_pipeline_layout = VK_NULL_HANDLE;
+    gpu_cull_descriptor_set_layout = VK_NULL_HANDLE;
+    gpu_cull_descriptor_pool = VK_NULL_HANDLE;
+    gpu_cull_descriptor_sets = {};
+    gpu_source_buffer = VK_NULL_HANDLE;
+    gpu_source_memory = VK_NULL_HANDLE;
+    gpu_source_mapped = nullptr;
+    gpu_source_buffer_size = 0;
+    gpu_source_memory_properties = 0;
+    gpu_visible_buffer = VK_NULL_HANDLE;
+    gpu_visible_memory = VK_NULL_HANDLE;
+    gpu_visible_slice_stride = 0;
+    gpu_visible_buffer_size = 0;
+    gpu_indirect_buffer = VK_NULL_HANDLE;
+    gpu_indirect_memory = VK_NULL_HANDLE;
+    gpu_indirect_mapped = nullptr;
+    gpu_indirect_slice_stride = 0;
+    gpu_indirect_buffer_size = 0;
+    gpu_indirect_memory_properties = 0;
     reset_query_pool = nullptr;
     timestamp_period = 0.0;
     timestamp_valid_bits = 0;
@@ -589,6 +654,10 @@ void Renderer::Impl::shutdown() noexcept
     render_graph.reset();
     swapchain_color_resource = {};
     depth_resource = {};
+    gpu_source_resource = {};
+    gpu_visible_resource = {};
+    gpu_indirect_resource = {};
+    gpu_cull_pass = {};
     forward_opaque_pass = {};
     frame_timing = {};
     timing_pending = {};
@@ -602,9 +671,13 @@ void Renderer::Impl::shutdown() noexcept
     instance_memory_properties = 0;
     procedural_instances.clear();
     active_instance_count = renderer::procedural::default_instance_count;
+    visibility_mode = renderer::gpu_culling::VisibilityMode::cpu;
+    gpu_culling_available = false;
+    gpu_culling_fallback = false;
     shader_capabilities = {};
     vertex_shader_artifact = nullptr;
     fragment_shader_artifact = nullptr;
+    compute_shader_artifact = nullptr;
     shader_hot_reload_enabled = false;
     bootstrap_scene.clear();
     bootstrap_cube_entity = {};
@@ -923,11 +996,15 @@ core::Status Renderer::Impl::select_shader_variants() noexcept
     const auto fragment = renderer::vulkan::select_shader_variant(
         renderer::vulkan::bootstrap::fragment_shader_variants,
         shader_capabilities);
-    if (vertex == nullptr || fragment == nullptr) {
+    const auto compute = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::compute_shader_variants,
+        shader_capabilities);
+    if (vertex == nullptr || fragment == nullptr || compute == nullptr) {
         return core::Status{core::ErrorCode::shader_variant_unavailable};
     }
     vertex_shader_artifact = vertex;
     fragment_shader_artifact = fragment;
+    compute_shader_artifact = compute;
     return core::Status{};
 }
 
@@ -964,7 +1041,7 @@ core::Status Renderer::Impl::create_timing_resources() noexcept
     VkQueryPoolCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
     create_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
-    create_info.queryCount = frames_in_flight * 2U;
+    create_info.queryCount = frames_in_flight * timestamp_queries_per_frame;
     if (vkCreateQueryPool(device, &create_info, nullptr, &timestamp_query_pool) != VK_SUCCESS) {
         reset_query_pool = nullptr;
         return core::Status{};
@@ -991,6 +1068,10 @@ void Renderer::Impl::destroy_timing_resources() noexcept
 core::Status Renderer::Impl::create_render_graph() noexcept
 {
     render_graph.reset();
+    gpu_source_resource = {};
+    gpu_visible_resource = {};
+    gpu_indirect_resource = {};
+    gpu_cull_pass = {};
     if (!render_graph
              .add_resource({"swapchain_color", renderer::render_graph::ResourceKind::color_attachment,
                             true},
@@ -1004,13 +1085,59 @@ core::Status Renderer::Impl::create_render_graph() noexcept
         return core::Status{core::ErrorCode::vulkan_swapchain_failed};
     }
 
+    std::array<renderer::render_graph::ResourceHandle, 2> forward_reads{};
+    core::u32 forward_read_count = 0U;
+    if (visibility_mode == renderer::gpu_culling::VisibilityMode::gpu &&
+        gpu_culling_available) {
+        if (!render_graph
+                 .add_resource({"instance_source",
+                                renderer::render_graph::ResourceKind::storage_buffer,
+                                true},
+                               gpu_source_resource)
+                 .ok() ||
+            !render_graph
+                 .add_resource({"visible_instances",
+                                renderer::render_graph::ResourceKind::vertex_buffer,
+                                true},
+                               gpu_visible_resource)
+                 .ok() ||
+            !render_graph
+                 .add_resource({"indirect_command",
+                                renderer::render_graph::ResourceKind::indirect_buffer,
+                                true},
+                               gpu_indirect_resource)
+                 .ok()) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+        const std::array<renderer::render_graph::ResourceHandle, 1> cull_reads = {
+            gpu_source_resource,
+        };
+        const std::array<renderer::render_graph::ResourceHandle, 2> cull_writes = {
+            gpu_visible_resource,
+            gpu_indirect_resource,
+        };
+        const renderer::render_graph::PassDescription cull_pass{
+            .name = "gpu_cull",
+            .reads = cull_reads,
+            .writes = cull_writes,
+            .dependencies = {},
+            .draw_calls = 0U,
+        };
+        if (!render_graph.add_pass(cull_pass, gpu_cull_pass).ok()) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+        forward_reads = {gpu_visible_resource, gpu_indirect_resource};
+        forward_read_count = 2U;
+    }
+
     const std::array<renderer::render_graph::ResourceHandle, 2> writes = {
         swapchain_color_resource,
         depth_resource,
     };
     const renderer::render_graph::PassDescription forward_pass{
         .name = "forward_opaque",
-        .reads = {},
+        .reads = std::span<const renderer::render_graph::ResourceHandle>{forward_reads.data(),
+                                                                         forward_read_count},
         .writes = writes,
         .dependencies = {},
         .draw_calls = 1U,
@@ -1028,7 +1155,10 @@ void Renderer::Impl::reset_timing_queries(core::u32 frame_index) noexcept
         frame_index >= frames_in_flight) {
         return;
     }
-    reset_query_pool(device, timestamp_query_pool, frame_index * 2U, 2U);
+    reset_query_pool(device,
+                    timestamp_query_pool,
+                    frame_index * timestamp_queries_per_frame,
+                    timestamp_queries_per_frame);
 }
 
 void Renderer::Impl::resolve_timing(core::u32 frame_index) noexcept
@@ -1039,20 +1169,25 @@ void Renderer::Impl::resolve_timing(core::u32 frame_index) noexcept
 
     renderer::metrics::FrameTimingReport& report = frame_timing[frame_index];
     if (gpu_timestamps_enabled && report.pass_count > 0U) {
-        std::array<std::uint64_t, 2> timestamps{};
+        std::array<std::uint64_t, timestamp_queries_per_frame> timestamps{};
         const VkResult result = vkGetQueryPoolResults(device,
                                                        timestamp_query_pool,
-                                                       frame_index * 2U,
-                                                       2U,
+                                                       frame_index * timestamp_queries_per_frame,
+                                                       report.pass_count * 2U,
                                                        sizeof(timestamps),
                                                        timestamps.data(),
                                                        sizeof(std::uint64_t),
                                                        VK_QUERY_RESULT_64_BIT);
         if (result == VK_SUCCESS) {
-            renderer::metrics::PassTiming& pass = report.passes[0];
-            pass.gpu_nanoseconds = renderer::metrics::timestamp_delta_to_nanoseconds(
-                timestamps[0], timestamps[1], timestamp_period, timestamp_valid_bits);
-            pass.gpu_time_valid = true;
+            for (core::u32 index = 0; index < report.pass_count; ++index) {
+                renderer::metrics::PassTiming& pass = report.passes[index];
+                pass.gpu_nanoseconds = renderer::metrics::timestamp_delta_to_nanoseconds(
+                    timestamps[index * 2U],
+                    timestamps[index * 2U + 1U],
+                    timestamp_period,
+                    timestamp_valid_bits);
+                pass.gpu_time_valid = true;
+            }
         } else {
             report.gpu_timestamps_available = false;
             for (core::u32 index = 0; index < report.pass_count; ++index) {
@@ -1071,8 +1206,35 @@ void Renderer::Impl::resolve_all_timing() noexcept
         return;
     }
     for (core::u32 index = 0; index < frames_in_flight; ++index) {
+        resolve_gpu_visibility(index);
         resolve_timing(index);
     }
+}
+
+void Renderer::Impl::resolve_gpu_visibility(core::u32 frame_index) noexcept
+{
+    if (visibility_mode != renderer::gpu_culling::VisibilityMode::gpu ||
+        !gpu_culling_available || frame_index >= frames_in_flight ||
+        !timing_pending[frame_index] || gpu_indirect_mapped == nullptr) {
+        return;
+    }
+    if ((gpu_indirect_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
+        const VkMappedMemoryRange range{
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = gpu_indirect_memory,
+            .offset = gpu_indirect_slice_stride * frame_index,
+            .size = gpu_indirect_slice_stride,
+        };
+        if (vkInvalidateMappedMemoryRanges(device, 1, &range) != VK_SUCCESS) {
+            return;
+        }
+    }
+    const auto* command = reinterpret_cast<const renderer::gpu_culling::IndirectCommand*>(
+        static_cast<const std::byte*>(gpu_indirect_mapped) +
+        gpu_indirect_slice_stride * frame_index);
+    auto& report = frame_timing[frame_index];
+    report.visible_instances = std::min(command->instance_count, report.total_instances);
+    report.culled_instances = report.total_instances - report.visible_instances;
 }
 
 core::Status Renderer::Impl::create_pipeline_cache() noexcept
@@ -1873,7 +2035,403 @@ core::Status Renderer::Impl::set_procedural_workload(core::u32 instance_count) n
         return core::Status{core::ErrorCode::invalid_argument};
     }
     active_instance_count = instance_count;
+    return upload_gpu_source_instances();
+}
+
+core::Status Renderer::Impl::upload_gpu_source_instances() noexcept
+{
+    if (gpu_source_mapped == nullptr || gpu_source_memory == VK_NULL_HANDLE) {
+        return core::Status{};
+    }
+    auto* destination = static_cast<renderer::gpu_culling::GpuCullInstance*>(gpu_source_mapped);
+    for (core::u32 index = 0; index < active_instance_count; ++index) {
+        destination[index] = renderer::gpu_culling::to_gpu_instance(procedural_instances[index]);
+    }
+    if ((gpu_source_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
+        const VkDeviceSize written_size =
+            static_cast<VkDeviceSize>(sizeof(renderer::gpu_culling::GpuCullInstance)) *
+            active_instance_count;
+        const VkDeviceSize atom_size = std::max<VkDeviceSize>(
+            static_cast<VkDeviceSize>(gpu_source_buffer_size == 0U ? 1U :
+                                                                       instance_non_coherent_atom_size),
+            1U);
+        const VkDeviceSize flush_size =
+            ((written_size + atom_size - 1U) / atom_size) * atom_size;
+        const VkMappedMemoryRange range{
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = gpu_source_memory,
+            .offset = 0,
+            .size = std::min(flush_size, gpu_source_buffer_size),
+        };
+        if (vkFlushMappedMemoryRanges(device, 1, &range) != VK_SUCCESS) {
+            return core::Status{core::ErrorCode::vulkan_device_failed};
+        }
+    }
     return core::Status{};
+}
+
+core::Status Renderer::Impl::create_gpu_culling_resources() noexcept
+{
+    gpu_culling_available = false;
+    gpu_culling_fallback = false;
+
+    const QueueFamilies families = find_queue_families(physical_device);
+    if (!families.graphics.has_value()) {
+        return core::Status{};
+    }
+    std::uint32_t family_count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &family_count, nullptr);
+    std::vector<VkQueueFamilyProperties> family_properties(family_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(
+        physical_device, &family_count, family_properties.data());
+    if (families.graphics.value() >= family_properties.size() ||
+        (family_properties[families.graphics.value()].queueFlags & VK_QUEUE_COMPUTE_BIT) == 0U) {
+        core::log(core::LogLevel::warning,
+                  "GPU culling unavailable: graphics queue has no compute support");
+        return core::Status{};
+    }
+
+    const auto disable_gpu_culling = [this]() noexcept {
+        destroy_gpu_culling_resources();
+        core::log(core::LogLevel::warning,
+                  "GPU culling resources unavailable; falling back to CPU culling");
+    };
+
+    const VkDeviceSize source_size =
+        static_cast<VkDeviceSize>(sizeof(renderer::gpu_culling::GpuCullInstance)) *
+        renderer::procedural::maximum_instance_count;
+    if (!create_buffer_resource(source_size,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                gpu_source_buffer,
+                                gpu_source_memory,
+                                &gpu_source_memory_properties)
+             .ok() ||
+        vkMapMemory(device,
+                    gpu_source_memory,
+                    0,
+                    source_size,
+                    0,
+                    &gpu_source_mapped) != VK_SUCCESS) {
+        disable_gpu_culling();
+        return core::Status{};
+    }
+    gpu_source_buffer_size = source_size;
+    set_debug_name(VK_OBJECT_TYPE_BUFFER,
+                   reinterpret_cast<std::uint64_t>(gpu_source_buffer),
+                   "GameEngine.GpuCullSourceBuffer");
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physical_device, &properties);
+    const VkDeviceSize storage_alignment = std::max<VkDeviceSize>(
+        static_cast<VkDeviceSize>(properties.limits.minStorageBufferOffsetAlignment), 16U);
+    const VkDeviceSize visible_data_size =
+        static_cast<VkDeviceSize>(sizeof(renderer::procedural::InstanceData)) *
+        renderer::procedural::maximum_instance_count;
+    gpu_visible_slice_stride = ((visible_data_size + storage_alignment - 1U) /
+                                storage_alignment) *
+                               storage_alignment;
+    gpu_visible_buffer_size = gpu_visible_slice_stride * frames_in_flight;
+    if (!create_buffer_resource(gpu_visible_buffer_size,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                gpu_visible_buffer,
+                                gpu_visible_memory)
+             .ok()) {
+        disable_gpu_culling();
+        return core::Status{};
+    }
+    set_debug_name(VK_OBJECT_TYPE_BUFFER,
+                   reinterpret_cast<std::uint64_t>(gpu_visible_buffer),
+                   "GameEngine.GpuCullVisibleBuffer");
+
+    const VkDeviceSize indirect_alignment = std::max<VkDeviceSize>(
+        {static_cast<VkDeviceSize>(properties.limits.nonCoherentAtomSize),
+         static_cast<VkDeviceSize>(properties.limits.minStorageBufferOffsetAlignment),
+         4U});
+    gpu_indirect_slice_stride =
+        ((static_cast<VkDeviceSize>(sizeof(renderer::gpu_culling::IndirectCommand)) +
+          indirect_alignment - 1U) /
+         indirect_alignment) *
+        indirect_alignment;
+    gpu_indirect_buffer_size = gpu_indirect_slice_stride * frames_in_flight;
+    if (!create_buffer_resource(gpu_indirect_buffer_size,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                    VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                gpu_indirect_buffer,
+                                gpu_indirect_memory,
+                                &gpu_indirect_memory_properties)
+             .ok() ||
+        vkMapMemory(device,
+                    gpu_indirect_memory,
+                    0,
+                    gpu_indirect_buffer_size,
+                    0,
+                    &gpu_indirect_mapped) != VK_SUCCESS) {
+        disable_gpu_culling();
+        return core::Status{};
+    }
+    set_debug_name(VK_OBJECT_TYPE_BUFFER,
+                   reinterpret_cast<std::uint64_t>(gpu_indirect_buffer),
+                   "GameEngine.GpuCullIndirectBuffer");
+    for (core::u32 index = 0; index < frames_in_flight; ++index) {
+        auto* command = reinterpret_cast<renderer::gpu_culling::IndirectCommand*>(
+            static_cast<std::byte*>(gpu_indirect_mapped) +
+            gpu_indirect_slice_stride * index);
+        *command = renderer::gpu_culling::initial_indirect_command();
+    }
+    if ((gpu_indirect_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
+        const VkMappedMemoryRange range{
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = gpu_indirect_memory,
+            .offset = 0,
+            .size = gpu_indirect_buffer_size,
+        };
+        if (vkFlushMappedMemoryRanges(device, 1, &range) != VK_SUCCESS) {
+            disable_gpu_culling();
+            return core::Status{};
+        }
+    }
+
+    if (!create_gpu_culling_descriptors().ok() || !create_gpu_culling_pipeline().ok() ||
+        !upload_gpu_source_instances().ok()) {
+        disable_gpu_culling();
+        return core::Status{};
+    }
+    gpu_culling_available = true;
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_gpu_culling_descriptors() noexcept
+{
+    const std::array<VkDescriptorSetLayoutBinding, 3> bindings = {
+        VkDescriptorSetLayoutBinding{0,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_COMPUTE_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{1,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_COMPUTE_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{2,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_COMPUTE_BIT,
+                                     nullptr},
+    };
+    const VkDescriptorSetLayoutCreateInfo layout_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = static_cast<std::uint32_t>(bindings.size()),
+        .pBindings = bindings.data(),
+    };
+    if (vkCreateDescriptorSetLayout(device,
+                                    &layout_info,
+                                    nullptr,
+                                    &gpu_cull_descriptor_set_layout) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    const VkDescriptorPoolSize pool_size{
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        static_cast<std::uint32_t>(bindings.size()) * frames_in_flight,
+    };
+    const VkDescriptorPoolCreateInfo pool_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = frames_in_flight,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+    };
+    if (vkCreateDescriptorPool(device,
+                               &pool_info,
+                               nullptr,
+                               &gpu_cull_descriptor_pool) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    const std::array<VkDescriptorSetLayout, frames_in_flight> layouts = {
+        gpu_cull_descriptor_set_layout,
+        gpu_cull_descriptor_set_layout,
+    };
+    const VkDescriptorSetAllocateInfo allocate_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = gpu_cull_descriptor_pool,
+        .descriptorSetCount = frames_in_flight,
+        .pSetLayouts = layouts.data(),
+    };
+    if (vkAllocateDescriptorSets(device, &allocate_info, gpu_cull_descriptor_sets.data()) !=
+        VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    for (core::u32 index = 0; index < frames_in_flight; ++index) {
+        const std::array<VkDescriptorBufferInfo, 3> buffer_infos = {
+            VkDescriptorBufferInfo{gpu_source_buffer, 0, gpu_source_buffer_size},
+            VkDescriptorBufferInfo{gpu_visible_buffer,
+                                   gpu_visible_slice_stride * index,
+                                   static_cast<VkDeviceSize>(sizeof(renderer::procedural::InstanceData)) *
+                                       renderer::procedural::maximum_instance_count},
+            VkDescriptorBufferInfo{gpu_indirect_buffer,
+                                   gpu_indirect_slice_stride * index,
+                                   sizeof(renderer::gpu_culling::IndirectCommand)},
+        };
+        std::array<VkWriteDescriptorSet, 3> writes{};
+        for (core::u32 binding = 0; binding < writes.size(); ++binding) {
+            writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[binding].dstSet = gpu_cull_descriptor_sets[index];
+            writes[binding].dstBinding = binding;
+            writes[binding].descriptorCount = 1;
+            writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[binding].pBufferInfo = &buffer_infos[binding];
+        }
+        vkUpdateDescriptorSets(device,
+                               static_cast<std::uint32_t>(writes.size()),
+                               writes.data(),
+                               0,
+                               nullptr);
+    }
+    set_debug_name(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT,
+                   reinterpret_cast<std::uint64_t>(gpu_cull_descriptor_set_layout),
+                   "GameEngine.GpuCullSetLayout");
+    set_debug_name(VK_OBJECT_TYPE_DESCRIPTOR_POOL,
+                   reinterpret_cast<std::uint64_t>(gpu_cull_descriptor_pool),
+                   "GameEngine.GpuCullPool");
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_gpu_culling_pipeline() noexcept
+{
+    if (compute_shader_artifact == nullptr) {
+        return core::Status{core::ErrorCode::shader_variant_unavailable};
+    }
+    const VkPushConstantRange push_constant_range{
+        VK_SHADER_STAGE_COMPUTE_BIT,
+        0,
+        sizeof(renderer::gpu_culling::GpuCullPushConstants),
+    };
+    const VkPipelineLayoutCreateInfo layout_info{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &gpu_cull_descriptor_set_layout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push_constant_range,
+    };
+    if (vkCreatePipelineLayout(device,
+                               &layout_info,
+                               nullptr,
+                               &gpu_cull_pipeline_layout) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    const VkShaderModule shader_module = create_shader_module(
+        compute_shader_artifact->spirv,
+        compute_shader_artifact->spirv_word_count * sizeof(std::uint32_t));
+    if (shader_module == VK_NULL_HANDLE) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkPipelineShaderStageCreateInfo stage_info{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = shader_module,
+        .pName = compute_shader_artifact->entry_point.data(),
+    };
+    const VkComputePipelineCreateInfo pipeline_info{
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = stage_info,
+        .layout = gpu_cull_pipeline_layout,
+    };
+    const VkResult result = vkCreateComputePipelines(device,
+                                                     pipeline_cache,
+                                                     1,
+                                                     &pipeline_info,
+                                                     nullptr,
+                                                     &gpu_cull_pipeline);
+    vkDestroyShaderModule(device, shader_module, nullptr);
+    if (result != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    set_debug_name(VK_OBJECT_TYPE_PIPELINE,
+                   reinterpret_cast<std::uint64_t>(gpu_cull_pipeline),
+                   "GameEngine.GpuCullPipeline");
+    return core::Status{};
+}
+
+void Renderer::Impl::destroy_gpu_culling_pipeline() noexcept
+{
+    if (device == VK_NULL_HANDLE) {
+        return;
+    }
+    if (gpu_cull_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, gpu_cull_pipeline, nullptr);
+        gpu_cull_pipeline = VK_NULL_HANDLE;
+    }
+    if (gpu_cull_pipeline_layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, gpu_cull_pipeline_layout, nullptr);
+        gpu_cull_pipeline_layout = VK_NULL_HANDLE;
+    }
+    if (gpu_cull_descriptor_pool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, gpu_cull_descriptor_pool, nullptr);
+        gpu_cull_descriptor_pool = VK_NULL_HANDLE;
+    }
+    if (gpu_cull_descriptor_set_layout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device, gpu_cull_descriptor_set_layout, nullptr);
+        gpu_cull_descriptor_set_layout = VK_NULL_HANDLE;
+    }
+    gpu_cull_descriptor_sets = {};
+}
+
+void Renderer::Impl::destroy_gpu_culling_resources() noexcept
+{
+    if (device == VK_NULL_HANDLE) {
+        return;
+    }
+    destroy_gpu_culling_pipeline();
+    if (gpu_source_mapped != nullptr && gpu_source_memory != VK_NULL_HANDLE) {
+        vkUnmapMemory(device, gpu_source_memory);
+    }
+    gpu_source_mapped = nullptr;
+    if (gpu_source_buffer != VK_NULL_HANDLE || gpu_source_memory != VK_NULL_HANDLE) {
+        destroy_buffer_resource(gpu_source_buffer, gpu_source_memory);
+    }
+    if (gpu_visible_buffer != VK_NULL_HANDLE || gpu_visible_memory != VK_NULL_HANDLE) {
+        destroy_buffer_resource(gpu_visible_buffer, gpu_visible_memory);
+    }
+    if (gpu_indirect_mapped != nullptr && gpu_indirect_memory != VK_NULL_HANDLE) {
+        vkUnmapMemory(device, gpu_indirect_memory);
+    }
+    gpu_indirect_mapped = nullptr;
+    if (gpu_indirect_buffer != VK_NULL_HANDLE || gpu_indirect_memory != VK_NULL_HANDLE) {
+        destroy_buffer_resource(gpu_indirect_buffer, gpu_indirect_memory);
+    }
+    gpu_source_buffer = VK_NULL_HANDLE;
+    gpu_source_memory = VK_NULL_HANDLE;
+    gpu_source_buffer_size = 0;
+    gpu_source_memory_properties = 0;
+    gpu_visible_buffer = VK_NULL_HANDLE;
+    gpu_visible_memory = VK_NULL_HANDLE;
+    gpu_visible_slice_stride = 0;
+    gpu_visible_buffer_size = 0;
+    gpu_indirect_buffer = VK_NULL_HANDLE;
+    gpu_indirect_memory = VK_NULL_HANDLE;
+    gpu_indirect_slice_stride = 0;
+    gpu_indirect_buffer_size = 0;
+    gpu_indirect_memory_properties = 0;
+    gpu_culling_available = false;
+}
+
+core::Status Renderer::Impl::set_visibility_mode(
+    renderer::gpu_culling::VisibilityMode mode) noexcept
+{
+    gpu_culling_fallback = mode == renderer::gpu_culling::VisibilityMode::gpu &&
+                           !gpu_culling_available;
+    visibility_mode = renderer::gpu_culling::resolve_visibility_mode(mode,
+                                                                       gpu_culling_available);
+    const core::Status graph_status = create_render_graph();
+    timing_accumulator.reset();
+    return graph_status;
 }
 
 core::Status Renderer::Impl::create_bootstrap_material_resources() noexcept
@@ -3029,36 +3587,73 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         camera_component->far_plane);
     const math::Mat4 view_projection = math::multiply(projection, view);
 
-    frame_timing[frame_index].reset(gpu_timestamps_enabled);
-    frame_timing[frame_index].total_instances = active_instance_count;
-    frame_timing[frame_index].instance_buffer_bytes = instance_buffer_size;
+    const bool use_gpu_culling = visibility_mode == renderer::gpu_culling::VisibilityMode::gpu &&
+                                 gpu_culling_available;
+    auto& timing = frame_timing[frame_index];
+    timing.reset(gpu_timestamps_enabled,
+                 visibility_mode,
+                 gpu_culling_available,
+                 use_gpu_culling,
+                 gpu_culling_fallback);
+    timing.total_instances = active_instance_count;
+    timing.instance_buffer_bytes = instance_buffer_size;
+    timing.gpu_source_buffer_bytes = gpu_source_buffer_size;
+    timing.gpu_visible_buffer_bytes = gpu_visible_buffer_size;
+    timing.gpu_indirect_buffer_bytes = gpu_indirect_buffer_size;
+
     const auto visibility_start = std::chrono::steady_clock::now();
     math::Frustum frustum{};
     static_cast<void>(math::extract_frustum_rh_zo(view_projection, frustum));
     const VkDeviceSize instance_offset = instance_slice_stride * frame_index;
-    if (instance_mapped == nullptr || instance_buffer == VK_NULL_HANDLE ||
-        instance_offset + sizeof(renderer::procedural::InstanceData) * active_instance_count >
-            instance_buffer_size) {
-        return VK_ERROR_INITIALIZATION_FAILED;
-    }
-    auto* visible_data = reinterpret_cast<renderer::procedural::InstanceData*>(
-        static_cast<std::byte*>(instance_mapped) + instance_offset);
     core::u32 visible_count = 0U;
-    if (!renderer::procedural::cull_instances(
-            std::span<const renderer::procedural::ProceduralInstance>{procedural_instances.data(),
-                                                                       active_instance_count},
-            frustum,
-            std::span<renderer::procedural::InstanceData>{visible_data, active_instance_count},
-            visible_count)) {
-        return VK_ERROR_INITIALIZATION_FAILED;
+    if (use_gpu_culling) {
+        if (gpu_indirect_mapped == nullptr || gpu_indirect_buffer == VK_NULL_HANDLE ||
+            gpu_visible_buffer == VK_NULL_HANDLE || gpu_cull_pipeline == VK_NULL_HANDLE) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        auto* command = reinterpret_cast<renderer::gpu_culling::IndirectCommand*>(
+            static_cast<std::byte*>(gpu_indirect_mapped) +
+            gpu_indirect_slice_stride * frame_index);
+        *command = renderer::gpu_culling::initial_indirect_command();
+        if ((gpu_indirect_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
+            const VkMappedMemoryRange range{
+                .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                .memory = gpu_indirect_memory,
+                .offset = gpu_indirect_slice_stride * frame_index,
+                .size = gpu_indirect_slice_stride,
+            };
+            if (vkFlushMappedMemoryRanges(device, 1, &range) != VK_SUCCESS) {
+                return VK_ERROR_DEVICE_LOST;
+            }
+        }
+        timing.culled_instances = active_instance_count;
+    } else {
+        if (instance_mapped == nullptr || instance_buffer == VK_NULL_HANDLE ||
+            instance_offset + sizeof(renderer::procedural::InstanceData) * active_instance_count >
+                instance_buffer_size) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        auto* visible_data = reinterpret_cast<renderer::procedural::InstanceData*>(
+            static_cast<std::byte*>(instance_mapped) + instance_offset);
+        if (!renderer::procedural::cull_instances(
+                std::span<const renderer::procedural::ProceduralInstance>{
+                    procedural_instances.data(), active_instance_count},
+                frustum,
+                std::span<renderer::procedural::InstanceData>{visible_data, active_instance_count},
+                visible_count)) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        timing.visible_instances = visible_count;
+        timing.culled_instances = active_instance_count - visible_count;
     }
     const auto visibility_end = std::chrono::steady_clock::now();
-    frame_timing[frame_index].visible_instances = visible_count;
-    frame_timing[frame_index].culled_instances = active_instance_count - visible_count;
-    frame_timing[frame_index].visibility_cpu_nanoseconds = static_cast<core::u64>(
+    const core::u64 preparation_nanoseconds = static_cast<core::u64>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(visibility_end - visibility_start)
             .count());
-    if ((instance_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U &&
+    timing.visibility_cpu_nanoseconds = use_gpu_culling ? 0U : preparation_nanoseconds;
+    timing.gpu_culling_cpu_nanoseconds = use_gpu_culling ? preparation_nanoseconds : 0U;
+    if (!use_gpu_culling &&
+        (instance_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U &&
         visible_count > 0U) {
         const VkDeviceSize written_size =
             static_cast<VkDeviceSize>(sizeof(renderer::procedural::InstanceData)) * visible_count;
@@ -3090,16 +3685,103 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
     }
 
     for (const renderer::render_graph::PassHandle pass : execution_order) {
-        if (pass.index != forward_opaque_pass.index ||
-            render_graph.pass_name(pass) != "forward_opaque") {
+        const std::string_view pass_name = render_graph.pass_name(pass);
+        if (use_gpu_culling && pass.index == gpu_cull_pass.index && pass_name == "gpu_cull") {
+            const auto pass_start = std::chrono::steady_clock::now();
+            const core::u32 query_base =
+                frame_index * timestamp_queries_per_frame + timing.pass_count * 2U;
+            if (gpu_timestamps_enabled) {
+                vkCmdWriteTimestamp(command_buffer,
+                                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                    timestamp_query_pool,
+                                    query_base);
+            }
+            const renderer::gpu_culling::GpuCullPushConstants cull_constants =
+                renderer::gpu_culling::make_push_constants(frustum, active_instance_count);
+            begin_debug_label(command_buffer, "GameEngine.GpuCull");
+            vkCmdBindPipeline(command_buffer,
+                              VK_PIPELINE_BIND_POINT_COMPUTE,
+                              gpu_cull_pipeline);
+            vkCmdBindDescriptorSets(command_buffer,
+                                    VK_PIPELINE_BIND_POINT_COMPUTE,
+                                    gpu_cull_pipeline_layout,
+                                    0,
+                                    1,
+                                    &gpu_cull_descriptor_sets[frame_index],
+                                    0,
+                                    nullptr);
+            vkCmdPushConstants(command_buffer,
+                               gpu_cull_pipeline_layout,
+                               VK_SHADER_STAGE_COMPUTE_BIT,
+                               0,
+                               sizeof(cull_constants),
+                               &cull_constants);
+            vkCmdDispatch(command_buffer,
+                          renderer::gpu_culling::dispatch_group_count(active_instance_count),
+                          1,
+                          1);
+            const std::array<VkBufferMemoryBarrier, 2> buffer_barriers = {
+                VkBufferMemoryBarrier{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                    .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                    .dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .buffer = gpu_visible_buffer,
+                    .offset = gpu_visible_slice_stride * frame_index,
+                    .size = static_cast<VkDeviceSize>(sizeof(renderer::procedural::InstanceData)) *
+                            renderer::procedural::maximum_instance_count,
+                },
+                VkBufferMemoryBarrier{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                    .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                    .dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .buffer = gpu_indirect_buffer,
+                    .offset = gpu_indirect_slice_stride * frame_index,
+                    .size = sizeof(renderer::gpu_culling::IndirectCommand),
+                },
+            };
+            vkCmdPipelineBarrier(command_buffer,
+                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                 VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
+                                     VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+                                 0,
+                                 0,
+                                 nullptr,
+                                 static_cast<std::uint32_t>(buffer_barriers.size()),
+                                 buffer_barriers.data(),
+                                 0,
+                                 nullptr);
+            end_debug_label(command_buffer);
+            if (gpu_timestamps_enabled) {
+                vkCmdWriteTimestamp(command_buffer,
+                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                    timestamp_query_pool,
+                                    query_base + 1U);
+            }
+            const auto pass_end = std::chrono::steady_clock::now();
+            timing.add_pass(
+                pass_name,
+                static_cast<core::u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(pass_end - pass_start)
+                        .count()),
+                0U,
+                gpu_timestamps_enabled);
+            continue;
+        }
+        if (pass.index != forward_opaque_pass.index || pass_name != "forward_opaque") {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         const auto pass_start = std::chrono::steady_clock::now();
+        const core::u32 query_base =
+            frame_index * timestamp_queries_per_frame + timing.pass_count * 2U;
         if (gpu_timestamps_enabled) {
             vkCmdWriteTimestamp(command_buffer,
                                 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                 timestamp_query_pool,
-                                frame_index * 2U);
+                                query_base);
         }
 
         const std::array<VkClearValue, 2> clear_values = {
@@ -3126,11 +3808,11 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
         const std::array<VkBuffer, 2> vertex_buffers = {
             vertex_buffer->buffer,
-            instance_buffer,
+            use_gpu_culling ? gpu_visible_buffer : instance_buffer,
         };
         const std::array<VkDeviceSize, 2> vertex_offsets = {
             0,
-            instance_offset,
+            use_gpu_culling ? gpu_visible_slice_stride * frame_index : instance_offset,
         };
         vkCmdBindVertexBuffers(command_buffer,
                                0,
@@ -3155,7 +3837,13 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                            0,
                            sizeof(push_constants),
                            &push_constants);
-        if (visible_count > 0U) {
+        if (use_gpu_culling) {
+            vkCmdDrawIndexedIndirect(command_buffer,
+                                     gpu_indirect_buffer,
+                                     gpu_indirect_slice_stride * frame_index,
+                                     1,
+                                     sizeof(renderer::gpu_culling::IndirectCommand));
+        } else if (visible_count > 0U) {
             vkCmdDrawIndexed(command_buffer,
                              static_cast<std::uint32_t>(scene::bootstrap_cube_indices.size()),
                              visible_count,
@@ -3169,7 +3857,7 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
             vkCmdWriteTimestamp(command_buffer,
                                 VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                                 timestamp_query_pool,
-                                frame_index * 2U + 1U);
+                                query_base + 1U);
         }
 
         const auto pass_end = std::chrono::steady_clock::now();
@@ -3177,9 +3865,9 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                                          pass_end - pass_start)
                                          .count();
         frame_timing[frame_index].add_pass(
-            render_graph.pass_name(pass),
+            pass_name,
             static_cast<core::u64>(cpu_nanoseconds),
-            visible_count > 0U ? 1U : 0U,
+            use_gpu_culling || visible_count > 0U ? 1U : 0U,
             gpu_timestamps_enabled);
     }
 
@@ -3210,6 +3898,7 @@ core::Status Renderer::Impl::render_frame(platform::WindowSize window_size) noex
                         std::numeric_limits<std::uint64_t>::max()) != VK_SUCCESS) {
         return core::Status{core::ErrorCode::vulkan_frame_failed};
     }
+    resolve_gpu_visibility(current_frame);
     resolve_timing(current_frame);
     reset_timing_queries(current_frame);
     collect_deferred(current_frame);
@@ -3500,6 +4189,20 @@ void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept
     renderer.impl_->timing_accumulator.reset();
 }
 
+core::Status set_visibility_mode(const gameengine::rhi::Renderer& renderer,
+                                 gpu_culling::VisibilityMode mode) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    if (renderer.impl_->device == VK_NULL_HANDLE ||
+        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    renderer.impl_->resolve_all_timing();
+    return renderer.impl_->set_visibility_mode(mode);
+}
+
 core::Status set_procedural_workload(const gameengine::rhi::Renderer& renderer,
                                      core::u32 instance_count) noexcept
 {
@@ -3531,10 +4234,21 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
     }
     renderer.impl_->resolve_all_timing();
     const auto& accumulator = renderer.impl_->timing_accumulator;
+    const char* mode = accumulator.visibility_mode == gpu_culling::VisibilityMode::gpu
+                           ? "gpu"
+                           : "cpu";
+    const char* gpu_state = accumulator.gpu_culling_fallback
+                                ? "fallback"
+                                : !accumulator.gpu_culling_available
+                                      ? "unavailable"
+                                      : accumulator.gpu_culling_active ? "active" : "available";
     std::fprintf(stderr,
-                 "[gameengine] [info] renderer metrics: instances=%u frames=%llu "
+                 "[gameengine] [info] renderer metrics: mode=%s gpu_culling=%s instances=%u frames=%llu "
                  "draw_calls=%llu visible_avg=%llu culled_avg=%llu "
-                 "instance_buffer_bytes=%llu gpu_timestamps=%s\n",
+                 "instance_buffer_bytes=%llu gpu_source_bytes=%llu gpu_visible_bytes=%llu "
+                 "gpu_indirect_bytes=%llu gpu_timestamps=%s\n",
+                 mode,
+                 gpu_state,
                  renderer.impl_->active_instance_count,
                  static_cast<unsigned long long>(accumulator.frame_count),
                  static_cast<unsigned long long>(accumulator.total_draw_calls),
@@ -3547,14 +4261,29 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
                                                      : accumulator.culled_instances /
                                                            accumulator.frame_count),
                  static_cast<unsigned long long>(accumulator.instance_buffer_bytes),
+                 static_cast<unsigned long long>(accumulator.gpu_source_buffer_bytes),
+                 static_cast<unsigned long long>(accumulator.gpu_visible_buffer_bytes),
+                 static_cast<unsigned long long>(accumulator.gpu_indirect_buffer_bytes),
                  accumulator.gpu_timestamps_available ? "available" : "unavailable");
     if (accumulator.frame_count > 0U) {
-        std::fprintf(stderr,
-                     "[gameengine] [info] visibility_cpu_ns(avg/min/max)=%llu/%llu/%llu\n",
-                     static_cast<unsigned long long>(accumulator.visibility_cpu_total_nanoseconds /
-                                                     accumulator.frame_count),
-                     static_cast<unsigned long long>(accumulator.visibility_cpu_min_nanoseconds),
-                     static_cast<unsigned long long>(accumulator.visibility_cpu_max_nanoseconds));
+        if (accumulator.visibility_mode == gpu_culling::VisibilityMode::gpu) {
+            std::fprintf(stderr,
+                         "[gameengine] [info] gpu_culling_cpu_ns(avg/min/max)=%llu/%llu/%llu\n",
+                         static_cast<unsigned long long>(
+                             accumulator.gpu_culling_cpu_total_nanoseconds /
+                             accumulator.frame_count),
+                         static_cast<unsigned long long>(
+                             accumulator.gpu_culling_cpu_min_nanoseconds),
+                         static_cast<unsigned long long>(
+                             accumulator.gpu_culling_cpu_max_nanoseconds));
+        } else {
+            std::fprintf(stderr,
+                         "[gameengine] [info] visibility_cpu_ns(avg/min/max)=%llu/%llu/%llu\n",
+                         static_cast<unsigned long long>(accumulator.visibility_cpu_total_nanoseconds /
+                                                         accumulator.frame_count),
+                         static_cast<unsigned long long>(accumulator.visibility_cpu_min_nanoseconds),
+                         static_cast<unsigned long long>(accumulator.visibility_cpu_max_nanoseconds));
+        }
     }
     for (const auto& pass : accumulator.passes) {
         if (pass.name.empty() || pass.sample_count == 0U) {

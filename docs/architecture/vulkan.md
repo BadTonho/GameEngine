@@ -20,15 +20,22 @@ Two frames in flight are used. A frame waits for its fence, acquires a swapchain
 
 The integration test resizes the X11 window, pumps the resulting configure event and renders again through the recreated swapchain. The bootstrap scene now renders a procedural indexed cube with a static camera, procedural material and a recreated depth attachment.
 
-The Phase 7A renderer builds a small internal render graph for each renderer instance. The graph
-contains the imported swapchain color and depth resources and one deterministic `forward_opaque`
-pass. It validates resource ownership, explicit and resource-derived dependencies, duplicate
-writes and cycles before command recording. The graph is deliberately not a public RHI object and
-does not allocate transient Vulkan resources yet; it schedules the existing Vulkan render pass and
-cube draw. The Phase 7B frame flow is `scene → render graph → forward_opaque → Vulkan command
-buffer`: the scene supplies the camera and prototype transform, the renderer generates the
-procedural instance set, CPU visibility writes the current frame's instance slice, and the pass
-records one indexed instanced draw when any instance is visible.
+The renderer builds a small internal render graph for each renderer instance. In the default CPU
+mode, the graph contains the imported swapchain color and depth resources and one deterministic
+`forward_opaque` pass. In opt-in GPU mode, it adds storage, vertex and indirect resources and the
+dependency `gpu_cull → forward_opaque`. The frame flow is:
+
+```text
+scene → visibility mode → CPU culling or gpu_cull → indirect/forward_opaque → Vulkan command buffer
+```
+
+The graph validates resource ownership, explicit and resource-derived dependencies, duplicate
+writes and cycles before command recording. It remains an internal scheduler and does not allocate
+transient Vulkan resources. GPU culling reads a persistent 80-byte source record per procedural
+instance, atomically compacts visible model matrices into a device-local per-frame vertex slice,
+and writes one `VkDrawIndexedIndirectCommand`. The GPU output order is intentionally not a
+contract; the opaque depth-tested bootstrap material is order-independent. CPU culling remains the
+default and the fallback when compute support or GPU resources are unavailable.
 
 Vertex and image uploads use temporary host-visible, coherent staging buffers and one-time command buffers. Completion waits on a dedicated fence, never on `vkDeviceWaitIdle` during normal frame submission. The bootstrap mesh uses a device-local vertex buffer with position, normal and UV attributes plus a device-local index buffer. A fixed 64x64 checkerboard image and linear sampler are generated in memory and bound to the material; no mesh or texture file is loaded.
 
@@ -40,7 +47,9 @@ The bootstrap cube uses precompiled SPIR-V generated from `assets/shaders/bootst
 
 The generator records the source SHA-256, Slang version, target/profile, stage, entry point, build configuration and required capabilities in a canonical manifest. The SHA-256 of that manifest is the shader ID. Offline artifacts are cached in `build/shader-cache/Debug/<shader-id>/` or `build/shader-cache/Release/<shader-id>/`; cache hits validate the existing SPIR-V and reflection before reusing them. The generated header remains the runtime fallback for clean clones and contains the artifact table consumed by Vulkan.
 
-The bootstrap shader has explicit `vertex_main` and `fragment_main` entry points. Vertex position,
+The bootstrap shaders have explicit `vertex_main`, `fragment_main` and `compute_main` entry points.
+The compute shader uses a fixed `[numthreads(64, 1, 1)]` group, storage bindings for source,
+visible and indirect records, and 112 bytes of frustum/count push constants. Vertex position,
 normal and UV use Vulkan locations 0, 1 and 2; instance model columns use locations 3, 4, 5 and 6
 with instance rate. The vertex shader receives only the 64-byte view-projection push constant.
 Descriptor set 0 contains a material uniform buffer at binding 0, sampled image at binding 1 and
@@ -70,7 +79,7 @@ The C++ `RendererConfiguration` selects the pipeline-cache path and can enable e
 
 The renderer records a fixed-size timing report for each completed frame. CPU pass recording and
 CPU frustum culling use
-`steady_clock`. GPU timing uses two timestamp queries per frame-in-flight only when the graphics
+`steady_clock`. GPU timing uses two timestamp queries per timed pass and frame-in-flight only when the graphics
 queue exposes timestamp bits, a valid timestamp period and a usable query reset function. Devices
 without that combination continue normally and report CPU timings with GPU timing unavailable.
 The development executable runs a deterministic warmup and measurement sequence with:
@@ -81,8 +90,9 @@ gameengine_runtime --metrics
 
 The command waits for the device, resolves pending queries and prints one independent report for
 1k, 10k and 100k procedural instances, including visible/culled counts, draw calls and
-average/minimum/maximum CPU and GPU time for `forward_opaque`. The diagnostic bridge is internal;
-the public RHI and C ABI do not expose the report. The current baseline remains a single forward
-pass with CPU visibility. GPU culling, indirect drawing, Forward+, clustered and deferred lighting,
-shadows, IBL and quality fallbacks require later measurements before becoming architecture
-commitments.
+average/minimum/maximum CPU and GPU time for `forward_opaque`. With `--gpu-culling`, the report
+also includes `gpu_cull`, visible counts read after the frame fence, reserved source/visible/indirect
+buffer sizes and the CPU fallback state. The diagnostic bridge is internal; the public RHI and C
+ABI do not expose the report. The current baseline remains CPU visibility and one forward pass;
+Forward+, clustered and deferred lighting, shadows, IBL and quality fallbacks require later
+measurements before becoming architecture commitments.

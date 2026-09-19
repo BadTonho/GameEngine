@@ -7,6 +7,7 @@
 
 #include "engine/core/status.hpp"
 #include "engine/core/types.hpp"
+#include "engine/renderer/gpu_culling.hpp"
 
 namespace gameengine::rhi {
 class Renderer;
@@ -32,10 +33,22 @@ struct FrameTimingReport final {
     core::u32 visible_instances = 0;
     core::u32 culled_instances = 0;
     core::u64 visibility_cpu_nanoseconds = 0;
+    core::u64 gpu_culling_cpu_nanoseconds = 0;
     core::u64 instance_buffer_bytes = 0;
+    core::u64 gpu_source_buffer_bytes = 0;
+    core::u64 gpu_visible_buffer_bytes = 0;
+    core::u64 gpu_indirect_buffer_bytes = 0;
+    gpu_culling::VisibilityMode visibility_mode = gpu_culling::VisibilityMode::cpu;
+    bool gpu_culling_available = false;
+    bool gpu_culling_active = false;
+    bool gpu_culling_fallback = false;
     bool gpu_timestamps_available = false;
 
-    void reset(bool gpu_available) noexcept
+    void reset(bool gpu_available,
+               gpu_culling::VisibilityMode mode = gpu_culling::VisibilityMode::cpu,
+               bool gpu_available_for_culling = false,
+               bool gpu_active = false,
+               bool gpu_fallback = false) noexcept
     {
         passes = {};
         pass_count = 0;
@@ -44,7 +57,15 @@ struct FrameTimingReport final {
         visible_instances = 0;
         culled_instances = 0;
         visibility_cpu_nanoseconds = 0;
+        gpu_culling_cpu_nanoseconds = 0;
         instance_buffer_bytes = 0;
+        gpu_source_buffer_bytes = 0;
+        gpu_visible_buffer_bytes = 0;
+        gpu_indirect_buffer_bytes = 0;
+        visibility_mode = mode;
+        gpu_culling_available = gpu_available_for_culling;
+        gpu_culling_active = gpu_active;
+        gpu_culling_fallback = gpu_fallback;
         gpu_timestamps_available = gpu_available;
     }
 
@@ -88,7 +109,17 @@ struct TimingAccumulator final {
     core::u64 visibility_cpu_total_nanoseconds = 0;
     core::u64 visibility_cpu_min_nanoseconds = std::numeric_limits<core::u64>::max();
     core::u64 visibility_cpu_max_nanoseconds = 0;
+    core::u64 gpu_culling_cpu_total_nanoseconds = 0;
+    core::u64 gpu_culling_cpu_min_nanoseconds = std::numeric_limits<core::u64>::max();
+    core::u64 gpu_culling_cpu_max_nanoseconds = 0;
     core::u64 instance_buffer_bytes = 0;
+    core::u64 gpu_source_buffer_bytes = 0;
+    core::u64 gpu_visible_buffer_bytes = 0;
+    core::u64 gpu_indirect_buffer_bytes = 0;
+    gpu_culling::VisibilityMode visibility_mode = gpu_culling::VisibilityMode::cpu;
+    bool gpu_culling_available = false;
+    bool gpu_culling_active = false;
+    bool gpu_culling_fallback = false;
     bool gpu_timestamps_available = false;
 
     void reset() noexcept
@@ -102,7 +133,17 @@ struct TimingAccumulator final {
         visibility_cpu_total_nanoseconds = 0;
         visibility_cpu_min_nanoseconds = std::numeric_limits<core::u64>::max();
         visibility_cpu_max_nanoseconds = 0;
+        gpu_culling_cpu_total_nanoseconds = 0;
+        gpu_culling_cpu_min_nanoseconds = std::numeric_limits<core::u64>::max();
+        gpu_culling_cpu_max_nanoseconds = 0;
         instance_buffer_bytes = 0;
+        gpu_source_buffer_bytes = 0;
+        gpu_visible_buffer_bytes = 0;
+        gpu_indirect_buffer_bytes = 0;
+        visibility_mode = gpu_culling::VisibilityMode::cpu;
+        gpu_culling_available = false;
+        gpu_culling_active = false;
+        gpu_culling_fallback = false;
         gpu_timestamps_available = false;
     }
 
@@ -118,7 +159,19 @@ struct TimingAccumulator final {
             std::min(visibility_cpu_min_nanoseconds, report.visibility_cpu_nanoseconds);
         visibility_cpu_max_nanoseconds =
             std::max(visibility_cpu_max_nanoseconds, report.visibility_cpu_nanoseconds);
+        gpu_culling_cpu_total_nanoseconds += report.gpu_culling_cpu_nanoseconds;
+        gpu_culling_cpu_min_nanoseconds =
+            std::min(gpu_culling_cpu_min_nanoseconds, report.gpu_culling_cpu_nanoseconds);
+        gpu_culling_cpu_max_nanoseconds =
+            std::max(gpu_culling_cpu_max_nanoseconds, report.gpu_culling_cpu_nanoseconds);
         instance_buffer_bytes = report.instance_buffer_bytes;
+        gpu_source_buffer_bytes = report.gpu_source_buffer_bytes;
+        gpu_visible_buffer_bytes = report.gpu_visible_buffer_bytes;
+        gpu_indirect_buffer_bytes = report.gpu_indirect_buffer_bytes;
+        visibility_mode = report.visibility_mode;
+        gpu_culling_available = report.gpu_culling_available;
+        gpu_culling_active = report.gpu_culling_active;
+        gpu_culling_fallback = report.gpu_culling_fallback;
         gpu_timestamps_available = gpu_timestamps_available ||
                                     report.gpu_timestamps_available;
         for (core::u32 index = 0; index < report.pass_count; ++index) {
@@ -186,6 +239,9 @@ struct TimingAccumulator final {
 namespace gameengine::renderer::diagnostics {
 
 void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
+[[nodiscard]] core::Status set_visibility_mode(
+    const gameengine::rhi::Renderer& renderer,
+    gpu_culling::VisibilityMode mode) noexcept;
 [[nodiscard]] core::Status set_procedural_workload(const gameengine::rhi::Renderer& renderer,
                                                    core::u32 instance_count) noexcept;
 void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept;

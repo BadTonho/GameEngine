@@ -12,6 +12,7 @@ namespace gameengine::renderer::vulkan {
 enum class ShaderStage : core::u8 {
     vertex = 0,
     fragment,
+    compute,
 };
 
 enum ShaderCapability : core::u32 {
