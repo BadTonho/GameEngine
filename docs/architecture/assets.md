@@ -40,7 +40,12 @@ The payload contracts are intentionally small:
 - `.gemesh`: position/normal/UV vertices with 32-byte stride, `uint16` or `uint32` indices and submeshes;
 - `.getex`: RGBA8 pixels, dimensions and mip count;
 - `.gemat`: aligned base color, metallic/roughness values and texture IDs;
-- `.gescene`: flat transform instances with mesh and material IDs.
+- `.gescene`: flat transform instances with mesh and material IDs, plus the Phase 6 graph form
+  (`ENTS`, `TRNS`, `MESH`, `CAMR` and `LITE`) for entities, hierarchy and scene components.
+
+The graph form is still version 1 and remains compatible with the old flat form. The runtime
+scene layer validates handles, parent references, component dependencies and hierarchy cycles
+before accepting it.
 
 Package output uses the same container rules with `GPAK` magic and deterministic entries sorted by asset ID. Duplicate IDs and missing references are rejected by the offline package step. The package is a tooling artifact; the runtime reader currently exposes the four asset views above.
 

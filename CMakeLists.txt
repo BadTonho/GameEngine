@@ -4,6 +4,7 @@ project(GameEngine VERSION 0.0.1 LANGUAGES CXX)
 
 option(GAMEENGINE_BUILD_TESTS "Build the GameEngine tests" ON)
 option(GAMEENGINE_BUILD_VULKAN "Build the Vulkan renderer" ON)
+option(GAMEENGINE_BUILD_BENCHMARKS "Build optional scene benchmarks" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -70,6 +71,28 @@ target_include_directories(gameengine_assets
 )
 gameengine_configure_target(gameengine_assets)
 
+add_library(gameengine_scene STATIC
+    src/engine/scene/scene.cpp
+    src/engine/scene/scene.hpp
+    src/engine/scene/scene_serialization.cpp
+    src/engine/scene/scene_serialization.hpp
+    src/engine/scene/sparse_set.hpp
+)
+target_link_libraries(gameengine_scene PUBLIC gameengine_core gameengine_assets)
+target_include_directories(gameengine_scene
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+)
+gameengine_configure_target(gameengine_scene)
+
+if(GAMEENGINE_BUILD_BENCHMARKS)
+    add_executable(gameengine_scene_benchmark
+        benchmarks/scene_benchmark.cpp
+    )
+    target_link_libraries(gameengine_scene_benchmark PRIVATE gameengine_scene)
+    gameengine_configure_target(gameengine_scene_benchmark)
+endif()
+
 add_library(gameengine_platform STATIC
     src/engine/platform/platform.hpp
 )
@@ -104,7 +127,7 @@ target_include_directories(gameengine_rhi
 add_library(gameengine_renderer STATIC
     src/engine/rhi/rhi.hpp
 )
-target_link_libraries(gameengine_renderer PUBLIC gameengine_rhi gameengine_platform)
+target_link_libraries(gameengine_renderer PUBLIC gameengine_rhi gameengine_platform gameengine_scene)
 target_include_directories(gameengine_renderer
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -208,6 +231,16 @@ if(GAMEENGINE_BUILD_TESTS)
     )
     gameengine_configure_target(gameengine_math_tests)
     add_test(NAME gameengine_math COMMAND gameengine_math_tests)
+
+    add_executable(gameengine_scene_tests
+        tests/scene_tests.cpp
+    )
+    target_link_libraries(gameengine_scene_tests PRIVATE gameengine_scene gameengine_assets gameengine_core)
+    target_include_directories(gameengine_scene_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    gameengine_configure_target(gameengine_scene_tests)
+    add_test(NAME gameengine_scene COMMAND gameengine_scene_tests)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         find_program(GAMEENGINE_XVFB_RUN xvfb-run)
@@ -316,6 +349,7 @@ if(GAMEENGINE_BUILD_TESTS)
     set_tests_properties(gameengine_rhi PROPERTIES LABELS "rhi")
     set_tests_properties(gameengine_shaders PROPERTIES LABELS "shader")
     set_tests_properties(gameengine_math PROPERTIES LABELS "unit")
+    set_tests_properties(gameengine_scene PROPERTIES LABELS "unit")
     if(TEST gameengine_shader_pipeline)
         set_tests_properties(gameengine_shader_pipeline PROPERTIES LABELS "shader")
     endif()

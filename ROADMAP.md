@@ -212,20 +212,20 @@ Goal: create the scene data foundation without committing to an unmeasured desig
 
 ### Tasks
 
-- [ ] Define entities as handles protected against invalid reuse.
-- [ ] Implement transforms and hierarchy.
-- [ ] Define component storage.
-- [ ] Prototype ECS alternatives when needed.
-- [ ] Measure iteration, creation, destruction and queries.
-- [ ] Define scene serialization.
-- [ ] Create camera, mesh, material and light components.
-- [ ] Define dependencies between systems.
-- [ ] Add validity, generation, hierarchy and serialization tests.
-- [ ] Compare RAM and CPU across scenes with different entity counts.
+- [x] Define entities as handles protected against invalid reuse.
+- [x] Implement transforms and hierarchy.
+- [x] Define component storage.
+- [x] Prototype ECS alternatives when needed.
+- [x] Measure iteration, creation, destruction and queries.
+- [x] Define scene serialization.
+- [x] Create camera, mesh, material and light components.
+- [x] Define dependencies between systems.
+- [x] Add validity, generation, hierarchy and serialization tests.
+- [x] Compare RAM and CPU across scenes with different entity counts.
 
 ### Completion criteria
 
-A scene can be created, saved, loaded and updated with organized data, valid handles and benchmarks that justify the selected model.
+A scene can be created, saved, loaded and updated with organized data, valid handles and optional synthetic benchmarks for the initial sparse-set model. Real asset loading and a final ECS storage choice remain future work.
 
 ## Phase 7 — Scalable renderer
 

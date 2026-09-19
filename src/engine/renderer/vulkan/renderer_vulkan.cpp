@@ -29,6 +29,7 @@
 #include "engine/renderer/vulkan/vulkan_utils.hpp"
 #include "engine/scene/bootstrap_cube.hpp"
 #include "engine/scene/bootstrap_material.hpp"
+#include "engine/scene/scene.hpp"
 
 #include <algorithm>
 #include <array>
@@ -199,6 +200,10 @@ struct Renderer::Impl final {
     const renderer::vulkan::ShaderArtifact* vertex_shader_artifact = nullptr;
     const renderer::vulkan::ShaderArtifact* fragment_shader_artifact = nullptr;
     bool shader_hot_reload_enabled = false;
+    scene::Scene bootstrap_scene;
+    scene::Entity bootstrap_cube_entity{};
+    scene::Entity bootstrap_camera_entity{};
+    scene::Entity bootstrap_light_entity{};
     rhi::BufferHandle cube_vertex_buffer{};
     rhi::BufferHandle cube_index_buffer{};
     rhi::PipelineHandle cube_pipeline{};
@@ -253,6 +258,7 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status create_command_buffers() noexcept;
     [[nodiscard]] core::Status create_sync_objects() noexcept;
     [[nodiscard]] core::Status create_bootstrap_cube_resources() noexcept;
+    [[nodiscard]] core::Status create_bootstrap_scene() noexcept;
     [[nodiscard]] core::Status create_bootstrap_material_resources() noexcept;
     [[nodiscard]] core::Status create_material_descriptors() noexcept;
     void destroy_material_resources() noexcept;
@@ -429,6 +435,10 @@ core::Status Renderer::Impl::initialize(
     if (!status) {
         return status;
     }
+    status = create_bootstrap_scene();
+    if (!status) {
+        return status;
+    }
     status = create_bootstrap_cube_resources();
     if (!status) {
         return status;
@@ -521,6 +531,10 @@ void Renderer::Impl::shutdown() noexcept
     vertex_shader_artifact = nullptr;
     fragment_shader_artifact = nullptr;
     shader_hot_reload_enabled = false;
+    bootstrap_scene.clear();
+    bootstrap_cube_entity = {};
+    bootstrap_camera_entity = {};
+    bootstrap_light_entity = {};
     cube_vertex_buffer = {};
     cube_index_buffer = {};
     cube_pipeline = {};
@@ -1477,6 +1491,38 @@ core::Status Renderer::Impl::create_bootstrap_cube_resources() noexcept
     status = upload_buffer(cube_index_buffer, index_bytes);
     if (!status) {
         return status;
+    }
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_bootstrap_scene() noexcept
+{
+    bootstrap_scene.clear();
+    bootstrap_scene.reserve(3U);
+    bootstrap_cube_entity = bootstrap_scene.create_entity();
+    bootstrap_camera_entity = bootstrap_scene.create_entity();
+    bootstrap_light_entity = bootstrap_scene.create_entity();
+    if (!bootstrap_cube_entity.valid() || !bootstrap_camera_entity.valid() ||
+        !bootstrap_light_entity.valid()) {
+        return core::Status{core::ErrorCode::allocation_failed};
+    }
+
+    const math::Quaternion yaw = math::quaternion_from_axis_angle({0.0F, 1.0F, 0.0F}, 0.65F);
+    const math::Quaternion pitch =
+        math::quaternion_from_axis_angle({1.0F, 0.0F, 0.0F}, -0.4F);
+    if (!bootstrap_scene.add_transform(bootstrap_cube_entity,
+                                       {.local_rotation = math::normalize(math::multiply(yaw, pitch))}) ||
+        !bootstrap_scene.add_mesh_renderer(
+            bootstrap_cube_entity,
+            {scene::bootstrap_mesh_id, scene::bootstrap_material_id}) ||
+        !bootstrap_scene.add_transform(
+            bootstrap_camera_entity,
+            {.local_position = {2.5F, 2.0F, 4.0F}}) ||
+        !bootstrap_scene.add_camera(bootstrap_camera_entity, {.active = true}) ||
+        !bootstrap_scene.add_transform(bootstrap_light_entity) ||
+        !bootstrap_scene.add_directional_light(bootstrap_light_entity) ||
+        !bootstrap_scene.update_transforms()) {
+        return core::Status{core::ErrorCode::invalid_argument};
     }
     return core::Status{};
 }
@@ -2571,6 +2617,51 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
+    if (!bootstrap_scene.update_transforms()) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const scene::TransformComponent* cube_transform =
+        bootstrap_scene.transform(bootstrap_cube_entity);
+    const scene::TransformComponent* camera_transform =
+        bootstrap_scene.transform(bootstrap_camera_entity);
+    const scene::CameraComponent* camera_component =
+        bootstrap_scene.camera(bootstrap_camera_entity);
+    const scene::DirectionalLightComponent* light_component =
+        bootstrap_scene.directional_light(bootstrap_light_entity);
+    if (cube_transform == nullptr || camera_transform == nullptr || camera_component == nullptr ||
+        light_component == nullptr) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const math::Vec3 camera_position{
+        camera_transform->world_matrix.at(0, 3),
+        camera_transform->world_matrix.at(1, 3),
+        camera_transform->world_matrix.at(2, 3),
+    };
+    scene::BootstrapMaterialConstants material_constants{};
+    material_constants.light_direction_intensity = {
+        light_component->direction.x,
+        light_component->direction.y,
+        light_component->direction.z,
+        light_component->intensity,
+    };
+    material_constants.camera_position_exposure = {
+        camera_position.x,
+        camera_position.y,
+        camera_position.z,
+        1.0F,
+    };
+    void* material_mapped = nullptr;
+    if (vkMapMemory(device,
+                    material_uniform_memory,
+                    0,
+                    sizeof(material_constants),
+                    0,
+                    &material_mapped) != VK_SUCCESS) {
+        return VK_ERROR_DEVICE_LOST;
+    }
+    std::memcpy(material_mapped, &material_constants, sizeof(material_constants));
+    vkUnmapMemory(device, material_uniform_memory);
+
     VkCommandBufferBeginInfo begin_info{};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     VkResult result = vkBeginCommandBuffer(command_buffer, &begin_info);
@@ -2605,11 +2696,14 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
     vkCmdBindIndexBuffer(command_buffer, index_buffer->buffer, 0, VK_INDEX_TYPE_UINT16);
     const core::f32 aspect_ratio = static_cast<core::f32>(swapchain_extent.width) /
                                     static_cast<core::f32>(swapchain_extent.height);
-    const math::Mat4 model = math::multiply(math::rotation_y(0.65F), math::rotation_x(-0.4F));
+    const math::Mat4 model = cube_transform->world_matrix;
     const math::Mat4 view = math::look_at_rh(
-        {2.5F, 2.0F, 4.0F}, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+        camera_position, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
     const math::Mat4 projection = math::perspective_rh_zo(
-        1.04719755F, aspect_ratio, 0.1F, 100.0F);
+        camera_component->vertical_field_of_view_radians,
+        aspect_ratio,
+        camera_component->near_plane,
+        camera_component->far_plane);
     const math::Mat4 view_projection = math::multiply(projection, view);
     const BootstrapPushConstants push_constants{
         .model = model,

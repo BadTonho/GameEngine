@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 5 asset foundation in progress.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a deterministic procedural textured cube and the first versioned asset formats/tools. It is not ready to create a complete game yet.
+> **Status: early development — Phase 6 scene foundation in use.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a deterministic procedural textured cube, versioned asset formats/tools and an internal scene graph. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -33,6 +33,7 @@ Phase 0 through Phase 4 are implemented in the current procedural scope. Phase 5
 - versioned `.gemesh`, `.getex`, `.gemat` and `.gescene` containers with 64-byte headers, FNV-1a IDs and 16-byte aligned chunks;
 - an internal zero-copy C++ asset reader that validates containers and payload views without interpreting glTF or image files;
 - an optional Rust workspace under `tools/` with deterministic packers, a minimal JSON glTF importer, synthetic fixtures, validation and incremental cache support;
+- an internal scene layer with generation-checked entity handles, sparse-set component pools, TRS hierarchy, retrocompatible `.gescene` graph serialization and synthetic benchmarks;
 - Vulkan vertex/index buffers, procedural RGBA8 texture, sampler, material descriptors, depth resources, graphics pipelines and staging uploads;
 - internal PBR material with directional lighting and deterministic HDR tone mapping;
 - internal `Vec3`/`Mat4` math with right-handed Vulkan-compatible perspective and look-at transforms;
@@ -49,7 +50,7 @@ The following are intentionally outside the current procedural renderer scope:
 - prepared mesh/assets loading;
 - asset-file texture/material loading;
 - runtime shader file loading, automatic polling and editor integration;
-- ECS, editor, Lua and runtime integration of prepared assets;
+- prepared asset runtime integration, editor, Lua and a final ECS storage choice;
 - physics, audio, networking or gameplay APIs;
 - a functional C ABI.
 

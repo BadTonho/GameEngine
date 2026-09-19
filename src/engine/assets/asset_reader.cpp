@@ -17,6 +17,7 @@ constexpr core::u32 max_chunks = 64;
 constexpr core::u32 required_flags = 1;
 constexpr core::usize alignment = 16;
 constexpr core::usize max_file_size = 1ULL << 30U;
+constexpr core::u32 max_scene_entities = 1'000'000U;
 
 constexpr core::u32 mesh_header_chunk =
     static_cast<core::u32>('M') | (static_cast<core::u32>('S') << 8U) |
@@ -376,17 +377,155 @@ core::Status read_scene(std::span<const std::byte> bytes, SceneView& view) noexc
     if (validate_container(bytes, AssetKind::scene, view.asset).code != core::ErrorCode::none) {
         return invalid();
     }
+    for (core::u32 index = 0; index < view.asset.chunk_count; ++index) {
+        const core::u32 kind = view.asset.chunks[index].kind;
+        if (kind != scene_header_chunk && kind != instances_chunk &&
+            kind != scene_chunk_entities && kind != scene_chunk_transforms &&
+            kind != scene_chunk_mesh_renderers && kind != scene_chunk_cameras &&
+            kind != scene_chunk_lights) {
+            return invalid();
+        }
+    }
     const ChunkView* metadata = find_chunk_pair(view.asset, scene_header_chunk);
-    const ChunkView* instances = find_chunk_pair(view.asset, instances_chunk);
-    if (metadata == nullptr || instances == nullptr || metadata->data.size() != 8) {
+    if (metadata == nullptr || (metadata->data.size() != 8 && metadata->data.size() != 16)) {
         return invalid();
     }
-    view.instance_count = read_u32(metadata->data, 0);
-    if (view.instance_count > std::numeric_limits<core::usize>::max() / 80 ||
-        instances->data.size() != static_cast<core::usize>(view.instance_count) * 80) {
+    if (metadata->data.size() == 8) {
+        const ChunkView* instances = find_chunk_pair(view.asset, instances_chunk);
+        if (instances == nullptr) {
+            return invalid();
+        }
+        view.instance_count = read_u32(metadata->data, 0);
+        if (view.instance_count > std::numeric_limits<core::usize>::max() / 80 ||
+            instances->data.size() != static_cast<core::usize>(view.instance_count) * 80) {
+            return invalid();
+        }
+        view.instances = instances->data;
+        return {};
+    }
+
+    const ChunkView* entities = find_chunk_pair(view.asset, scene_chunk_entities);
+    const ChunkView* transforms = find_chunk_pair(view.asset, scene_chunk_transforms);
+    const ChunkView* mesh_renderers = find_chunk_pair(view.asset, scene_chunk_mesh_renderers);
+    const ChunkView* cameras = find_chunk_pair(view.asset, scene_chunk_cameras);
+    const ChunkView* lights = find_chunk_pair(view.asset, scene_chunk_lights);
+    view.extended = true;
+    view.entity_count = read_u32(metadata->data, 0);
+    if (read_u32(metadata->data, 4) != 0 ||
+        view.entity_count == 0 || view.entity_count > max_scene_entities ||
+        view.entity_count > std::numeric_limits<core::usize>::max() / 16 ||
+        entities == nullptr || transforms == nullptr || mesh_renderers == nullptr ||
+        entities->data.size() != static_cast<core::usize>(view.entity_count) * 16 ||
+        transforms->data.size() != static_cast<core::usize>(view.entity_count) * 48 ||
+        mesh_renderers->data.size() % 24 != 0 ||
+        (cameras != nullptr && cameras->data.size() % 24 != 0) ||
+        (lights != nullptr && lights->data.size() % 40 != 0)) {
         return invalid();
     }
-    view.instances = instances->data;
+    view.active_camera_value = read_u64(metadata->data, 8);
+    view.entities = entities->data;
+    view.transforms = transforms->data;
+    view.mesh_renderers = mesh_renderers->data;
+    view.cameras = cameras == nullptr ? std::span<const std::byte>{} : cameras->data;
+    view.lights = lights == nullptr ? std::span<const std::byte>{} : lights->data;
+
+    const auto has_entity = [&view](core::u64 value) noexcept {
+        if (value == 0) {
+            return false;
+        }
+        for (core::u32 index = 0; index < view.entity_count; ++index) {
+            if (read_u64(view.entities, static_cast<core::usize>(index) * 16) == value) {
+                return true;
+            }
+        }
+        return false;
+    };
+    for (core::u32 index = 0; index < view.entity_count; ++index) {
+        const core::usize offset = static_cast<core::usize>(index) * 16;
+        const core::u64 entity = read_u64(view.entities, offset);
+        const core::u64 parent = read_u64(view.entities, offset + 8);
+        if (entity == 0 || (parent != 0 && !has_entity(parent))) {
+            return invalid();
+        }
+        for (core::u32 previous = 0; previous < index; ++previous) {
+            if (read_u64(view.entities, static_cast<core::usize>(previous) * 16) == entity) {
+                return invalid();
+            }
+        }
+        const core::usize transform_offset = static_cast<core::usize>(index) * 48;
+        const core::u64 transform_entity = read_u64(view.transforms, transform_offset);
+        const core::u32 generation = static_cast<core::u32>(entity >> 32U);
+        if (generation == 0 || transform_entity != entity || !has_entity(transform_entity)) {
+            return invalid();
+        }
+        for (core::u32 previous = 0; previous < index; ++previous) {
+            if (read_u64(view.transforms, static_cast<core::usize>(previous) * 48) ==
+                transform_entity) {
+                return invalid();
+            }
+        }
+        for (core::u32 value = 0; value < 10U; ++value) {
+            if (!std::isfinite(read_f32(view.transforms, transform_offset + 8 + value * 4))) {
+                return invalid();
+            }
+        }
+    }
+    const auto validate_component_entities = [&has_entity](std::span<const std::byte> data,
+                                                            core::usize stride) noexcept {
+        for (core::usize offset = 0; offset < data.size(); offset += stride) {
+            const core::u64 entity = read_u64(data, offset);
+            if (!has_entity(entity)) {
+                return false;
+            }
+            for (core::usize previous = 0; previous < offset; previous += stride) {
+                if (read_u64(data, previous) == entity) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    if (!validate_component_entities(view.mesh_renderers, 24) ||
+        !validate_component_entities(view.cameras, 24) ||
+        !validate_component_entities(view.lights, 40)) {
+        return invalid();
+    }
+    core::u32 active_camera_count = 0;
+    core::u64 active_camera_value = 0;
+    for (core::usize offset = 0; offset < view.cameras.size(); offset += 24) {
+        if (!std::isfinite(read_f32(view.cameras, offset + 8)) ||
+            !std::isfinite(read_f32(view.cameras, offset + 12)) ||
+            !std::isfinite(read_f32(view.cameras, offset + 16)) ||
+            read_f32(view.cameras, offset + 8) <= 0.0F ||
+            read_f32(view.cameras, offset + 12) <= 0.0F ||
+            read_f32(view.cameras, offset + 16) <= read_f32(view.cameras, offset + 12) ||
+            read_u32(view.cameras, offset + 20) > 1U) {
+            return invalid();
+        }
+        if (read_u32(view.cameras, offset + 20) != 0U) {
+            ++active_camera_count;
+            active_camera_value = read_u64(view.cameras, offset);
+        }
+    }
+    if (active_camera_count > 1U || active_camera_value != view.active_camera_value) {
+        return invalid();
+    }
+    for (core::usize offset = 0; offset < view.lights.size(); offset += 40) {
+        if (!std::isfinite(read_f32(view.lights, offset + 8)) ||
+            !std::isfinite(read_f32(view.lights, offset + 12)) ||
+            !std::isfinite(read_f32(view.lights, offset + 16)) ||
+            !std::isfinite(read_f32(view.lights, offset + 20)) ||
+            !std::isfinite(read_f32(view.lights, offset + 24)) ||
+            !std::isfinite(read_f32(view.lights, offset + 28)) ||
+            !std::isfinite(read_f32(view.lights, offset + 32)) ||
+            read_f32(view.lights, offset + 32) < 0.0F ||
+            read_u32(view.lights, offset + 36) != 0U) {
+            return invalid();
+        }
+    }
+    if (view.active_camera_value != 0 && !has_entity(view.active_camera_value)) {
+        return invalid();
+    }
     return {};
 }
 
@@ -395,6 +534,15 @@ core::Status validate_scene_references(
     std::span<const core::u64> mesh_ids,
     std::span<const core::u64> material_ids) noexcept
 {
+    if (scene.extended) {
+        for (core::usize offset = 0; offset < scene.mesh_renderers.size(); offset += 24) {
+            if (!contains_id(mesh_ids, read_u64(scene.mesh_renderers, offset + 8)) ||
+                !contains_id(material_ids, read_u64(scene.mesh_renderers, offset + 16))) {
+                return core::Status{core::ErrorCode::invalid_argument};
+            }
+        }
+        return {};
+    }
     for (core::u32 index = 0; index < scene.instance_count; ++index) {
         const core::usize offset = static_cast<core::usize>(index) * 80;
         const core::u64 mesh_id = read_u64(scene.instances, offset + 64);

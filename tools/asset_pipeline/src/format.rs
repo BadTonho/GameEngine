@@ -23,6 +23,11 @@ pub const CHUNK_TEXTURE_DATA: u32 = fourcc_const(*b"TXDT");
 pub const CHUNK_MATERIAL_HEADER: u32 = fourcc_const(*b"MTHD");
 pub const CHUNK_SCENE_HEADER: u32 = fourcc_const(*b"SCHD");
 pub const CHUNK_INSTANCES: u32 = fourcc_const(*b"INST");
+pub const CHUNK_SCENE_ENTITIES: u32 = fourcc_const(*b"ENTS");
+pub const CHUNK_SCENE_TRANSFORMS: u32 = fourcc_const(*b"TRNS");
+pub const CHUNK_SCENE_MESH_RENDERERS: u32 = fourcc_const(*b"MESH");
+pub const CHUNK_SCENE_CAMERAS: u32 = fourcc_const(*b"CAMR");
+pub const CHUNK_SCENE_LIGHTS: u32 = fourcc_const(*b"LITE");
 pub const CHUNK_PACKAGE_ENTRY: u32 = fourcc_const(*b"PENT");
 pub const CHUNK_PACKAGE_DATA: u32 = fourcc_const(*b"PDAT");
 

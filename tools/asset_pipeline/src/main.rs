@@ -192,13 +192,77 @@ fn validate_semantics(bytes: &[u8]) -> Result<()> {
             let metadata = parsed
                 .chunk(format::CHUNK_SCENE_HEADER)
                 .ok_or_else(|| AssetError::Invalid("scene header chunk is missing".into()))?;
-            let instances = parsed
-                .chunk(format::CHUNK_INSTANCES)
-                .ok_or_else(|| AssetError::Invalid("scene instances chunk is missing".into()))?;
             let count = format::read_u32_public(metadata.data, 0)? as usize;
-            if metadata.data.len() != 8 || instances.data.len() != count * 80 {
+            if count == 0 || count > 1_000_000 {
+                return Err(AssetError::Invalid("scene entity count is invalid".into()));
+            }
+            if metadata.data.len() == 8 {
+                let instances = parsed.chunk(format::CHUNK_INSTANCES).ok_or_else(|| {
+                    AssetError::Invalid("scene instances chunk is missing".into())
+                })?;
+                if instances.data.len() != count * 80 {
+                    return Err(AssetError::Invalid(
+                        "scene instance data does not match metadata".into(),
+                    ));
+                }
+            } else if metadata.data.len() == 16 {
+                let entities = parsed
+                    .chunk(format::CHUNK_SCENE_ENTITIES)
+                    .ok_or_else(|| AssetError::Invalid("scene entity chunk is missing".into()))?;
+                let transforms = parsed
+                    .chunk(format::CHUNK_SCENE_TRANSFORMS)
+                    .ok_or_else(|| {
+                        AssetError::Invalid("scene transform chunk is missing".into())
+                    })?;
+                let mesh_renderers = parsed
+                    .chunk(format::CHUNK_SCENE_MESH_RENDERERS)
+                    .ok_or_else(|| {
+                        AssetError::Invalid("scene mesh renderer chunk is missing".into())
+                    })?;
+                if entities.data.len() != count * 16
+                    || transforms.data.len() != count * 48
+                    || mesh_renderers.data.len() % 24 != 0
+                {
+                    return Err(AssetError::Invalid(
+                        "scene graph data does not match metadata".into(),
+                    ));
+                }
+                let ids: Vec<u64> = (0..count)
+                    .map(|index| format::read_u64_public(entities.data, index * 16))
+                    .collect::<Result<Vec<_>>>()?;
+                if ids.contains(&0) || ids.windows(2).any(|pair| pair[0] == pair[1]) {
+                    return Err(AssetError::Invalid("scene entity IDs are invalid".into()));
+                }
+                for index in 0..count {
+                    let parent = format::read_u64_public(entities.data, index * 16 + 8)?;
+                    if parent != 0 && !ids.contains(&parent) {
+                        return Err(AssetError::Invalid(
+                            "scene parent reference is missing".into(),
+                        ));
+                    }
+                }
+                for start in 0..count {
+                    let mut current = start;
+                    let mut reached_root = false;
+                    for _ in 0..count {
+                        let parent = format::read_u64_public(entities.data, current * 16 + 8)?;
+                        if parent == 0 {
+                            reached_root = true;
+                            break;
+                        }
+                        current = ids.iter().position(|id| *id == parent).ok_or_else(|| {
+                            AssetError::Invalid("scene parent reference is missing".into())
+                        })?;
+                    }
+                    if !reached_root {
+                        return Err(AssetError::Invalid(
+                            "scene hierarchy contains a cycle".into(),
+                        ));
+                    }
+                }
+            } else {
                 return Err(AssetError::Invalid(
-                    "scene instance data does not match metadata".into(),
+                    "scene header has an invalid size".into(),
                 ));
             }
         }
@@ -234,26 +298,54 @@ fn validate_package_references(assets: &[PackageAsset]) -> Result<()> {
                 let metadata = parsed
                     .chunk(format::CHUNK_SCENE_HEADER)
                     .ok_or_else(|| AssetError::Invalid("scene header chunk is missing".into()))?;
-                let instances = parsed.chunk(format::CHUNK_INSTANCES).ok_or_else(|| {
-                    AssetError::Invalid("scene instances chunk is missing".into())
-                })?;
-                let count = format::read_u32_public(metadata.data, 0)? as usize;
-                for index in 0..count {
-                    let offset = index * 80;
-                    let mesh_id = format::read_u64_public(instances.data, offset + 64)?;
-                    let material_id = format::read_u64_public(instances.data, offset + 72)?;
-                    if !contains_asset_id(&ids, mesh_id) {
-                        return Err(AssetError::Invalid(format!(
-                            "{} references missing mesh asset {mesh_id:016x}",
-                            asset.path.display()
-                        )));
+                if metadata.data.len() == 8 {
+                    let instances = parsed.chunk(format::CHUNK_INSTANCES).ok_or_else(|| {
+                        AssetError::Invalid("scene instances chunk is missing".into())
+                    })?;
+                    let count = format::read_u32_public(metadata.data, 0)? as usize;
+                    for index in 0..count {
+                        let offset = index * 80;
+                        let mesh_id = format::read_u64_public(instances.data, offset + 64)?;
+                        let material_id = format::read_u64_public(instances.data, offset + 72)?;
+                        if !contains_asset_id(&ids, mesh_id) {
+                            return Err(AssetError::Invalid(format!(
+                                "{} references missing mesh asset {mesh_id:016x}",
+                                asset.path.display()
+                            )));
+                        }
+                        if !contains_asset_id(&ids, material_id) {
+                            return Err(AssetError::Invalid(format!(
+                                "{} references missing material asset {material_id:016x}",
+                                asset.path.display()
+                            )));
+                        }
                     }
-                    if !contains_asset_id(&ids, material_id) {
-                        return Err(AssetError::Invalid(format!(
-                            "{} references missing material asset {material_id:016x}",
-                            asset.path.display()
-                        )));
+                } else if metadata.data.len() == 16 {
+                    let mesh_renderers = parsed
+                        .chunk(format::CHUNK_SCENE_MESH_RENDERERS)
+                        .ok_or_else(|| {
+                            AssetError::Invalid("scene mesh renderer chunk is missing".into())
+                        })?;
+                    for chunk in mesh_renderers.data.chunks_exact(24) {
+                        let mesh_id = format::read_u64_public(chunk, 8)?;
+                        let material_id = format::read_u64_public(chunk, 16)?;
+                        if !contains_asset_id(&ids, mesh_id) {
+                            return Err(AssetError::Invalid(format!(
+                                "{} references missing mesh asset {mesh_id:016x}",
+                                asset.path.display()
+                            )));
+                        }
+                        if !contains_asset_id(&ids, material_id) {
+                            return Err(AssetError::Invalid(format!(
+                                "{} references missing material asset {material_id:016x}",
+                                asset.path.display()
+                            )));
+                        }
                     }
+                } else {
+                    return Err(AssetError::Invalid(
+                        "scene header has an invalid size".into(),
+                    ));
                 }
             }
             _ => {}

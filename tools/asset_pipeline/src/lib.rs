@@ -5,8 +5,9 @@ pub mod model;
 
 pub use format::{AssetKind, ChunkView, ParsedAsset};
 pub use model::{
-    pack_material, pack_mesh, pack_scene, pack_texture, MaterialInput, MeshInput, SceneInput,
-    TextureInput,
+    pack_material, pack_mesh, pack_scene, pack_scene_graph, pack_texture, MaterialInput, MeshInput,
+    SceneCamera, SceneEntity, SceneGraphInput, SceneInput, SceneInstance, SceneLight,
+    SceneMeshRenderer, SceneTransform, TextureInput,
 };
 
 #[derive(Debug)]

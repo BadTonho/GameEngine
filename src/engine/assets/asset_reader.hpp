@@ -21,6 +21,20 @@ enum class MeshIndexFormat : core::u32 {
     u32 = 32,
 };
 
+constexpr core::u32 asset_fourcc(char a, char b, char c, char d) noexcept
+{
+    return static_cast<core::u32>(a) | (static_cast<core::u32>(b) << 8U) |
+        (static_cast<core::u32>(c) << 16U) | (static_cast<core::u32>(d) << 24U);
+}
+
+inline constexpr core::u32 scene_chunk_header = asset_fourcc('S', 'C', 'H', 'D');
+inline constexpr core::u32 scene_chunk_instances = asset_fourcc('I', 'N', 'S', 'T');
+inline constexpr core::u32 scene_chunk_entities = asset_fourcc('E', 'N', 'T', 'S');
+inline constexpr core::u32 scene_chunk_transforms = asset_fourcc('T', 'R', 'N', 'S');
+inline constexpr core::u32 scene_chunk_mesh_renderers = asset_fourcc('M', 'E', 'S', 'H');
+inline constexpr core::u32 scene_chunk_cameras = asset_fourcc('C', 'A', 'M', 'R');
+inline constexpr core::u32 scene_chunk_lights = asset_fourcc('L', 'I', 'T', 'E');
+
 struct ChunkView final {
     core::u32 kind = 0;
     core::u32 flags = 0;
@@ -79,6 +93,14 @@ struct SceneView final {
     AssetView asset{};
     core::u32 instance_count = 0;
     std::span<const std::byte> instances{};
+    bool extended = false;
+    core::u64 active_camera_value = 0;
+    core::u32 entity_count = 0;
+    std::span<const std::byte> entities{};
+    std::span<const std::byte> transforms{};
+    std::span<const std::byte> mesh_renderers{};
+    std::span<const std::byte> cameras{};
+    std::span<const std::byte> lights{};
 };
 
 [[nodiscard]] core::Status validate_container(
