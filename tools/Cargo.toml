@@ -1,0 +1,3 @@
+[workspace]
+members = ["asset_pipeline"]
+resolver = "2"

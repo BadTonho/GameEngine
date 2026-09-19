@@ -188,23 +188,23 @@ Goal: make the runtime consume prepared, compact and validated data.
 
 ### Tasks
 
-- [ ] Define versioned binary formats for meshes, textures, materials and scenes.
-- [ ] Validate sizes, offsets, counts, versions and references.
-- [ ] Create a Rust workspace for offline tools.
-- [ ] Create an initial glTF importer.
-- [ ] Create a texture compiler.
-- [ ] Create a mesh and vertex-data compiler.
-- [ ] Create a material and dependency compiler.
-- [ ] Create a packager for the final game format.
-- [ ] Create an incremental import cache.
-- [ ] Define compression and alignment policies.
-- [ ] Produce errors that include the source file and resource.
-- [ ] Test malformed assets as untrusted input.
+- [x] Define versioned binary formats for meshes, textures, materials and scenes.
+- [x] Validate sizes, offsets, counts, versions, flags and references.
+- [x] Create a Rust workspace for offline tools.
+- [x] Create an initial JSON glTF importer with a synthetic fixture.
+- [x] Create an RGBA8-in-memory texture compiler.
+- [x] Create a mesh and vertex-data compiler.
+- [x] Create a material and dependency compiler.
+- [x] Create a deterministic packager for the initial package container.
+- [x] Create an incremental import cache keyed by source, options and tool version.
+- [x] Define 16-byte alignment and no-compression version-1 policies.
+- [x] Produce contextual errors for unsupported source features and malformed data.
+- [x] Test malformed assets as untrusted input in Rust and C++.
 - [ ] Add hot reload only to the development workflow.
 
 ### Completion criteria
 
-An original asset is imported offline, converted to the engine format, validated, packaged and loaded by the runtime without interpreting the original heavy format.
+The version-1 formats, validators, Rust workspace, synthetic fixtures and C++ zero-copy reader are complete. The renderer still uses its procedural bootstrap scene; replacing it with prepared assets, image decoding, broader glTF coverage and runtime asset streaming remain later work.
 
 ## Phase 6 — Scenes, entities and data
 

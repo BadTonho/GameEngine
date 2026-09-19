@@ -59,6 +59,17 @@ target_include_directories(gameengine_core
 
 gameengine_configure_target(gameengine_core)
 
+add_library(gameengine_assets STATIC
+    src/engine/assets/asset_reader.cpp
+    src/engine/assets/asset_reader.hpp
+)
+target_link_libraries(gameengine_assets PUBLIC gameengine_core)
+target_include_directories(gameengine_assets
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+)
+gameengine_configure_target(gameengine_assets)
+
 add_library(gameengine_platform STATIC
     src/engine/platform/platform.hpp
 )
@@ -133,6 +144,16 @@ add_custom_target(gameengine_compile_bootstrap_shaders
     COMMENT "Compiling bootstrap Slang shaders offline"
 )
 
+find_program(GAMEENGINE_CARGO cargo)
+if(GAMEENGINE_CARGO)
+    add_custom_target(gameengine_asset_tools
+        COMMAND ${GAMEENGINE_CARGO} test --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/tools/Cargo.toml
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        VERBATIM
+        COMMENT "Running offline Rust asset pipeline tests"
+    )
+endif()
+
 add_executable(gameengine_runtime
     src/runtime/main.cpp
 )
@@ -151,6 +172,13 @@ if(GAMEENGINE_BUILD_TESTS)
     gameengine_configure_target(gameengine_tests)
 
     add_test(NAME gameengine_core COMMAND gameengine_tests)
+
+    add_executable(gameengine_asset_tests
+        tests/asset_tests.cpp
+    )
+    target_link_libraries(gameengine_asset_tests PRIVATE gameengine_assets gameengine_core)
+    gameengine_configure_target(gameengine_asset_tests)
+    add_test(NAME gameengine_assets COMMAND gameengine_asset_tests)
 
     add_executable(gameengine_rhi_tests
         tests/rhi_tests.cpp
@@ -284,6 +312,7 @@ if(GAMEENGINE_BUILD_TESTS)
     endif()
 
     set_tests_properties(gameengine_core PROPERTIES LABELS "unit")
+    set_tests_properties(gameengine_assets PROPERTIES LABELS "unit")
     set_tests_properties(gameengine_rhi PROPERTIES LABELS "rhi")
     set_tests_properties(gameengine_shaders PROPERTIES LABELS "shader")
     set_tests_properties(gameengine_math PROPERTIES LABELS "unit")

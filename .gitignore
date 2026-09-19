@@ -2,6 +2,7 @@
 /build/
 /out/
 /cmake-build-*/
+/tools/target/
 
 # CMake and compiler output
 CMakeCache.txt

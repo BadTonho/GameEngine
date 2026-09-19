@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 4 vertical slice in progress.** The repository currently provides a Vulkan rendering foundation with an offline Slang shader pipeline, a deterministic procedural textured cube, PBR lighting, tone mapping, camera transforms and depth testing. It is not ready to create a complete game yet.
+> **Status: early development — Phase 5 asset foundation in progress.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a deterministic procedural textured cube and the first versioned asset formats/tools. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -23,30 +23,33 @@ The complete direction is documented in [Idea.md](Idea.md). The implementation s
 
 ## Current status
 
-Phase 0 through Phase 3 are implemented. Phase 4 has its first deterministic 3D vertical slice:
+Phase 0 through Phase 4 are implemented in the current procedural scope. Phase 5 now adds the first prepared-asset foundation:
 
 - CMake 3.25+ project using C++20 without compiler extensions;
 - `gameengine_core` with fixed-width types, status values, diagnostics, clock and input state;
 - `gameengine_platform` with a native Xlib/X11 Linux backend;
 - `gameengine_renderer` with a Vulkan RHI, X11 surface backend and typed resource handles;
 - `gameengine_runtime` executable with a window, Vulkan device, swapchain and indexed cube;
+- versioned `.gemesh`, `.getex`, `.gemat` and `.gescene` containers with 64-byte headers, FNV-1a IDs and 16-byte aligned chunks;
+- an internal zero-copy C++ asset reader that validates containers and payload views without interpreting glTF or image files;
+- an optional Rust workspace under `tools/` with deterministic packers, a minimal JSON glTF importer, synthetic fixtures, validation and incremental cache support;
 - Vulkan vertex/index buffers, procedural RGBA8 texture, sampler, material descriptors, depth resources, graphics pipelines and staging uploads;
 - internal PBR material with directional lighting and deterministic HDR tone mapping;
 - internal `Vec3`/`Mat4` math with right-handed Vulkan-compatible perspective and look-at transforms;
 - generation-checked handles and fence-based deferred resource destruction;
 - Vulkan object names and command labels through `VK_EXT_debug_utils`;
-- `gameengine_tests`, `gameengine_rhi_tests`, `gameengine_math_tests`, `gameengine_platform_tests` and shader pipeline tests without an external test framework;
-- CTest integration with core, RHI, math, runtime, Vulkan, shader pipeline and X11 smoke tests;
+- `gameengine_tests`, `gameengine_asset_tests`, `gameengine_rhi_tests`, `gameengine_math_tests`, `gameengine_platform_tests` and shader pipeline tests without an external test framework;
+- CTest integration with core, assets, RHI, math, runtime, Vulkan, shader pipeline and X11 smoke tests;
 - high-warning builds with warnings treated as errors;
 - Debug, Release and GCC sanitizer presets;
 - GitHub Actions for Windows/MSVC, Linux/GCC, Linux/Clang and ASan/UBSan.
 
-The following are intentionally outside the current Phase 4 vertical slice:
+The following are intentionally outside the current procedural renderer scope:
 
 - prepared mesh/assets loading;
 - asset-file texture/material loading;
 - runtime shader file loading, automatic polling and editor integration;
-- ECS, editor, Lua and Rust tooling;
+- ECS, editor, Lua and runtime integration of prepared assets;
 - physics, audio, networking or gameplay APIs;
 - a functional C ABI.
 
@@ -59,12 +62,12 @@ The following are intentionally outside the current Phase 4 vertical slice:
 | Tests | CTest, no external framework | In use |
 | Linux platform | Xlib/X11 | In use |
 | Binary interoperability | Versioned C ABI | Planned |
-| Offline tooling | Rust | Planned |
+| Offline tooling | Rust | Phase 5 foundation in use |
 | Gameplay scripting | Optional Lua | Planned |
 | Shader source | Slang, compiled offline | Phase 4 in use |
 | First graphics backend | Vulkan | In use |
 
-Vulkan, X11 and Mesa are system dependencies for the Linux rendering build. Slang is required only to regenerate offline shader artifacts; it is never a runtime dependency. Rust and Lua are not required yet.
+Vulkan, X11 and Mesa are system dependencies for the Linux rendering build. Slang is required only to regenerate offline shader artifacts; it is never a runtime dependency. Rust is optional and is required only for the offline asset tools; Lua is not required.
 
 ## Quick start
 
@@ -174,16 +177,17 @@ On Linux, the GCC Debug executable is located at:
 build/linux-gcc-debug/gameengine_runtime
 ```
 
-CTest currently runs eight checks on Linux and nine on Windows when Vulkan is enabled:
+CTest currently runs nine checks on Linux and ten on Windows when Vulkan is enabled:
 
 1. `gameengine_core`: verifies the core initialization and shutdown lifecycle;
-2. `gameengine_rhi`: verifies RHI lifecycle error handling and Vulkan utility policies;
-3. `gameengine_shaders`: verifies SPIR-V layout, metadata, IDs and embedded artifacts;
-4. `gameengine_math`: verifies matrices, camera transforms, procedural cube data, UVs, normals and texture/material constants;
-5. `gameengine_runtime_smoke`: verifies that the runtime initializes Vulkan, renders a frame and destroys the X11 window;
-6. `gameengine_platform_x11`: verifies the platform lifecycle and idempotent shutdown;
-7. `gameengine_vulkan_resize`: verifies resource creation/upload/destruction, procedural material descriptors, swapchain recreation, pipeline-cache load/persist/discard behavior and explicit development reload;
-8. `gameengine_shader_pipeline`: verifies variant selection and pipeline-cache identity validation;
+2. `gameengine_assets`: validates synthetic versioned asset containers and zero-copy views;
+3. `gameengine_rhi`: verifies RHI lifecycle error handling and Vulkan utility policies;
+4. `gameengine_shaders`: verifies SPIR-V layout, metadata, IDs and embedded artifacts;
+5. `gameengine_math`: verifies matrices, camera transforms, procedural cube data, UVs, normals and texture/material constants;
+6. `gameengine_runtime_smoke`: verifies that the runtime initializes Vulkan, renders a frame and destroys the X11 window;
+7. `gameengine_platform_x11`: verifies the platform lifecycle and idempotent shutdown;
+8. `gameengine_vulkan_resize`: verifies resource creation/upload/destruction, procedural material descriptors, swapchain recreation, pipeline-cache load/persist/discard behavior and explicit development reload;
+9. `gameengine_shader_pipeline`: verifies variant selection and pipeline-cache identity validation;
 
 The Windows-only unit checks additionally cover the native Win32 platform path. The 3D integration test verifies depth resources, indexed drawing, swapchain recreation and validation-clean shutdown.
 
@@ -205,6 +209,18 @@ cmake --build build/windows-msvc-debug --target gameengine_compile_bootstrap_sha
 The generator writes the checked-in `src/engine/renderer/vulkan/triangle_shaders.hpp` header and caches untracked SPIR-V/reflection artifacts under `build/shader-cache/<Debug|Release>/<shader-id>/`. Each artifact contains a source hash, compiler/target/stage metadata and a deterministic SHA-256 ID. It validates the compiler version, SPIR-V alignment and reflection output. A cache hit does not invoke `slangc`.
 
 The regular runtime build does not require `slangc` because the generated header is already included in the repository. The Vulkan renderer stores a device-specific pipeline cache in `gameengine.pipeline.cache` by default; `RendererConfiguration::pipeline_cache_path` can select another path. The C++ configuration also exposes explicit development-only `reload_shaders()` support. The bootstrap mesh, checkerboard texture and material constants are generated in memory; no asset file is required. The C ABI is unchanged.
+
+### Offline asset tools
+
+The Rust workspace is optional to the C++ runtime and requires only Rust, `serde` and `serde_json`:
+
+```sh
+cargo test --manifest-path tools/Cargo.toml
+cargo fmt --manifest-path tools/Cargo.toml -- --check
+cargo clippy --manifest-path tools/Cargo.toml -- -D warnings
+```
+
+The `gameengine-asset-tool` binary supports `validate`, `inspect`, `import-gltf`, `pack-mesh`, `pack-texture`, `pack-material`, `pack-scene` and `package`. The initial compiler accepts synthetic RGBA8 data in memory; PNG/JPG decoding and advanced glTF features remain outside this phase. The tools write `.gemesh`, `.getex`, `.gemat`, `.gescene` and package data through temporary files, while incremental artifacts live under `build/asset-cache/<source-hash>-<tool-version>/`. See [the asset architecture](docs/architecture/assets.md) for the version-1 container contract and runtime boundary.
 
 Build directories, compiler output, IDE files and local configuration are excluded by [.gitignore](.gitignore).
 
