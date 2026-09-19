@@ -14,6 +14,7 @@ set(_forward_plus_high_shader_source "${_repository_dir}/assets/shaders/bootstra
 set(_forward_plus_compute_shader_source "${_repository_dir}/assets/shaders/bootstrap/forward_plus_compute.slang")
 set(_shadow_shader_source "${_repository_dir}/assets/shaders/bootstrap/shadow.slang")
 set(_environment_shader_source "${_repository_dir}/assets/shaders/bootstrap/environment.slang")
+set(_editor_ui_shader_source "${_repository_dir}/assets/shaders/bootstrap/editor_ui.slang")
 set(_default_header "${_repository_dir}/src/engine/renderer/vulkan/triangle_shaders.hpp")
 set(_default_reflection_dir "${_repository_dir}/build/shader-reflection")
 set(_default_cache_dir "${_repository_dir}/build/shader-cache")
@@ -82,6 +83,9 @@ endif()
 if(NOT EXISTS "${_environment_shader_source}")
     message(FATAL_ERROR "Environment shader source does not exist: ${_environment_shader_source}")
 endif()
+if(NOT EXISTS "${_editor_ui_shader_source}")
+    message(FATAL_ERROR "Editor UI shader source does not exist: ${_editor_ui_shader_source}")
+endif()
 
 execute_process(
     COMMAND "${_slangc}" -version
@@ -116,6 +120,7 @@ file(SHA256 "${_forward_plus_high_shader_source}" _forward_plus_high_source_sha2
 file(SHA256 "${_forward_plus_compute_shader_source}" _forward_plus_compute_source_sha256)
 file(SHA256 "${_shadow_shader_source}" _shadow_source_sha256)
 file(SHA256 "${_environment_shader_source}" _environment_source_sha256)
+file(SHA256 "${_editor_ui_shader_source}" _editor_ui_source_sha256)
 
 set(_base_manifest
     "schema=1\n"
@@ -167,7 +172,7 @@ function(_validate_shader_outputs _stage _entry _output _reflection)
         message(FATAL_ERROR
             "Reflection artifact does not contain stage '${_stage}': ${_reflection}")
     endif()
-    if(_stage STREQUAL "fragment")
+    if(_stage STREQUAL "fragment" AND NOT _entry STREQUAL "editor_ui_fragment_main")
         foreach(_resource_name IN ITEMS material_constants albedo_texture albedo_sampler)
             string(FIND "${_reflection_content}" "\"name\": \"${_resource_name}\"" _resource_position)
             if(_resource_position EQUAL -1)
@@ -175,7 +180,7 @@ function(_validate_shader_outputs _stage _entry _output _reflection)
                     "Fragment reflection is missing resource '${_resource_name}': ${_reflection}")
             endif()
         endforeach()
-    elseif(_stage STREQUAL "vertex")
+    elseif(_stage STREQUAL "vertex" AND NOT _entry STREQUAL "editor_ui_vertex_main")
         foreach(_input_name IN ITEMS model_column0 model_column1 model_column2 model_column3)
             string(FIND "${_reflection_content}" "\"name\": \"${_input_name}\"" _input_position)
             if(_input_position EQUAL -1)
@@ -243,6 +248,18 @@ function(_validate_shader_outputs _stage _entry _output _reflection)
         string(FIND "${_reflection_content}" "\"name\": \"model_column0\"" _input_position)
         if(_input_position EQUAL -1)
             message(FATAL_ERROR "Shadow reflection is missing model input: ${_reflection}")
+        endif()
+    elseif(_entry STREQUAL "editor_ui_vertex_main")
+        foreach(_input_name IN ITEMS position uv color)
+            string(FIND "${_reflection_content}" "\"name\": \"${_input_name}\"" _input_position)
+            if(_input_position EQUAL -1)
+                message(FATAL_ERROR "Editor UI vertex reflection is missing input '${_input_name}': ${_reflection}")
+            endif()
+        endforeach()
+    elseif(_entry STREQUAL "editor_ui_fragment_main")
+        string(FIND "${_reflection_content}" "\"name\": \"color\"" _input_position)
+        if(_input_position EQUAL -1)
+            message(FATAL_ERROR "Editor UI fragment reflection is missing color input: ${_reflection}")
         endif()
     endif()
 endfunction()
@@ -326,6 +343,8 @@ _make_shader_identity("${_forward_plus_high_source_sha256}" fragment forward_plu
 _make_shader_identity("${_forward_plus_compute_source_sha256}" compute forward_plus_light_list_main _forward_plus_compute_id _forward_plus_compute_manifest)
 _make_shader_identity("${_shadow_source_sha256}" vertex shadow_vertex_main _shadow_vertex_id _shadow_vertex_manifest)
 _make_shader_identity("${_environment_source_sha256}" compute environment_compute_main _environment_compute_id _environment_compute_manifest)
+_make_shader_identity("${_editor_ui_source_sha256}" vertex editor_ui_vertex_main _editor_ui_vertex_id _editor_ui_vertex_manifest)
+_make_shader_identity("${_editor_ui_source_sha256}" fragment editor_ui_fragment_main _editor_ui_fragment_id _editor_ui_fragment_manifest)
 _compile_shader("triangle" "${_shader_source}" vertex vertex_main "${_vertex_id}" "${_vertex_manifest}" _vertex_spirv _vertex_reflection)
 _compile_shader("triangle" "${_shader_source}" fragment fragment_main "${_fragment_id}" "${_fragment_manifest}" _fragment_spirv _fragment_reflection)
 _compile_shader("cull" "${_compute_shader_source}" compute compute_main "${_compute_id}" "${_compute_manifest}" _compute_spirv _compute_reflection)
@@ -337,6 +356,8 @@ _compile_shader("forward_plus_high" "${_forward_plus_high_shader_source}" fragme
 _compile_shader("forward_plus_compute" "${_forward_plus_compute_shader_source}" compute forward_plus_light_list_main "${_forward_plus_compute_id}" "${_forward_plus_compute_manifest}" _forward_plus_compute_spirv _forward_plus_compute_reflection)
 _compile_shader("shadow" "${_shadow_shader_source}" vertex shadow_vertex_main "${_shadow_vertex_id}" "${_shadow_vertex_manifest}" _shadow_vertex_spirv _shadow_vertex_reflection)
 _compile_shader("environment" "${_environment_shader_source}" compute environment_compute_main "${_environment_compute_id}" "${_environment_compute_manifest}" _environment_compute_spirv _environment_compute_reflection)
+_compile_shader("editor_ui" "${_editor_ui_shader_source}" vertex editor_ui_vertex_main "${_editor_ui_vertex_id}" "${_editor_ui_vertex_manifest}" _editor_ui_vertex_spirv _editor_ui_vertex_reflection)
+_compile_shader("editor_ui" "${_editor_ui_shader_source}" fragment editor_ui_fragment_main "${_editor_ui_fragment_id}" "${_editor_ui_fragment_manifest}" _editor_ui_fragment_spirv _editor_ui_fragment_reflection)
 
 function(_read_spirv_words _path _symbol _result)
     file(READ "${_path}" _hex HEX)
@@ -368,6 +389,8 @@ _read_spirv_words("${_forward_plus_high_fragment_spirv}" forward_plus_high_fragm
 _read_spirv_words("${_forward_plus_compute_spirv}" forward_plus_compute_shader _forward_plus_compute_array)
 _read_spirv_words("${_shadow_vertex_spirv}" shadow_vertex_shader _shadow_vertex_array)
 _read_spirv_words("${_environment_compute_spirv}" environment_compute_shader _environment_compute_array)
+_read_spirv_words("${_editor_ui_vertex_spirv}" editor_ui_vertex_shader _editor_ui_vertex_array)
+_read_spirv_words("${_editor_ui_fragment_spirv}" editor_ui_fragment_shader _editor_ui_fragment_array)
 
 file(WRITE "${_shader_header}" "#pragma once\n\n")
 file(APPEND "${_shader_header}"
@@ -407,11 +430,15 @@ file(APPEND "${_shader_header}"
     "inline constexpr std::uint32_t forward_plus_compute_workgroup_size = 16U;\n"
     "inline constexpr std::string_view shadow_resource_layout = \"push_constant_only\";\n")
 file(APPEND "${_shader_header}"
+    "inline constexpr std::string_view editor_ui_vertex_layout = \"position2_uv2_color4\";\n"
+    "inline constexpr std::string_view editor_ui_resource_layout = \"none\";\n")
+file(APPEND "${_shader_header}"
     "${_vertex_array}${_fragment_array}${_compute_array}${_benchmark_compute_array}"
     "${_forward_plus_vertex_array}${_forward_plus_fragment_array}"
     "${_forward_plus_high_vertex_array}${_forward_plus_high_fragment_array}"
     "${_forward_plus_compute_array}"
-    "${_shadow_vertex_array}${_environment_compute_array}\n")
+    "${_shadow_vertex_array}${_environment_compute_array}"
+    "${_editor_ui_vertex_array}${_editor_ui_fragment_array}\n")
 file(APPEND "${_shader_header}"
     "inline constexpr std::string_view vertex_shader_id = \"${_vertex_id}\";\n"
     "inline constexpr std::string_view fragment_shader_id = \"${_fragment_id}\";\n"
@@ -500,6 +527,22 @@ file(APPEND "${_shader_header}"
     "};\n"
     "inline constexpr std::array<ShaderArtifact, 1> environment_compute_shader_variants = {\n"
     "    environment_compute_shader_artifact,\n"
+    "};\n"
+    "inline constexpr std::string_view editor_ui_vertex_shader_id = \"${_editor_ui_vertex_id}\";\n"
+    "inline constexpr std::string_view editor_ui_fragment_shader_id = \"${_editor_ui_fragment_id}\";\n"
+    "inline constexpr ShaderArtifact editor_ui_vertex_shader_artifact{\n"
+    "    editor_ui_vertex_shader_id, ShaderStage::vertex, \"editor_ui_vertex_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, editor_ui_vertex_shader.data(), editor_ui_vertex_shader.size()\n"
+    "};\n"
+    "inline constexpr ShaderArtifact editor_ui_fragment_shader_artifact{\n"
+    "    editor_ui_fragment_shader_id, ShaderStage::fragment, \"editor_ui_fragment_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, editor_ui_fragment_shader.data(), editor_ui_fragment_shader.size()\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> editor_ui_vertex_shader_variants = {\n"
+    "    editor_ui_vertex_shader_artifact,\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> editor_ui_fragment_shader_variants = {\n"
+    "    editor_ui_fragment_shader_artifact,\n"
     "};\n\n"
     "} // namespace gameengine::renderer::vulkan::bootstrap\n")
 

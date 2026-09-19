@@ -17,7 +17,8 @@
         "CMAKE_CXX_STANDARD": "20",
         "CMAKE_CXX_EXTENSIONS": "OFF",
         "GAMEENGINE_BUILD_TESTS": "ON",
-        "GAMEENGINE_BUILD_VULKAN": "ON"
+        "GAMEENGINE_BUILD_VULKAN": "ON",
+        "GAMEENGINE_BUILD_EDITOR": "ON"
       },
       "condition": {
         "type": "equals",
@@ -36,7 +37,8 @@
         "CMAKE_CXX_STANDARD": "20",
         "CMAKE_CXX_EXTENSIONS": "OFF",
         "GAMEENGINE_BUILD_TESTS": "ON",
-        "GAMEENGINE_BUILD_VULKAN": "ON"
+        "GAMEENGINE_BUILD_VULKAN": "ON",
+        "GAMEENGINE_BUILD_EDITOR": "ON"
       },
       "condition": {
         "type": "equals",
@@ -55,7 +57,8 @@
         "CMAKE_CXX_STANDARD": "20",
         "CMAKE_CXX_EXTENSIONS": "OFF",
         "CMAKE_BUILD_TYPE": "Debug",
-        "GAMEENGINE_BUILD_TESTS": "ON"
+        "GAMEENGINE_BUILD_TESTS": "ON",
+        "GAMEENGINE_BUILD_EDITOR": "ON"
       },
       "condition": {
         "type": "equals",
@@ -74,7 +77,8 @@
         "CMAKE_CXX_STANDARD": "20",
         "CMAKE_CXX_EXTENSIONS": "OFF",
         "CMAKE_BUILD_TYPE": "Release",
-        "GAMEENGINE_BUILD_TESTS": "ON"
+        "GAMEENGINE_BUILD_TESTS": "ON",
+        "GAMEENGINE_BUILD_EDITOR": "ON"
       },
       "condition": {
         "type": "equals",
@@ -93,7 +97,8 @@
         "CMAKE_CXX_STANDARD": "20",
         "CMAKE_CXX_EXTENSIONS": "OFF",
         "CMAKE_BUILD_TYPE": "Debug",
-        "GAMEENGINE_BUILD_TESTS": "ON"
+        "GAMEENGINE_BUILD_TESTS": "ON",
+        "GAMEENGINE_BUILD_EDITOR": "ON"
       },
       "condition": {
         "type": "equals",
@@ -112,7 +117,8 @@
         "CMAKE_CXX_STANDARD": "20",
         "CMAKE_CXX_EXTENSIONS": "OFF",
         "CMAKE_BUILD_TYPE": "Release",
-        "GAMEENGINE_BUILD_TESTS": "ON"
+        "GAMEENGINE_BUILD_TESTS": "ON",
+        "GAMEENGINE_BUILD_EDITOR": "ON"
       },
       "condition": {
         "type": "equals",
@@ -133,7 +139,8 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
-        "GAMEENGINE_BUILD_TESTS": "ON"
+        "GAMEENGINE_BUILD_TESTS": "ON",
+        "GAMEENGINE_BUILD_EDITOR": "ON"
       },
       "condition": {
         "type": "equals",

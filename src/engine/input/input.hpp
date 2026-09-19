@@ -28,6 +28,8 @@ enum class KeyCode : core::u16 {
     right,
     up,
     down,
+    page_up,
+    page_down,
     shift,
     control,
     alt,

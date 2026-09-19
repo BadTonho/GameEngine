@@ -5,6 +5,7 @@ project(GameEngine VERSION 0.0.1 LANGUAGES CXX)
 option(GAMEENGINE_BUILD_TESTS "Build the GameEngine tests" ON)
 option(GAMEENGINE_BUILD_VULKAN "Build the Vulkan renderer" ON)
 option(GAMEENGINE_BUILD_BENCHMARKS "Build optional scene benchmarks" OFF)
+option(GAMEENGINE_BUILD_EDITOR "Build the separate GameEngine editor" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -200,6 +201,33 @@ add_executable(gameengine_runtime
 target_link_libraries(gameengine_runtime PRIVATE gameengine_core gameengine_platform gameengine_renderer)
 gameengine_configure_target(gameengine_runtime)
 
+if(GAMEENGINE_BUILD_EDITOR)
+    add_library(gameengine_editor_core STATIC
+        src/engine/editor/project.cpp
+        src/engine/editor/project.hpp
+        src/engine/editor/ui.cpp
+        src/engine/editor/ui.hpp
+        src/engine/editor/ui_types.hpp
+    )
+    target_link_libraries(gameengine_editor_core PUBLIC gameengine_core gameengine_renderer)
+    target_include_directories(gameengine_editor_core
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    )
+    gameengine_configure_target(gameengine_editor_core)
+
+    add_executable(gameengine_editor
+        src/editor/main.cpp
+    )
+    target_link_libraries(gameengine_editor PRIVATE
+        gameengine_core
+        gameengine_platform
+        gameengine_renderer
+        gameengine_editor_core
+    )
+    gameengine_configure_target(gameengine_editor)
+endif()
+
 if(GAMEENGINE_BUILD_TESTS)
     include(CTest)
 
@@ -218,6 +246,32 @@ if(GAMEENGINE_BUILD_TESTS)
     target_link_libraries(gameengine_asset_tests PRIVATE gameengine_assets gameengine_core)
     gameengine_configure_target(gameengine_asset_tests)
     add_test(NAME gameengine_assets COMMAND gameengine_asset_tests)
+
+    if(GAMEENGINE_BUILD_EDITOR)
+        add_executable(gameengine_editor_tests
+            tests/editor_tests.cpp
+        )
+        target_link_libraries(gameengine_editor_tests PRIVATE
+            gameengine_editor_core
+            gameengine_scene
+            gameengine_assets
+            gameengine_core
+        )
+        gameengine_configure_target(gameengine_editor_tests)
+        add_test(NAME gameengine_editor COMMAND gameengine_editor_tests)
+
+        add_executable(gameengine_editor_ui_tests
+            tests/editor_ui_tests.cpp
+        )
+        target_link_libraries(gameengine_editor_ui_tests PRIVATE
+            gameengine_editor_core
+            gameengine_scene
+            gameengine_assets
+            gameengine_core
+        )
+        gameengine_configure_target(gameengine_editor_ui_tests)
+        add_test(NAME gameengine_editor_ui COMMAND gameengine_editor_ui_tests)
+    endif()
 
     add_executable(gameengine_rhi_tests
         tests/rhi_tests.cpp

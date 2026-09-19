@@ -53,7 +53,9 @@ The generator records the source SHA-256, Slang version, target/profile, stage, 
 The bootstrap shaders have explicit `vertex_main`, `fragment_main`, `compute_main`,
 `forward_plus_vertex_main`, `forward_plus_fragment_main`,
 `forward_plus_high_vertex_main`, `forward_plus_high_fragment_main`,
-`forward_plus_light_list_main`, `shadow_vertex_main` and `environment_compute_main` entry points.
+`forward_plus_light_list_main`, `shadow_vertex_main`, `environment_compute_main`,
+`editor_ui_vertex_main` and `editor_ui_fragment_main` entry points. The editor pair is only
+consumed by the separate editor target.
 The compute shader uses a fixed `[numthreads(64, 1, 1)]` group, storage bindings for source,
 visible and indirect records, and 112 bytes of frustum/count push constants. Vertex position,
 normal and UV use Vulkan locations 0, 1 and 2; instance model columns use locations 3, 4, 5 and 6
@@ -149,3 +151,27 @@ G-buffer-shaped benchmark pass. The normal renderer selects Forward+ through the
 the benchmark still measures all four paths in its fixed order. The High profile uses only
 procedural shadow/environment resources; no external model or texture is required. VRAM policy
 and the final hardware baseline remain pending.
+
+## Editor viewport
+
+The editor is a separate build target and reuses the scene-to-renderer bridge without adding
+editor state to exported runtime builds. Its frame flow is:
+
+```text
+.geproject manifest
+      ↓
+.gescene file
+      ↓
+internal Scene
+      ↓
+Vulkan forward renderer
+      ↓
+editor UI overlay
+```
+
+The overlay is an editor-only alpha-blended graphics pipeline using a Slang vertex/fragment pair,
+an orthographic NDC vertex layout (`position2_uv2_color4`) and persistent host-visible vertices.
+It is recorded after the procedural cube while the same color/depth render pass is open, so it
+does not alter the runtime render graph. The UI has no external dependency and its bitmap font is
+generated in memory. Resizing recreates the UI pipeline with the swapchain render pass while the
+mapped vertex allocation remains persistent.

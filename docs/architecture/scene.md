@@ -54,5 +54,11 @@ cmake --build build/windows-msvc-debug --config Debug --target gameengine_scene_
 build/windows-msvc-debug/Debug/gameengine_scene_benchmark.exe
 ```
 
-Prepared meshes, real textures, runtime asset streaming, animation, editor integration and a
-final ECS storage choice remain future work.
+The separate `gameengine_editor` target can create and open the procedural project, load this
+scene into the same internal `Scene` representation and attach it to the Vulkan renderer through
+an editor-only bridge. The renderer reads the selected scene's cube transform, active camera and
+directional light without changing the public RHI or C ABI. Project manifests validate the scene
+path before resolving it, and a failed load does not replace the previous valid scene.
+
+Prepared meshes, real textures, runtime asset streaming, animation, camera navigation, asset
+browser and a final ECS storage choice remain future work.

@@ -319,22 +319,24 @@ Goal: provide a useful public tool without contaminating the exported runtime.
 
 ### Tasks
 
-- [ ] Define the project format.
-- [ ] Create separate editor and game initialization.
-- [ ] Reuse the runtime renderer in the viewport.
-- [ ] Create the viewport.
-- [ ] Create the hierarchy.
-- [ ] Create the inspector.
+- [x] Define the `.geproject` v1 project format and deterministic procedural project creation.
+- [x] Create separate editor and game initialization.
+- [x] Reuse the runtime renderer in the viewport through an internal scene bridge.
+- [x] Create the procedural Vulkan viewport with an editor-only UI overlay.
+- [x] Create the deterministic entity hierarchy view and selection hit testing.
+- [x] Create the basic transform inspector and keyboard editing path.
 - [ ] Create the asset browser.
 - [ ] Create the console and diagnostics.
 - [ ] Create a basic profiler.
-- [ ] Create save, load and undo operations when needed.
-- [ ] Separate Editor and Runtime modules in the build.
+- [x] Create deterministic save/load for the project and scene.
+- [x] Separate Editor and Runtime modules in the build.
 - [ ] Measure editor RAM and startup with an empty project.
 
 ### Completion criteria
 
-A user can create a project, open a scene, add objects, edit properties, save and view the result through the engine renderer.
+A user can create a procedural project, open its scene, select the bootstrap entity, edit its
+transform, save and view the result through the engine renderer. Adding arbitrary objects and
+assets remains later Phase 8 work.
 
 ## Phase 9 — Optional runtime modules
 

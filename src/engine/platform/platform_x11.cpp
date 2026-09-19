@@ -47,6 +47,10 @@ namespace {
         return KeyCode::up;
     case XK_Down:
         return KeyCode::down;
+    case XK_Page_Up:
+        return KeyCode::page_up;
+    case XK_Page_Down:
+        return KeyCode::page_down;
     case XK_Shift_L:
     case XK_Shift_R:
         return KeyCode::shift;

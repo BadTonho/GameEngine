@@ -22,6 +22,7 @@
 #endif
 
 #include "engine/core/diagnostics.hpp"
+#include "engine/editor/ui_types.hpp"
 #include "engine/math/math.hpp"
 #include "engine/renderer/gpu_culling.hpp"
 #include "engine/renderer/forward_plus.hpp"
@@ -64,6 +65,7 @@ constexpr core::u32 frames_in_flight = 2;
 constexpr core::u32 timestamp_queries_per_frame = renderer::metrics::max_timed_passes * 2U;
 constexpr core::usize pipeline_cache_path_capacity = 512;
 constexpr core::u32 benchmark_output_capacity = 1'000'000U;
+constexpr VkDeviceSize editor_ui_vertex_capacity = 1U << 20U;
 
 [[nodiscard]] bool has_extension(const std::vector<VkExtensionProperties>& extensions,
                                  const char* name) noexcept
@@ -235,6 +237,16 @@ struct Renderer::Impl final {
     VkRenderPass render_pass = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     bool pipeline_layout_uses_forward_plus = false;
+    VkBuffer editor_ui_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory editor_ui_memory = VK_NULL_HANDLE;
+    void* editor_ui_mapped = nullptr;
+    VkDeviceSize editor_ui_slice_stride = editor_ui_vertex_capacity;
+    VkMemoryPropertyFlags editor_ui_memory_properties = 0;
+    VkPipeline editor_ui_pipeline = VK_NULL_HANDLE;
+    VkPipelineLayout editor_ui_pipeline_layout = VK_NULL_HANDLE;
+    const renderer::vulkan::ShaderArtifact* editor_ui_vertex_shader_artifact = nullptr;
+    const renderer::vulkan::ShaderArtifact* editor_ui_fragment_shader_artifact = nullptr;
+    std::span<const editor::UiVertex> editor_ui_vertices{};
     VkDescriptorSetLayout material_descriptor_set_layout = VK_NULL_HANDLE;
     VkDescriptorPool material_descriptor_pool = VK_NULL_HANDLE;
     VkDescriptorSet material_descriptor_set = VK_NULL_HANDLE;
@@ -338,9 +350,13 @@ struct Renderer::Impl final {
     const renderer::vulkan::ShaderArtifact* shadow_vertex_shader_artifact = nullptr;
     bool shader_hot_reload_enabled = false;
     scene::Scene bootstrap_scene;
+    scene::Scene* editor_scene = nullptr;
     scene::Entity bootstrap_cube_entity{};
     scene::Entity bootstrap_camera_entity{};
     scene::Entity bootstrap_light_entity{};
+    scene::Entity render_cube_entity{};
+    scene::Entity render_camera_entity{};
+    scene::Entity render_light_entity{};
     renderer::render_graph::RenderGraph render_graph;
     renderer::render_graph::ResourceHandle swapchain_color_resource{};
     renderer::render_graph::ResourceHandle depth_resource{};
@@ -455,6 +471,23 @@ struct Renderer::Impl final {
         renderer::gpu_culling::VisibilityMode mode) noexcept;
     [[nodiscard]] core::Status set_renderer_quality(
         renderer::quality::RendererQuality quality) noexcept;
+    [[nodiscard]] core::Status attach_editor_scene(scene::Scene& scene) noexcept;
+    [[nodiscard]] core::Status detach_editor_scene() noexcept;
+    [[nodiscard]] core::Status select_editor_scene_entities(scene::Scene& scene) noexcept;
+    [[nodiscard]] core::Status set_editor_ui_vertices(
+        std::span<const editor::UiVertex> vertices) noexcept;
+    [[nodiscard]] core::Status create_editor_ui_resources() noexcept;
+    [[nodiscard]] core::Status create_editor_ui_pipeline() noexcept;
+    void destroy_editor_ui_pipeline() noexcept;
+    void destroy_editor_ui_resources() noexcept;
+    [[nodiscard]] scene::Scene& active_scene() noexcept
+    {
+        return editor_scene != nullptr ? *editor_scene : bootstrap_scene;
+    }
+    [[nodiscard]] const scene::Scene& active_scene() const noexcept
+    {
+        return editor_scene != nullptr ? *editor_scene : bootstrap_scene;
+    }
     [[nodiscard]] core::Status upload_gpu_source_instances() noexcept;
     [[nodiscard]] core::Status create_gpu_culling_pipeline() noexcept;
     [[nodiscard]] core::Status create_gpu_culling_descriptors() noexcept;
@@ -753,6 +786,7 @@ void Renderer::Impl::shutdown() noexcept
     }
 
     cleanup_swapchain();
+    destroy_editor_ui_resources();
     // Descriptor sets must be released before the buffers and images they reference.
     destroy_material_resources();
     destroy_forward_plus_buffers();
@@ -762,6 +796,10 @@ void Renderer::Impl::shutdown() noexcept
     destroy_procedural_instance_resources();
     destroy_timing_resources();
     destroy_live_resources();
+    editor_scene = nullptr;
+    render_cube_entity = {};
+    render_camera_entity = {};
+    render_light_entity = {};
 
     if (device != VK_NULL_HANDLE && pipeline_layout != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
@@ -865,6 +903,9 @@ void Renderer::Impl::shutdown() noexcept
     forward_plus_high_vertex_shader_artifact = nullptr;
     forward_plus_high_fragment_shader_artifact = nullptr;
     shadow_vertex_shader_artifact = nullptr;
+    editor_ui_vertex_shader_artifact = nullptr;
+    editor_ui_fragment_shader_artifact = nullptr;
+    editor_ui_vertices = {};
     shader_hot_reload_enabled = false;
     bootstrap_scene.clear();
     bootstrap_cube_entity = {};
@@ -1207,6 +1248,12 @@ core::Status Renderer::Impl::select_shader_variants() noexcept
     const auto shadow_vertex = renderer::vulkan::select_shader_variant(
         renderer::vulkan::bootstrap::shadow_vertex_shader_variants,
         shader_capabilities);
+    const auto editor_ui_vertex = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::editor_ui_vertex_shader_variants,
+        shader_capabilities);
+    const auto editor_ui_fragment = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::editor_ui_fragment_shader_variants,
+        shader_capabilities);
     if (vertex == nullptr || fragment == nullptr || compute == nullptr ||
         benchmark_compute == nullptr || forward_plus_vertex == nullptr ||
         forward_plus_fragment == nullptr || forward_plus_compute == nullptr ||
@@ -1224,6 +1271,8 @@ core::Status Renderer::Impl::select_shader_variants() noexcept
     forward_plus_high_vertex_shader_artifact = forward_plus_high_vertex;
     forward_plus_high_fragment_shader_artifact = forward_plus_high_fragment;
     shadow_vertex_shader_artifact = shadow_vertex;
+    editor_ui_vertex_shader_artifact = editor_ui_vertex;
+    editor_ui_fragment_shader_artifact = editor_ui_fragment;
     return core::Status{};
 }
 
@@ -1788,6 +1837,12 @@ core::Status Renderer::Impl::create_swapchain(platform::WindowSize window_size) 
     if (!status) {
         return status;
     }
+    if (editor_ui_buffer != VK_NULL_HANDLE && editor_scene != nullptr) {
+        status = create_editor_ui_pipeline();
+        if (!status) {
+            return status;
+        }
+    }
 
     images_in_flight.assign(swapchain_images.size(), VK_NULL_HANDLE);
     last_window_size = window_size;
@@ -2341,6 +2396,9 @@ core::Status Renderer::Impl::create_bootstrap_scene() noexcept
         !bootstrap_scene.update_transforms()) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
+    render_cube_entity = bootstrap_cube_entity;
+    render_camera_entity = bootstrap_camera_entity;
+    render_light_entity = bootstrap_light_entity;
     return core::Status{};
 }
 
@@ -2420,11 +2478,12 @@ core::Status Renderer::Impl::set_procedural_workload(core::u32 instance_count) n
         procedural_instances.size() < instance_count) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
-    if (!bootstrap_scene.update_transforms()) {
+    scene::Scene& active_scene_data = active_scene();
+    if (!active_scene_data.update_transforms()) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
     const scene::TransformComponent* cube_transform =
-        bootstrap_scene.transform(bootstrap_cube_entity);
+        active_scene_data.transform(render_cube_entity);
     if (cube_transform == nullptr ||
         !renderer::procedural::generate_instances(
             instance_count,
@@ -4211,6 +4270,284 @@ core::Status Renderer::Impl::set_renderer_quality(
     return graph_status;
 }
 
+core::Status Renderer::Impl::select_editor_scene_entities(scene::Scene& scene) noexcept
+{
+    if (!scene.validate() || !scene.active_camera().valid()) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+    scene::Entity cube{};
+    scene::Entity light{};
+    for (const scene::Entity entity : scene.entities()) {
+        const scene::MeshRendererComponent* mesh = scene.mesh_renderer(entity);
+        if (mesh != nullptr && mesh->mesh_id == scene::bootstrap_mesh_id &&
+            mesh->material_id == scene::bootstrap_material_id && !cube.valid()) {
+            cube = entity;
+        }
+        if (scene.directional_light(entity) != nullptr && !light.valid()) {
+            light = entity;
+        }
+    }
+    const scene::Entity camera = scene.active_camera();
+    if (!cube.valid() || !camera.valid() || !light.valid() ||
+        scene.transform(cube) == nullptr || scene.transform(camera) == nullptr ||
+        scene.transform(light) == nullptr) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+    render_cube_entity = cube;
+    render_camera_entity = camera;
+    render_light_entity = light;
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::attach_editor_scene(scene::Scene& scene) noexcept
+{
+    const core::Status status = select_editor_scene_entities(scene);
+    if (!status) {
+        return status;
+    }
+    editor_scene = &scene;
+    return set_procedural_workload(active_instance_count);
+}
+
+core::Status Renderer::Impl::detach_editor_scene() noexcept
+{
+    editor_scene = nullptr;
+    editor_ui_vertices = {};
+    render_cube_entity = bootstrap_cube_entity;
+    render_camera_entity = bootstrap_camera_entity;
+    render_light_entity = bootstrap_light_entity;
+    return set_procedural_workload(active_instance_count);
+}
+
+core::Status Renderer::Impl::set_editor_ui_vertices(
+    std::span<const editor::UiVertex> vertices) noexcept
+{
+    editor_ui_vertices = {};
+    if (vertices.empty()) {
+        return core::Status{};
+    }
+    if (vertices.size() > editor_ui_vertex_capacity / sizeof(editor::UiVertex)) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+    core::Status status = create_editor_ui_resources();
+    if (!status) {
+        return status;
+    }
+    editor_ui_vertices = vertices;
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_editor_ui_resources() noexcept
+{
+    if (editor_ui_buffer == VK_NULL_HANDLE) {
+        core::Status status = create_buffer_resource(editor_ui_slice_stride * frames_in_flight,
+                                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                                      editor_ui_buffer,
+                                                      editor_ui_memory,
+                                                      &editor_ui_memory_properties);
+        if (!status) {
+            return status;
+        }
+        if (vkMapMemory(device,
+                        editor_ui_memory,
+                        0,
+                        editor_ui_slice_stride * frames_in_flight,
+                        0,
+                        &editor_ui_mapped) != VK_SUCCESS) {
+            destroy_buffer_resource(editor_ui_buffer, editor_ui_memory);
+            editor_ui_buffer = VK_NULL_HANDLE;
+            editor_ui_memory = VK_NULL_HANDLE;
+            editor_ui_memory_properties = 0;
+            return core::Status{core::ErrorCode::vulkan_device_failed};
+        }
+        set_debug_name(VK_OBJECT_TYPE_BUFFER,
+                       reinterpret_cast<std::uint64_t>(editor_ui_buffer),
+                       "GameEngine.EditorUiVertexBuffer");
+    }
+    if (editor_ui_pipeline == VK_NULL_HANDLE) {
+        return create_editor_ui_pipeline();
+    }
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_editor_ui_pipeline() noexcept
+{
+    if (editor_ui_pipeline != VK_NULL_HANDLE) {
+        return core::Status{};
+    }
+    if (render_pass == VK_NULL_HANDLE || pipeline_cache == VK_NULL_HANDLE ||
+        editor_ui_vertex_shader_artifact == nullptr ||
+        editor_ui_fragment_shader_artifact == nullptr) {
+        return core::Status{core::ErrorCode::shader_variant_unavailable};
+    }
+    const VkShaderModule vertex_shader = create_shader_module(
+        editor_ui_vertex_shader_artifact->spirv,
+        editor_ui_vertex_shader_artifact->spirv_word_count * sizeof(std::uint32_t));
+    const VkShaderModule fragment_shader = create_shader_module(
+        editor_ui_fragment_shader_artifact->spirv,
+        editor_ui_fragment_shader_artifact->spirv_word_count * sizeof(std::uint32_t));
+    if (vertex_shader == VK_NULL_HANDLE || fragment_shader == VK_NULL_HANDLE) {
+        if (vertex_shader != VK_NULL_HANDLE) {
+            vkDestroyShaderModule(device, vertex_shader, nullptr);
+        }
+        if (fragment_shader != VK_NULL_HANDLE) {
+            vkDestroyShaderModule(device, fragment_shader, nullptr);
+        }
+        return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+    }
+
+    const std::array<VkPipelineShaderStageCreateInfo, 2> stages = {
+        VkPipelineShaderStageCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_VERTEX_BIT,
+            .module = vertex_shader,
+            .pName = editor_ui_vertex_shader_artifact->entry_point.data(),
+        },
+        VkPipelineShaderStageCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .module = fragment_shader,
+            .pName = editor_ui_fragment_shader_artifact->entry_point.data(),
+        },
+    };
+    const VkVertexInputBindingDescription binding{
+        .binding = 0,
+        .stride = sizeof(editor::UiVertex),
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+    };
+    const std::array<VkVertexInputAttributeDescription, 3> attributes = {
+        VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32_SFLOAT,
+                                          static_cast<std::uint32_t>(offsetof(editor::UiVertex,
+                                                                              position))},
+        VkVertexInputAttributeDescription{1, 0, VK_FORMAT_R32G32_SFLOAT,
+                                          static_cast<std::uint32_t>(offsetof(editor::UiVertex, uv))},
+        VkVertexInputAttributeDescription{2, 0, VK_FORMAT_R32G32B32A32_SFLOAT,
+                                          static_cast<std::uint32_t>(offsetof(editor::UiVertex,
+                                                                              color))},
+    };
+    VkPipelineVertexInputStateCreateInfo vertex_input{};
+    vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_input.vertexBindingDescriptionCount = 1;
+    vertex_input.pVertexBindingDescriptions = &binding;
+    vertex_input.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size());
+    vertex_input.pVertexAttributeDescriptions = attributes.data();
+    VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+    input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo viewport_state{};
+    viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state.viewportCount = 1;
+    viewport_state.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo rasterization{};
+    rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterization.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterization.lineWidth = 1.0F;
+    VkPipelineMultisampleStateCreateInfo multisample{};
+    multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+    depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_stencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+    const VkPipelineColorBlendAttachmentState blend_attachment{
+        .blendEnable = VK_TRUE,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .alphaBlendOp = VK_BLEND_OP_ADD,
+        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+    };
+    VkPipelineColorBlendStateCreateInfo color_blend{};
+    color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    color_blend.logicOpEnable = VK_FALSE;
+    color_blend.attachmentCount = 1;
+    color_blend.pAttachments = &blend_attachment;
+    const std::array<VkDynamicState, 2> dynamic_states = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR,
+    };
+    VkPipelineDynamicStateCreateInfo dynamic_state{};
+    dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic_state.dynamicStateCount = static_cast<std::uint32_t>(dynamic_states.size());
+    dynamic_state.pDynamicStates = dynamic_states.data();
+    VkPipelineLayoutCreateInfo layout_info{};
+    layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    if (vkCreatePipelineLayout(device, &layout_info, nullptr, &editor_ui_pipeline_layout) !=
+        VK_SUCCESS) {
+        vkDestroyShaderModule(device, vertex_shader, nullptr);
+        vkDestroyShaderModule(device, fragment_shader, nullptr);
+        return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+    }
+    VkGraphicsPipelineCreateInfo pipeline_info{};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipeline_info.stageCount = static_cast<std::uint32_t>(stages.size());
+    pipeline_info.pStages = stages.data();
+    pipeline_info.pVertexInputState = &vertex_input;
+    pipeline_info.pInputAssemblyState = &input_assembly;
+    pipeline_info.pViewportState = &viewport_state;
+    pipeline_info.pRasterizationState = &rasterization;
+    pipeline_info.pMultisampleState = &multisample;
+    pipeline_info.pDepthStencilState = &depth_stencil;
+    pipeline_info.pColorBlendState = &color_blend;
+    pipeline_info.pDynamicState = &dynamic_state;
+    pipeline_info.layout = editor_ui_pipeline_layout;
+    pipeline_info.renderPass = render_pass;
+    pipeline_info.subpass = 0;
+    if (vkCreateGraphicsPipelines(device,
+                                  pipeline_cache,
+                                  1,
+                                  &pipeline_info,
+                                  nullptr,
+                                  &editor_ui_pipeline) != VK_SUCCESS) {
+        vkDestroyPipelineLayout(device, editor_ui_pipeline_layout, nullptr);
+        editor_ui_pipeline_layout = VK_NULL_HANDLE;
+        vkDestroyShaderModule(device, vertex_shader, nullptr);
+        vkDestroyShaderModule(device, fragment_shader, nullptr);
+        return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+    }
+    vkDestroyShaderModule(device, vertex_shader, nullptr);
+    vkDestroyShaderModule(device, fragment_shader, nullptr);
+    set_debug_name(VK_OBJECT_TYPE_PIPELINE,
+                   reinterpret_cast<std::uint64_t>(editor_ui_pipeline),
+                   "GameEngine.EditorUiPipeline");
+    return core::Status{};
+}
+
+void Renderer::Impl::destroy_editor_ui_pipeline() noexcept
+{
+    if (device != VK_NULL_HANDLE && editor_ui_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, editor_ui_pipeline, nullptr);
+        editor_ui_pipeline = VK_NULL_HANDLE;
+    }
+    if (device != VK_NULL_HANDLE && editor_ui_pipeline_layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, editor_ui_pipeline_layout, nullptr);
+        editor_ui_pipeline_layout = VK_NULL_HANDLE;
+    }
+}
+
+void Renderer::Impl::destroy_editor_ui_resources() noexcept
+{
+    destroy_editor_ui_pipeline();
+    if (device != VK_NULL_HANDLE && editor_ui_mapped != nullptr) {
+        vkUnmapMemory(device, editor_ui_memory);
+    }
+    editor_ui_mapped = nullptr;
+    if (device != VK_NULL_HANDLE && editor_ui_buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, editor_ui_buffer, nullptr);
+    }
+    if (device != VK_NULL_HANDLE && editor_ui_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, editor_ui_memory, nullptr);
+    }
+    editor_ui_buffer = VK_NULL_HANDLE;
+    editor_ui_memory = VK_NULL_HANDLE;
+    editor_ui_slice_stride = editor_ui_vertex_capacity;
+    editor_ui_memory_properties = 0;
+    editor_ui_vertices = {};
+}
+
 core::Status Renderer::Impl::create_bootstrap_material_resources() noexcept
 {
     core::Status status{};
@@ -5384,6 +5721,7 @@ void Renderer::Impl::cleanup_swapchain() noexcept
                              command_buffers.data());
         command_buffers.clear();
     }
+    destroy_editor_ui_pipeline();
     for (VkFramebuffer framebuffer : framebuffers) {
         vkDestroyFramebuffer(device, framebuffer, nullptr);
     }
@@ -5472,6 +5810,27 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
     if (pipeline == nullptr || pipeline->pipeline == VK_NULL_HANDLE) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    if (!editor_ui_vertices.empty()) {
+        if (editor_ui_buffer == VK_NULL_HANDLE || editor_ui_mapped == nullptr ||
+            editor_ui_vertices.size() > editor_ui_vertex_capacity / sizeof(editor::UiVertex)) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const VkDeviceSize slice_offset = editor_ui_slice_stride * frame_index;
+        auto* mapped_bytes = static_cast<std::byte*>(editor_ui_mapped);
+        std::memcpy(mapped_bytes + slice_offset,
+                    editor_ui_vertices.data(),
+                    editor_ui_vertices.size_bytes());
+        if ((editor_ui_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
+            VkMappedMemoryRange range{};
+            range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+            range.memory = editor_ui_memory;
+            range.offset = slice_offset;
+            range.size = editor_ui_vertex_capacity;
+            if (vkFlushMappedMemoryRanges(device, 1, &range) != VK_SUCCESS) {
+                return VK_ERROR_DEVICE_LOST;
+            }
+        }
+    }
     const BufferSlot* vertex_buffer = nullptr;
     if (cube_vertex_buffer.valid() && cube_vertex_buffer.index < buffers.size()) {
         const BufferSlot& candidate = buffers[cube_vertex_buffer.index];
@@ -5493,15 +5852,16 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
-    if (!bootstrap_scene.update_transforms()) {
+    scene::Scene& active_scene_data = active_scene();
+    if (!active_scene_data.update_transforms()) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     const scene::TransformComponent* camera_transform =
-        bootstrap_scene.transform(bootstrap_camera_entity);
+        active_scene_data.transform(render_camera_entity);
     const scene::CameraComponent* camera_component =
-        bootstrap_scene.camera(bootstrap_camera_entity);
+        active_scene_data.camera(render_camera_entity);
     const scene::DirectionalLightComponent* light_component =
-        bootstrap_scene.directional_light(bootstrap_light_entity);
+        active_scene_data.directional_light(render_light_entity);
     if (camera_transform == nullptr || camera_component == nullptr || light_component == nullptr) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
@@ -6132,6 +6492,20 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                              0);
         }
         end_debug_label(command_buffer);
+        if (editor_ui_pipeline != VK_NULL_HANDLE && !editor_ui_vertices.empty()) {
+            begin_debug_label(command_buffer, "GameEngine.EditorUI");
+            const VkDeviceSize ui_offset = editor_ui_slice_stride * frame_index;
+            vkCmdBindPipeline(command_buffer,
+                              VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              editor_ui_pipeline);
+            vkCmdBindVertexBuffers(command_buffer, 0, 1, &editor_ui_buffer, &ui_offset);
+            vkCmdDraw(command_buffer,
+                      static_cast<std::uint32_t>(editor_ui_vertices.size()),
+                      1,
+                      0,
+                      0);
+            end_debug_label(command_buffer);
+        }
         vkCmdEndRenderPass(command_buffer);
         if (gpu_timestamps_enabled) {
             vkCmdWriteTimestamp(command_buffer,
@@ -6458,6 +6832,49 @@ void Renderer::shutdown() noexcept
 }
 
 } // namespace gameengine::rhi
+
+namespace gameengine::editor::renderer_bridge {
+
+core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
+                          gameengine::scene::Scene& scene) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    if (renderer.impl_->device == VK_NULL_HANDLE ||
+        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    renderer.impl_->resolve_all_timing();
+    return renderer.impl_->attach_editor_scene(scene);
+}
+
+core::Status detach_scene(const gameengine::rhi::Renderer& renderer) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    if (renderer.impl_->device == VK_NULL_HANDLE ||
+        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    renderer.impl_->resolve_all_timing();
+    return renderer.impl_->detach_editor_scene();
+}
+
+core::Status set_ui_vertices(const gameengine::rhi::Renderer& renderer,
+                             std::span<const gameengine::editor::UiVertex> vertices) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    if (renderer.impl_->device == VK_NULL_HANDLE) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    return renderer.impl_->set_editor_ui_vertices(vertices);
+}
+
+} // namespace gameengine::editor::renderer_bridge
 
 namespace gameengine::renderer::diagnostics {
 

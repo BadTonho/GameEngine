@@ -124,3 +124,23 @@ core::Status run_renderer_benchmark(const gameengine::rhi::Renderer&, bool) noex
 }
 
 } // namespace gameengine::renderer::diagnostics
+
+namespace gameengine::editor::renderer_bridge {
+
+core::Status attach_scene(const gameengine::rhi::Renderer&, gameengine::scene::Scene&) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status detach_scene(const gameengine::rhi::Renderer&) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status set_ui_vertices(const gameengine::rhi::Renderer&,
+                             std::span<const gameengine::editor::UiVertex>) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+} // namespace gameengine::editor::renderer_bridge

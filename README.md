@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 7E Forward+ consolidation in progress.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a procedural instanced cube, CPU frustum culling, opt-in GPU culling/indirect drawing, production Low/Medium/High Forward+ profiles and measured render passes. It is not ready to create a complete game yet.
+> **Status: early development — Phase 8A editor foundation in progress.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a procedural instanced cube, CPU frustum culling, opt-in GPU culling/indirect drawing, production Low/Medium/High Forward+ profiles, measured render passes and a separate minimal editor. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -44,6 +44,8 @@ Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7
 - opt-in Vulkan compute culling with atomic compaction, persistent GPU buffers and indexed indirect drawing, with CPU fallback;
 - an internal `--renderer-benchmark` mode comparing procedural Forward, Forward+, Clustered and Deferred prototypes over deterministic 1k/10k/100k instance and 1/32/256 light workloads;
 - internal quality selection through `--renderer-quality low|medium|high`, with Low fallback when compute/storage support is unavailable;
+- separate `gameengine_editor` target with strict `.geproject` v1 manifests, procedural `.gescene` creation/loading and deterministic save/load;
+- editor viewport bridge with hierarchy selection, transform inspector, keyboard editing, Ctrl+S and an internal Vulkan UI overlay, with a no-Vulkan `unavailable` smoke-test path;
 - deterministic 16x16 Forward+ tile-list preparation, procedural point-light data, a 1024² directional shadow map, a mipmapped 64² procedural cubemap and versioned Forward+/shadow/environment Slang artifacts;
 - versioned benchmark reports in `build/renderer-benchmarks/lighting_benchmark_v1.txt`, with explicit unavailable markers for unsupported RAM/VRAM metrics;
 - generation-checked handles and fence-based deferred resource destruction;
@@ -58,8 +60,8 @@ The following are intentionally outside the current procedural renderer scope:
 
 - prepared mesh/assets loading;
 - asset-file texture/material loading;
-- runtime shader file loading, automatic polling and editor integration;
-- prepared asset runtime integration, editor, Lua and a final ECS storage choice;
+- runtime shader file loading and automatic polling;
+- prepared asset runtime integration, asset browser, console, profiler, undo/redo, Lua and a final ECS storage choice;
 - VRAM policy and the hardware baseline for the final lighting decision;
 - physics, audio, networking or gameplay APIs;
 - a functional C ABI.
@@ -240,6 +242,21 @@ gameengine_runtime --smoke-test --renderer-quality medium
 gameengine_runtime --smoke-test --renderer-quality high
 gameengine_runtime --metrics --renderer-quality medium
 ```
+
+### Editor projects
+
+The editor is built separately from the runtime when `GAMEENGINE_BUILD_EDITOR=ON` (the
+development default). It creates a procedural project without models or textures:
+
+```text
+gameengine_editor --new-project <directory>
+gameengine_editor --project <directory>/gameengine.geproject
+gameengine_editor --project <directory>/gameengine.geproject --smoke-test
+```
+
+The manifest points only to a relative `.gescene` path. The editor currently exposes the
+procedural cube, camera and directional light; no external assets or file dialog are required.
+Builds configured with `-DGAMEENGINE_BUILD_EDITOR=OFF` exclude the editor target and its UI.
 
 ### Offline asset tools
 

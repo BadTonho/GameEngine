@@ -18,6 +18,23 @@ namespace gameengine::renderer::quality {
 enum class RendererQuality : core::u8;
 }
 
+namespace gameengine::scene {
+class Scene;
+}
+
+namespace gameengine::editor {
+struct UiVertex;
+}
+
+namespace gameengine::editor::renderer_bridge {
+[[nodiscard]] core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
+                                         gameengine::scene::Scene& scene) noexcept;
+[[nodiscard]] core::Status detach_scene(const gameengine::rhi::Renderer& renderer) noexcept;
+[[nodiscard]] core::Status set_ui_vertices(
+    const gameengine::rhi::Renderer& renderer,
+    std::span<const gameengine::editor::UiVertex> vertices) noexcept;
+}
+
 namespace gameengine::renderer::diagnostics {
 
 void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
@@ -165,6 +182,12 @@ public:
     struct Impl;
 
 private:
+    friend core::Status editor::renderer_bridge::attach_scene(const Renderer& renderer,
+                                                              scene::Scene& scene) noexcept;
+    friend core::Status editor::renderer_bridge::detach_scene(const Renderer& renderer) noexcept;
+    friend core::Status editor::renderer_bridge::set_ui_vertices(
+        const Renderer& renderer,
+        std::span<const editor::UiVertex> vertices) noexcept;
     friend void renderer::diagnostics::begin_metrics(const Renderer& renderer) noexcept;
     friend core::Status renderer::diagnostics::set_visibility_mode(
         const Renderer& renderer,

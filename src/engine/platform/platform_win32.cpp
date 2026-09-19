@@ -53,6 +53,10 @@ void push_pending_event(const input::Event& event) noexcept
         return KeyCode::up;
     case VK_DOWN:
         return KeyCode::down;
+    case VK_PRIOR:
+        return KeyCode::page_up;
+    case VK_NEXT:
+        return KeyCode::page_down;
     case VK_SHIFT:
     case VK_LSHIFT:
     case VK_RSHIFT:
