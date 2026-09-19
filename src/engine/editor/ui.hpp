@@ -23,6 +23,14 @@ struct UiLayout final {
     core::f32 padding = 12.0F;
 };
 
+struct AnimationUiState final {
+    bool available = false;
+    bool playing = false;
+    std::string_view clip_name{};
+    core::f32 time_seconds = 0.0F;
+    core::f32 duration_seconds = 0.0F;
+};
+
 enum class EditorPanel : core::u8 {
     assets = 0,
     console,
@@ -39,6 +47,14 @@ public:
                const AssetCatalog& catalog,
                const ConsoleBuffer& console,
                const EditorProfiler& profiler,
+               core::u32 width,
+               core::u32 height,
+               std::vector<UiVertex>& vertices);
+    void build(const ProjectSession& project,
+               const AssetCatalog& catalog,
+               const ConsoleBuffer& console,
+               const EditorProfiler& profiler,
+               const AnimationUiState& animation,
                core::u32 width,
                core::u32 height,
                std::vector<UiVertex>& vertices);
@@ -73,6 +89,7 @@ private:
                         const AssetCatalog* catalog,
                         const ConsoleBuffer* console,
                         const EditorProfiler* profiler,
+                        const AnimationUiState* animation,
                         core::u32 width,
                         core::u32 height,
                         std::vector<UiVertex>& vertices);

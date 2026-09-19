@@ -361,7 +361,8 @@ Each module must have an API, build target, tests, documentation, measured cost 
 
 ### Suggested order
 
-- [ ] Animation.
+- [x] Animation transform/keyframe foundation with an optional C++ target, deterministic procedural
+  clip, runtime/editor integration, fixed-step tests and measured synthetic workloads.
 - [ ] Audio.
 - [ ] Physics integration.
 - [ ] Optional Lua gameplay scripting.
@@ -372,6 +373,19 @@ Each module must have an API, build target, tests, documentation, measured cost 
 ### Completion criteria
 
 A project can select the required modules in its build and packaging without loading unused optional modules, editor code or importers.
+
+### Phase 9A validation status
+
+- [x] Add `gameengine_animation` behind `GAMEENGINE_BUILD_ANIMATION` without changing the RHI or
+  C ABI.
+- [x] Add validated TRS clips, shortest-path quaternion interpolation, looping and fixed-step
+  updates without per-frame allocations.
+- [x] Integrate the procedural clip into runtime and editor, pausing it before transform edits.
+- [x] Add unit tests, optional 1k/10k/100k benchmarks and documentation with an explicit removal
+  path.
+
+Audio, physics, Lua, navigation, networking, video, skeletons, skinning and serialized animation
+assets remain later Phase 9 modules.
 
 ## Phase 10 — Continuous quality, security and performance
 

@@ -2369,33 +2369,16 @@ core::Status Renderer::Impl::create_bootstrap_cube_resources() noexcept
 
 core::Status Renderer::Impl::create_bootstrap_scene() noexcept
 {
-    bootstrap_scene.clear();
-    bootstrap_scene.reserve(3U);
-    bootstrap_cube_entity = bootstrap_scene.create_entity();
-    bootstrap_camera_entity = bootstrap_scene.create_entity();
-    bootstrap_light_entity = bootstrap_scene.create_entity();
-    if (!bootstrap_cube_entity.valid() || !bootstrap_camera_entity.valid() ||
-        !bootstrap_light_entity.valid()) {
-        return core::Status{core::ErrorCode::allocation_failed};
+    const core::Status status = scene::create_bootstrap_scene(bootstrap_scene);
+    if (!status) {
+        return status;
     }
-
-    const math::Quaternion yaw = math::quaternion_from_axis_angle({0.0F, 1.0F, 0.0F}, 0.65F);
-    const math::Quaternion pitch =
-        math::quaternion_from_axis_angle({1.0F, 0.0F, 0.0F}, -0.4F);
-    if (!bootstrap_scene.add_transform(bootstrap_cube_entity,
-                                       {.local_rotation = math::normalize(math::multiply(yaw, pitch))}) ||
-        !bootstrap_scene.add_mesh_renderer(
-            bootstrap_cube_entity,
-            {scene::bootstrap_mesh_id, scene::bootstrap_material_id}) ||
-        !bootstrap_scene.add_transform(
-            bootstrap_camera_entity,
-            {.local_position = {2.5F, 2.0F, 4.0F}}) ||
-        !bootstrap_scene.add_camera(bootstrap_camera_entity, {.active = true}) ||
-        !bootstrap_scene.add_transform(bootstrap_light_entity) ||
-        !bootstrap_scene.add_directional_light(bootstrap_light_entity) ||
-        !bootstrap_scene.update_transforms()) {
+    if (bootstrap_scene.entities().size() < 3U) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
+    bootstrap_cube_entity = bootstrap_scene.entities()[0];
+    bootstrap_camera_entity = bootstrap_scene.entities()[1];
+    bootstrap_light_entity = bootstrap_scene.entities()[2];
     render_cube_entity = bootstrap_cube_entity;
     render_camera_entity = bootstrap_camera_entity;
     render_light_entity = bootstrap_light_entity;
@@ -6833,7 +6816,7 @@ void Renderer::shutdown() noexcept
 
 } // namespace gameengine::rhi
 
-namespace gameengine::editor::renderer_bridge {
+namespace gameengine::renderer::scene_bridge {
 
 core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
                           gameengine::scene::Scene& scene) noexcept
@@ -6860,6 +6843,21 @@ core::Status detach_scene(const gameengine::rhi::Renderer& renderer) noexcept
     }
     renderer.impl_->resolve_all_timing();
     return renderer.impl_->detach_editor_scene();
+}
+
+} // namespace gameengine::renderer::scene_bridge
+
+namespace gameengine::editor::renderer_bridge {
+
+core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
+                          gameengine::scene::Scene& scene) noexcept
+{
+    return gameengine::renderer::scene_bridge::attach_scene(renderer, scene);
+}
+
+core::Status detach_scene(const gameengine::rhi::Renderer& renderer) noexcept
+{
+    return gameengine::renderer::scene_bridge::detach_scene(renderer);
 }
 
 core::Status set_ui_vertices(const gameengine::rhi::Renderer& renderer,

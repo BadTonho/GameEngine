@@ -60,5 +60,7 @@ an editor-only bridge. The renderer reads the selected scene's cube transform, a
 directional light without changing the public RHI or C ABI. Project manifests validate the scene
 path before resolving it, and a failed load does not replace the previous valid scene.
 
-Prepared meshes, real textures, runtime asset streaming, animation, camera navigation, asset
-browser and a final ECS storage choice remain future work.
+Prepared meshes, real textures, runtime asset streaming, serialized animation assets, camera
+navigation, asset browser and a final ECS storage choice remain future work. The optional
+`gameengine_animation` module can animate the procedural cube at runtime/editor time, but its
+clips are code-defined and are not part of `.gescene` yet.

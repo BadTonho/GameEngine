@@ -225,5 +225,12 @@ int main()
         pool.size() != 1U || pool.remove(pool_a)) {
         return 13;
     }
+    scene::Scene bootstrap;
+    if (!scene::create_bootstrap_scene(bootstrap).ok() || bootstrap.entity_count() != 3U ||
+        !bootstrap.active_camera().valid() ||
+        bootstrap.mesh_renderer(bootstrap.entities().front()) == nullptr ||
+        !bootstrap.validate().ok()) {
+        return 14;
+    }
     return 0;
 }

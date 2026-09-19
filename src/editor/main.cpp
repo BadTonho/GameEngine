@@ -1,5 +1,9 @@
 #include "engine/core/core.hpp"
+#include "engine/core/clock.hpp"
 #include "engine/core/diagnostics.hpp"
+#if GAMEENGINE_BUILD_ANIMATION
+#include "engine/animation/animation.hpp"
+#endif
 #include "engine/editor/asset_catalog.hpp"
 #include "engine/editor/console.hpp"
 #include "engine/editor/profiler.hpp"
@@ -159,6 +163,29 @@ int main(int argc, char** argv)
         core.shutdown();
         return 6;
     }
+#if GAMEENGINE_BUILD_ANIMATION
+    gameengine::animation::AnimationSystem animation_system;
+    gameengine::scene::Entity animation_entity{};
+    for (const gameengine::scene::Entity entity : project.scene().entities()) {
+        if (project.scene().mesh_renderer(entity) != nullptr) {
+            animation_entity = entity;
+            break;
+        }
+    }
+    const gameengine::scene::TransformComponent* animation_transform =
+        project.scene().transform(animation_entity);
+    if (!animation_entity.valid() || animation_transform == nullptr ||
+        !animation_system.reserve_players(1U) ||
+        !animation_system.add_procedural_player(animation_entity, *animation_transform)) {
+        gameengine::editor::record_console_message(
+            console, gameengine::core::LogLevel::error, "ANIMATION INITIALIZE FAILED");
+        static_cast<void>(gameengine::editor::renderer_bridge::detach_scene(renderer));
+        renderer.shutdown();
+        platform.shutdown();
+        core.shutdown();
+        return 6;
+    }
+#endif
     profiler.set_startup_nanoseconds(static_cast<gameengine::core::u64>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - editor_start)
@@ -166,6 +193,8 @@ int main(int argc, char** argv)
     gameengine::editor::UiState ui;
     std::vector<gameengine::editor::UiVertex> ui_vertices;
     ui_vertices.reserve(16'384);
+    gameengine::core::Clock clock;
+    gameengine::editor::AnimationUiState animation_ui_state{};
     bool quality_fallback_reported = false;
     const auto update_ui = [&]() noexcept -> gameengine::core::Status {
         const auto size = platform.window_size();
@@ -182,7 +211,27 @@ int main(int argc, char** argv)
                 quality_fallback_reported = true;
             }
         }
+#if GAMEENGINE_BUILD_ANIMATION
+        animation_ui_state = {};
+        if (const auto* player = animation_system.player(animation_entity);
+            player != nullptr && !player->clip.name.empty()) {
+            animation_ui_state.available = true;
+            animation_ui_state.playing = player->playing;
+            animation_ui_state.clip_name = player->clip.name;
+            animation_ui_state.time_seconds = player->time_seconds;
+            animation_ui_state.duration_seconds = player->clip.duration_seconds;
+        }
+        ui.build(project,
+                 catalog,
+                 console,
+                 profiler,
+                 animation_ui_state,
+                 size.width,
+                 size.height,
+                 ui_vertices);
+#else
         ui.build(project, catalog, console, profiler, size.width, size.height, ui_vertices);
+#endif
         const gameengine::core::Status status =
             gameengine::editor::renderer_bridge::set_ui_vertices(renderer, ui_vertices);
         if (!status) {
@@ -199,6 +248,13 @@ int main(int argc, char** argv)
         return 7;
     }
     if (arguments.smoke_test) {
+#if GAMEENGINE_BUILD_ANIMATION
+        const gameengine::core::Status animation_status = animation_system.update(project.scene(), 0.0F);
+        if (!animation_status) {
+            gameengine::editor::record_console_message(
+                console, gameengine::core::LogLevel::error, "ANIMATION UPDATE FAILED");
+        }
+#endif
         const gameengine::core::Status frame_status = renderer.render_frame(platform);
         if (!frame_status) {
             gameengine::editor::record_console_status(
@@ -242,6 +298,9 @@ int main(int argc, char** argv)
         const bool save_down = input.is_key_down(gameengine::input::KeyCode::control) &&
                                input.is_key_down(gameengine::input::KeyCode::s);
         if (save_down && !previous_save_down) {
+#if GAMEENGINE_BUILD_ANIMATION
+            static_cast<void>(animation_system.pause(animation_entity));
+#endif
             const gameengine::core::Status save_status = project.save();
             gameengine::editor::record_console_status(
                 console,
@@ -254,7 +313,20 @@ int main(int argc, char** argv)
         if ((frame_counter++ % 60U) == 0U) {
             profiler.sample_memory();
         }
-        const gameengine::core::f32 delta = 0.02F;
+        const gameengine::core::f32 delta = static_cast<gameengine::core::f32>(clock.tick());
+        bool transform_edit = false;
+        transform_edit = transform_edit || input.is_key_down(gameengine::input::KeyCode::left);
+        transform_edit = transform_edit || input.is_key_down(gameengine::input::KeyCode::right);
+        transform_edit = transform_edit || input.is_key_down(gameengine::input::KeyCode::up);
+        transform_edit = transform_edit || input.is_key_down(gameengine::input::KeyCode::down);
+        transform_edit = transform_edit || input.is_key_down(gameengine::input::KeyCode::page_up);
+        transform_edit = transform_edit || input.is_key_down(gameengine::input::KeyCode::page_down);
+        transform_edit = transform_edit || input.is_key_down(gameengine::input::KeyCode::r);
+#if GAMEENGINE_BUILD_ANIMATION
+        if (transform_edit) {
+            static_cast<void>(animation_system.pause(animation_entity));
+        }
+#endif
         if (input.is_key_down(gameengine::input::KeyCode::left)) {
             static_cast<void>(project.move_selected(-delta, 0.0F, 0.0F));
         }
@@ -276,6 +348,15 @@ int main(int argc, char** argv)
         if (input.is_key_down(gameengine::input::KeyCode::r)) {
             static_cast<void>(project.reset_selected());
         }
+#if GAMEENGINE_BUILD_ANIMATION
+        const gameengine::core::Status animation_status = animation_system.update(
+            project.scene(), delta);
+        if (!animation_status) {
+            gameengine::editor::record_console_message(
+                console, gameengine::core::LogLevel::error, "ANIMATION UPDATE FAILED");
+            platform.request_close();
+        }
+#endif
         if (!update_ui()) {
             platform.request_close();
             continue;

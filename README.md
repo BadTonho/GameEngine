@@ -48,6 +48,8 @@ Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7
 - editor viewport bridge with hierarchy selection, transform inspector, keyboard editing, Ctrl+S and an internal Vulkan UI overlay, with a no-Vulkan `unavailable` smoke-test path;
 - read-only editor asset catalog for `.gemesh`, `.getex`, `.gemat` and `.gescene`, with deterministic project-relative paths, validation and metadata inspection;
 - fixed-capacity editor console with stderr mirroring and a render/session profiler panel using CPU/GPU timing fallbacks and process-memory availability markers;
+- optional `gameengine_animation` module with deterministic TRS keyframes, quaternion interpolation,
+  runtime/editor integration, fixed-step tests and 1k/10k/100k transform benchmarks;
 - deterministic 16x16 Forward+ tile-list preparation, procedural point-light data, a 1024² directional shadow map, a mipmapped 64² procedural cubemap and versioned Forward+/shadow/environment Slang artifacts;
 - versioned benchmark reports in `build/renderer-benchmarks/lighting_benchmark_v1.txt`, with explicit unavailable markers for unsupported RAM/VRAM metrics;
 - generation-checked handles and fence-based deferred resource destruction;
@@ -66,6 +68,7 @@ The following are intentionally outside the current procedural renderer scope:
 - prepared asset runtime integration, asset editing/import, undo/redo, Lua and a final ECS storage choice;
 - VRAM policy and the hardware baseline for the final lighting decision;
 - physics, audio, networking or gameplay APIs;
+- skeleton/skinning animation, animation assets, timelines and keyframe authoring;
 - a functional C ABI.
 
 ## Technology direction
@@ -237,6 +240,12 @@ Forward+ tile data from 256 procedural point lights. High adds the persistent di
 pass and a procedural mipmapped cubemap, with an explicit fallback when the device cannot provide
 the required resources. These profiles
 are compatible with `--smoke-test`, `--metrics`, `--renderer-benchmark` and `--gpu-culling`.
+
+Transform animation is optional and enabled by default in development presets. Disable it with
+`-DGAMEENGINE_BUILD_ANIMATION=OFF`; the runtime and editor then keep the procedural cube static
+and do not link the animation module. When enabled, the runtime and editor start the deterministic
+two-second procedural cube clip automatically. The editor pauses the clip before keyboard transform
+edits and saves only the current `.gescene` pose; clip data is not serialized yet.
 
 ```text
 gameengine_runtime --smoke-test --renderer-quality low

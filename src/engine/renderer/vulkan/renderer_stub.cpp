@@ -125,9 +125,10 @@ core::Status run_renderer_benchmark(const gameengine::rhi::Renderer&, bool) noex
 
 } // namespace gameengine::renderer::diagnostics
 
-namespace gameengine::editor::renderer_bridge {
+namespace gameengine::renderer::scene_bridge {
 
-core::Status attach_scene(const gameengine::rhi::Renderer&, gameengine::scene::Scene&) noexcept
+core::Status attach_scene(const gameengine::rhi::Renderer&,
+                          gameengine::scene::Scene&) noexcept
 {
     return core::Status{core::ErrorCode::unsupported_platform};
 }
@@ -135,6 +136,21 @@ core::Status attach_scene(const gameengine::rhi::Renderer&, gameengine::scene::S
 core::Status detach_scene(const gameengine::rhi::Renderer&) noexcept
 {
     return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+} // namespace gameengine::renderer::scene_bridge
+
+namespace gameengine::editor::renderer_bridge {
+
+core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
+                          gameengine::scene::Scene& scene) noexcept
+{
+    return gameengine::renderer::scene_bridge::attach_scene(renderer, scene);
+}
+
+core::Status detach_scene(const gameengine::rhi::Renderer& renderer) noexcept
+{
+    return gameengine::renderer::scene_bridge::detach_scene(renderer);
 }
 
 core::Status set_ui_vertices(const gameengine::rhi::Renderer&,

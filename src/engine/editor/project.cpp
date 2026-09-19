@@ -399,26 +399,7 @@ private:
 
 [[nodiscard]] core::Status populate_bootstrap_scene(scene::Scene& scene) noexcept
 {
-    scene.clear();
-    scene.reserve(3U);
-    const scene::Entity cube = scene.create_entity();
-    const scene::Entity camera = scene.create_entity();
-    const scene::Entity light = scene.create_entity();
-    if (!cube.valid() || !camera.valid() || !light.valid()) {
-        return core::Status{core::ErrorCode::allocation_failed};
-    }
-    const math::Quaternion yaw = math::quaternion_from_axis_angle({0.0F, 1.0F, 0.0F}, 0.65F);
-    const math::Quaternion pitch =
-        math::quaternion_from_axis_angle({1.0F, 0.0F, 0.0F}, -0.4F);
-    if (!scene.add_transform(cube,
-                             {.local_rotation = math::normalize(math::multiply(yaw, pitch))}) ||
-        !scene.add_mesh_renderer(cube, {scene::bootstrap_mesh_id, scene::bootstrap_material_id}) ||
-        !scene.add_transform(camera, {.local_position = {2.5F, 2.0F, 4.0F}}) ||
-        !scene.add_camera(camera, {.active = true}) || !scene.add_transform(light) ||
-        !scene.add_directional_light(light) || !scene.update_transforms()) {
-        return invalid();
-    }
-    return core::Status{};
+    return scene::create_bootstrap_scene(scene);
 }
 
 } // namespace

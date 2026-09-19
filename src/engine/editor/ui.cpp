@@ -104,7 +104,7 @@ void UiState::build(const ProjectSession& project,
                     core::u32 height,
                     std::vector<UiVertex>& vertices)
 {
-    build_internal(project, nullptr, nullptr, nullptr, width, height, vertices);
+    build_internal(project, nullptr, nullptr, nullptr, nullptr, width, height, vertices);
 }
 
 void UiState::build(const ProjectSession& project,
@@ -115,13 +115,26 @@ void UiState::build(const ProjectSession& project,
                     core::u32 height,
                     std::vector<UiVertex>& vertices)
 {
-    build_internal(project, &catalog, &console, &profiler, width, height, vertices);
+    build_internal(project, &catalog, &console, &profiler, nullptr, width, height, vertices);
+}
+
+void UiState::build(const ProjectSession& project,
+                    const AssetCatalog& catalog,
+                    const ConsoleBuffer& console,
+                    const EditorProfiler& profiler,
+                    const AnimationUiState& animation,
+                    core::u32 width,
+                    core::u32 height,
+                    std::vector<UiVertex>& vertices)
+{
+    build_internal(project, &catalog, &console, &profiler, &animation, width, height, vertices);
 }
 
 void UiState::build_internal(const ProjectSession& project,
                              const AssetCatalog* catalog,
                              const ConsoleBuffer* console,
                              const EditorProfiler* profiler,
+                             const AnimationUiState* animation,
                              core::u32 width,
                              core::u32 height,
                              std::vector<UiVertex>& vertices)
@@ -223,6 +236,34 @@ void UiState::build_internal(const ProjectSession& project,
         line("X", transform->local_position.x, 64.0F);
         line("Y", transform->local_position.y, 86.0F);
         line("Z", transform->local_position.z, 108.0F);
+    }
+    if (animation != nullptr && animation->available) {
+        add_text(vertices,
+                 "ANIMATION",
+                 right_panel + layout_.padding,
+                 238.0F,
+                 1.05F,
+                 width,
+                 height,
+                 {0.75F, 0.86F, 1.0F, 1.0F});
+        add_text(vertices,
+                 animation->clip_name,
+                 right_panel + layout_.padding,
+                 258.0F,
+                 0.82F,
+                 width,
+                 height,
+                 {0.86F, 0.9F, 1.0F, 1.0F});
+        add_text(vertices,
+                 std::string(animation->playing ? "PLAYING " : "PAUSED ") +
+                     std::to_string(static_cast<int>(animation->time_seconds * 1000.0F)),
+                 right_panel + layout_.padding,
+                 276.0F,
+                 0.75F,
+                 width,
+                 height,
+                 animation->playing ? std::array<core::f32, 4>{0.35F, 0.9F, 0.55F, 1.0F}
+                                    : std::array<core::f32, 4>{1.0F, 0.75F, 0.35F, 1.0F});
     }
     if (catalog != nullptr && catalog->selected() != nullptr) {
         const AssetRecord& asset = *catalog->selected();

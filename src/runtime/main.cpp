@@ -2,6 +2,11 @@
 #include "engine/core/clock.hpp"
 #include "engine/core/diagnostics.hpp"
 #include "engine/platform/platform.hpp"
+#if GAMEENGINE_BUILD_ANIMATION
+#include "engine/animation/animation.hpp"
+#include "engine/renderer/scene_bridge.hpp"
+#include "engine/scene/scene.hpp"
+#endif
 #include "engine/renderer/renderer_metrics.hpp"
 #include "engine/renderer/renderer_quality.hpp"
 #include "engine/rhi/rhi.hpp"
@@ -116,6 +121,32 @@ int main(int argc, char** argv)
             return 6;
         }
     }
+#if GAMEENGINE_BUILD_ANIMATION
+    gameengine::scene::Scene animation_scene;
+    gameengine::animation::AnimationSystem animation_system;
+    if (!gameengine::scene::create_bootstrap_scene(animation_scene) ||
+        animation_scene.entities().empty()) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              "animation scene creation failed");
+        renderer.shutdown();
+        platform.shutdown();
+        core.shutdown();
+        return 6;
+    }
+    const gameengine::scene::Entity animation_entity = animation_scene.entities().front();
+    const gameengine::scene::TransformComponent* animation_transform =
+        animation_scene.transform(animation_entity);
+    if (animation_transform == nullptr || !animation_system.reserve_players(1U) ||
+        !animation_system.add_procedural_player(animation_entity, *animation_transform) ||
+        !gameengine::renderer::scene_bridge::attach_scene(renderer, animation_scene)) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              "animation scene attachment failed");
+        renderer.shutdown();
+        platform.shutdown();
+        core.shutdown();
+        return 6;
+    }
+#endif
     if (renderer_benchmark) {
         const gameengine::core::Status benchmark_status =
             gameengine::renderer::diagnostics::run_renderer_benchmark(renderer, gpu_culling);
@@ -123,11 +154,17 @@ int main(int argc, char** argv)
             benchmark_status.code != gameengine::core::ErrorCode::unsupported_platform) {
             gameengine::core::log(gameengine::core::LogLevel::error,
                                   gameengine::core::to_string(benchmark_status.code));
+#if GAMEENGINE_BUILD_ANIMATION
+            static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#endif
             renderer.shutdown();
             platform.shutdown();
             core.shutdown();
             return 6;
         }
+#if GAMEENGINE_BUILD_ANIMATION
+        static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#endif
         renderer.shutdown();
         platform.shutdown();
         core.shutdown();
@@ -179,7 +216,21 @@ int main(int argc, char** argv)
     do {
         platform.poll_events();
         const gameengine::core::f64 delta_seconds = clock.tick();
+#if GAMEENGINE_BUILD_ANIMATION && GAMEENGINE_RENDERER_HAS_VULKAN
+        const gameengine::core::Status animation_status = animation_system.update(
+            animation_scene, static_cast<gameengine::core::f32>(delta_seconds));
+        if (!animation_status) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  gameengine::core::to_string(animation_status.code));
+            static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+#else
         (void)delta_seconds;
+#endif
 
 #if GAMEENGINE_RENDERER_HAS_VULKAN
         if (metrics_test && metrics_frame_count == metrics_warmup_frames) {
@@ -233,6 +284,9 @@ int main(int argc, char** argv)
     } while (!platform.should_close());
 
 #if GAMEENGINE_RENDERER_HAS_VULKAN
+#if GAMEENGINE_BUILD_ANIMATION
+    static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#endif
     renderer.shutdown();
 #endif
     platform.shutdown();

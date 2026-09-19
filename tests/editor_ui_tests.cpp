@@ -41,17 +41,27 @@ int main()
         std::filesystem::remove_all(directory, error);
         return 3;
     }
+    const AnimationUiState animation{
+        true, true, "procedural_cube", 0.5F, 2.0F};
+    ui.build(project, AssetCatalog{}, ConsoleBuffer{}, EditorProfiler{}, animation, 1280U, 720U,
+             first);
+    ui.build(project, AssetCatalog{}, ConsoleBuffer{}, EditorProfiler{}, animation, 1280U, 720U,
+             second);
+    if (first.empty() || !equal_vertices(first, second)) {
+        std::filesystem::remove_all(directory, error);
+        return 4;
+    }
     const auto selected_before = project.selected_entity();
     if (!ui.click(project, 8.0F, 52.0F, 1280U, 720U).ok() ||
         project.selected_entity() != ui.entity_order().front() ||
         ui.click(project, -1.0F, 52.0F, 1280U, 720U).code !=
             gameengine::core::ErrorCode::invalid_argument) {
         std::filesystem::remove_all(directory, error);
-        return 4;
+        return 5;
     }
     if (!project.select(selected_before)) {
         std::filesystem::remove_all(directory, error);
-        return 5;
+        return 6;
     }
     std::filesystem::remove_all(directory, error);
     return 0;

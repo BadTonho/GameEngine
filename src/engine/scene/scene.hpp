@@ -126,4 +126,6 @@ private:
     Storage* storage_ = nullptr;
 };
 
+[[nodiscard]] core::Status create_bootstrap_scene(Scene& scene) noexcept;
+
 } // namespace gameengine::scene

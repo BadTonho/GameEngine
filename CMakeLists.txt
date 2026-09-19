@@ -6,6 +6,7 @@ option(GAMEENGINE_BUILD_TESTS "Build the GameEngine tests" ON)
 option(GAMEENGINE_BUILD_VULKAN "Build the Vulkan renderer" ON)
 option(GAMEENGINE_BUILD_BENCHMARKS "Build optional scene benchmarks" OFF)
 option(GAMEENGINE_BUILD_EDITOR "Build the separate GameEngine editor" ON)
+option(GAMEENGINE_BUILD_ANIMATION "Build the optional transform animation module" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -94,6 +95,31 @@ if(GAMEENGINE_BUILD_BENCHMARKS)
     gameengine_configure_target(gameengine_scene_benchmark)
 endif()
 
+if(GAMEENGINE_BUILD_ANIMATION)
+    add_library(gameengine_animation STATIC
+        src/engine/animation/animation.cpp
+        src/engine/animation/animation.hpp
+    )
+    target_link_libraries(gameengine_animation PUBLIC gameengine_scene)
+    target_include_directories(gameengine_animation
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    )
+    target_compile_definitions(gameengine_animation PUBLIC GAMEENGINE_BUILD_ANIMATION=1)
+    gameengine_configure_target(gameengine_animation)
+
+    if(GAMEENGINE_BUILD_BENCHMARKS)
+        add_executable(gameengine_animation_benchmark
+            benchmarks/animation_benchmark.cpp
+        )
+        target_link_libraries(gameengine_animation_benchmark PRIVATE
+            gameengine_animation
+            gameengine_scene
+        )
+        gameengine_configure_target(gameengine_animation_benchmark)
+    endif()
+endif()
+
 add_library(gameengine_platform STATIC
     src/engine/platform/platform.hpp
 )
@@ -137,6 +163,7 @@ add_library(gameengine_renderer STATIC
     src/engine/renderer/forward_plus.hpp
     src/engine/renderer/procedural_instances.cpp
     src/engine/renderer/procedural_instances.hpp
+    src/engine/renderer/scene_bridge.hpp
     src/engine/renderer/render_graph/render_graph.cpp
     src/engine/renderer/render_graph/render_graph.hpp
     src/engine/renderer/renderer_metrics.hpp
@@ -199,6 +226,10 @@ add_executable(gameengine_runtime
 )
 
 target_link_libraries(gameengine_runtime PRIVATE gameengine_core gameengine_platform gameengine_renderer)
+if(GAMEENGINE_BUILD_ANIMATION)
+    target_link_libraries(gameengine_runtime PRIVATE gameengine_animation)
+    target_compile_definitions(gameengine_runtime PRIVATE GAMEENGINE_BUILD_ANIMATION=1)
+endif()
 gameengine_configure_target(gameengine_runtime)
 
 if(GAMEENGINE_BUILD_EDITOR)
@@ -234,6 +265,10 @@ if(GAMEENGINE_BUILD_EDITOR)
         gameengine_renderer
         gameengine_editor_core
     )
+    if(GAMEENGINE_BUILD_ANIMATION)
+        target_link_libraries(gameengine_editor PRIVATE gameengine_animation)
+        target_compile_definitions(gameengine_editor PRIVATE GAMEENGINE_BUILD_ANIMATION=1)
+    endif()
     gameengine_configure_target(gameengine_editor)
 endif()
 
@@ -333,6 +368,22 @@ if(GAMEENGINE_BUILD_TESTS)
     )
     gameengine_configure_target(gameengine_scene_tests)
     add_test(NAME gameengine_scene COMMAND gameengine_scene_tests)
+
+    if(GAMEENGINE_BUILD_ANIMATION)
+        add_executable(gameengine_animation_tests
+            tests/animation_tests.cpp
+        )
+        target_link_libraries(gameengine_animation_tests PRIVATE
+            gameengine_animation
+            gameengine_scene
+            gameengine_core
+        )
+        target_include_directories(gameengine_animation_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        gameengine_configure_target(gameengine_animation_tests)
+        add_test(NAME gameengine_animation COMMAND gameengine_animation_tests)
+    endif()
 
     add_executable(gameengine_render_graph_tests
         tests/render_graph_tests.cpp

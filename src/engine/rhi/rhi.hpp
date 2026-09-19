@@ -22,6 +22,12 @@ namespace gameengine::scene {
 class Scene;
 }
 
+namespace gameengine::renderer::scene_bridge {
+[[nodiscard]] core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
+                                         gameengine::scene::Scene& scene) noexcept;
+[[nodiscard]] core::Status detach_scene(const gameengine::rhi::Renderer& renderer) noexcept;
+}
+
 namespace gameengine::editor {
 struct UiVertex;
 }
@@ -198,6 +204,9 @@ private:
     friend core::Status editor::renderer_bridge::read_metrics(
         const Renderer& renderer,
         renderer::metrics::FrameTimingReport& report) noexcept;
+    friend core::Status renderer::scene_bridge::attach_scene(const Renderer& renderer,
+                                                             scene::Scene& scene) noexcept;
+    friend core::Status renderer::scene_bridge::detach_scene(const Renderer& renderer) noexcept;
     friend void renderer::diagnostics::begin_metrics(const Renderer& renderer) noexcept;
     friend core::Status renderer::diagnostics::set_visibility_mode(
         const Renderer& renderer,

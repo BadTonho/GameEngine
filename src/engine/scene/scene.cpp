@@ -441,4 +441,28 @@ core::u32 Scene::next_generation(core::u32 generation) const noexcept
     return generation == 0xffffffffU ? 1U : generation + 1U;
 }
 
+core::Status create_bootstrap_scene(Scene& scene) noexcept
+{
+    scene.clear();
+    scene.reserve(3U);
+    const Entity cube = scene.create_entity();
+    const Entity camera = scene.create_entity();
+    const Entity light = scene.create_entity();
+    if (!cube.valid() || !camera.valid() || !light.valid()) {
+        return core::Status{core::ErrorCode::allocation_failed};
+    }
+    const math::Quaternion yaw = math::quaternion_from_axis_angle({0.0F, 1.0F, 0.0F}, 0.65F);
+    const math::Quaternion pitch =
+        math::quaternion_from_axis_angle({1.0F, 0.0F, 0.0F}, -0.4F);
+    if (!scene.add_transform(cube,
+                             {.local_rotation = math::normalize(math::multiply(yaw, pitch))}) ||
+        !scene.add_mesh_renderer(cube, {bootstrap_mesh_id, bootstrap_material_id}) ||
+        !scene.add_transform(camera, {.local_position = {2.5F, 2.0F, 4.0F}}) ||
+        !scene.add_camera(camera, {.active = true}) || !scene.add_transform(light) ||
+        !scene.add_directional_light(light) || !scene.update_transforms()) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+    return core::Status{};
+}
+
 } // namespace gameengine::scene
