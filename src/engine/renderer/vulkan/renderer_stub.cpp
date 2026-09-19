@@ -98,6 +98,13 @@ core::Status set_visibility_mode(const gameengine::rhi::Renderer&,
     return core::Status{core::ErrorCode::unsupported_platform};
 }
 
+core::Status set_renderer_quality(
+    const gameengine::rhi::Renderer&,
+    quality::RendererQuality) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
 core::Status set_procedural_workload(const gameengine::rhi::Renderer&,
                                      core::u32) noexcept
 {

@@ -20,9 +20,12 @@ Two frames in flight are used. A frame waits for its fence, acquires a swapchain
 
 The integration test resizes the X11 window, pumps the resulting configure event and renders again through the recreated swapchain. The bootstrap scene now renders a procedural indexed cube with a static camera, procedural material and a recreated depth attachment.
 
-The renderer builds a small internal render graph for each renderer instance. In the default CPU
-mode, the graph contains the imported swapchain color and depth resources and one deterministic
-`forward_opaque` pass. In opt-in GPU mode, it adds storage, vertex and indirect resources and the
+The renderer builds a small internal render graph for each renderer instance. Low contains the
+imported swapchain color/depth resources and one deterministic `forward_opaque` pass. Medium adds
+persistent procedural point-light data and a `light_list_build` compute pass over 16x16 tiles.
+High adds a persistent 1024² directional shadow pass and a generated 64² mipmapped cubemap, and
+degrades to Medium when those resources are unavailable. In
+opt-in GPU mode, it adds storage, vertex and indirect resources and the
 dependency `gpu_cull → forward_opaque`. The frame flow is:
 
 ```text
@@ -47,7 +50,10 @@ The bootstrap cube uses precompiled SPIR-V generated from `assets/shaders/bootst
 
 The generator records the source SHA-256, Slang version, target/profile, stage, entry point, build configuration and required capabilities in a canonical manifest. The SHA-256 of that manifest is the shader ID. Offline artifacts are cached in `build/shader-cache/Debug/<shader-id>/` or `build/shader-cache/Release/<shader-id>/`; cache hits validate the existing SPIR-V and reflection before reusing them. The generated header remains the runtime fallback for clean clones and contains the artifact table consumed by Vulkan.
 
-The bootstrap shaders have explicit `vertex_main`, `fragment_main` and `compute_main` entry points.
+The bootstrap shaders have explicit `vertex_main`, `fragment_main`, `compute_main`,
+`forward_plus_vertex_main`, `forward_plus_fragment_main`,
+`forward_plus_high_vertex_main`, `forward_plus_high_fragment_main`,
+`forward_plus_light_list_main`, `shadow_vertex_main` and `environment_compute_main` entry points.
 The compute shader uses a fixed `[numthreads(64, 1, 1)]` group, storage bindings for source,
 visible and indirect records, and 112 bytes of frustum/count push constants. Vertex position,
 normal and UV use Vulkan locations 0, 1 and 2; instance model columns use locations 3, 4, 5 and 6
@@ -93,9 +99,12 @@ The command waits for the device, resolves pending queries and prints one indepe
 average/minimum/maximum CPU and GPU time for `forward_opaque`. With `--gpu-culling`, the report
 also includes `gpu_cull`, visible counts read after the frame fence, reserved source/visible/indirect
 buffer sizes and the CPU fallback state. The diagnostic bridge is internal; the public RHI and C
-ABI do not expose the report. The current baseline remains CPU visibility and one forward pass;
-Forward+, clustered and deferred lighting, shadows, IBL and quality fallbacks require later
-measurements before becoming architecture commitments.
+ABI do not expose the report. Production quality is selected internally with
+`--renderer-quality low|medium|high` and defaults to Medium. Low is the mandatory directional
+light fallback; Medium is the Forward+ profile with deterministic 16x16 tile preparation.
+Clustered and Deferred remain isolated to the benchmark. High executes `shadow_depth`, samples the
+shadow map with a deterministic depth test and samples the procedural cubemap; unavailable
+resources degrade to Medium or the analytic environment fallback.
 
 ## Lighting benchmark prototypes
 
@@ -119,7 +128,7 @@ counts, workload sizes and resource bytes. RAM and device-local heap data are re
 to stdout and to the ignored local file
 `build/renderer-benchmarks/lighting_benchmark_v1.txt`; no benchmark numbers are versioned.
 
-The experimental graph shapes are:
+The experimental benchmark graph remains isolated, while the production quality graph is:
 
 ```text
 scene
@@ -128,14 +137,15 @@ visibility mode
   ↓
 CPU culling or gpu_cull
   ↓
-light-list compute / G-buffer proxy
+optional shadow_depth / light_list_build
   ↓
-forward or deferred lighting
+forward_opaque
   ↓
 Vulkan command buffer
 ```
 
 Forward+ uses 16x16 tiles, Clustered uses 16x16x24 clusters, and Deferred keeps a minimal
-G-buffer-shaped benchmark pass. These prototypes measure structure and cost only; they are not a
-final quality implementation. No path is selected automatically. Shadows, IBL, quality levels,
-VRAM policy and the final lighting architecture remain pending measurements on reference hardware.
+G-buffer-shaped benchmark pass. The normal renderer selects Forward+ through the quality flag;
+the benchmark still measures all four paths in its fixed order. The High profile uses only
+procedural shadow/environment resources; no external model or texture is required. VRAM policy
+and the final hardware baseline remain pending.

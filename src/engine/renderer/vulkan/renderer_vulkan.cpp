@@ -24,8 +24,10 @@
 #include "engine/core/diagnostics.hpp"
 #include "engine/math/math.hpp"
 #include "engine/renderer/gpu_culling.hpp"
+#include "engine/renderer/forward_plus.hpp"
 #include "engine/renderer/render_graph/render_graph.hpp"
 #include "engine/renderer/renderer_metrics.hpp"
+#include "engine/renderer/renderer_quality.hpp"
 #include "engine/renderer/procedural_instances.hpp"
 #include "engine/renderer/renderer_benchmark.hpp"
 #include "engine/renderer/vulkan/shader_pipeline.hpp"
@@ -92,6 +94,12 @@ struct ViewProjectionPushConstants final {
     math::Mat4 view_projection{};
 };
 
+struct ForwardPlusPushConstants final {
+    math::Mat4 view_projection{};
+    core::u32 tile_columns = 0;
+    core::u32 tile_rows = 0;
+};
+
 struct BenchmarkComputePushConstants final {
     core::u32 work_item_count = 0;
     core::u32 input_count = 0;
@@ -100,11 +108,26 @@ struct BenchmarkComputePushConstants final {
     core::u32 light_count = 0;
 };
 
+struct ForwardPlusComputePushConstants final {
+    core::u32 tile_columns = 0;
+    core::u32 tile_rows = 0;
+    core::u32 light_count = 0;
+};
+
 static_assert(sizeof(BenchmarkComputePushConstants) == 20U);
+static_assert(sizeof(ForwardPlusComputePushConstants) == 12U);
+
+struct ShadowPushConstants final {
+    math::Mat4 shadow_view_projection{};
+};
+
+static_assert(sizeof(ShadowPushConstants) == 64U);
 
 static_assert(sizeof(ViewProjectionPushConstants) == 64U);
 static_assert(sizeof(ViewProjectionPushConstants) ==
               renderer::vulkan::bootstrap::shader_push_constant_size);
+static_assert(sizeof(ForwardPlusPushConstants) ==
+              renderer::vulkan::bootstrap::forward_plus_push_constant_size);
 
 } // namespace
 
@@ -193,8 +216,25 @@ struct Renderer::Impl final {
     VkImage depth_image = VK_NULL_HANDLE;
     VkDeviceMemory depth_memory = VK_NULL_HANDLE;
     VkImageView depth_image_view = VK_NULL_HANDLE;
+    VkFormat shadow_format = VK_FORMAT_UNDEFINED;
+    VkImage shadow_image = VK_NULL_HANDLE;
+    VkDeviceMemory shadow_memory = VK_NULL_HANDLE;
+    VkImageView shadow_image_view = VK_NULL_HANDLE;
+    VkRenderPass shadow_render_pass = VK_NULL_HANDLE;
+    VkFramebuffer shadow_framebuffer = VK_NULL_HANDLE;
+    VkPipeline shadow_pipeline = VK_NULL_HANDLE;
+    VkPipelineLayout shadow_pipeline_layout = VK_NULL_HANDLE;
+    VkImage environment_image = VK_NULL_HANDLE;
+    VkDeviceMemory environment_memory = VK_NULL_HANDLE;
+    VkImageView environment_image_view = VK_NULL_HANDLE;
+    VkSampler environment_sampler = VK_NULL_HANDLE;
+    VkFormat environment_format = VK_FORMAT_UNDEFINED;
+    core::u32 environment_resolution = 0;
+    core::u32 environment_mip_count = 0;
+    VkDeviceSize environment_size = 0;
     VkRenderPass render_pass = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    bool pipeline_layout_uses_forward_plus = false;
     VkDescriptorSetLayout material_descriptor_set_layout = VK_NULL_HANDLE;
     VkDescriptorPool material_descriptor_pool = VK_NULL_HANDLE;
     VkDescriptorSet material_descriptor_set = VK_NULL_HANDLE;
@@ -247,6 +287,21 @@ struct Renderer::Impl final {
     VkDescriptorSetLayout benchmark_descriptor_set_layout = VK_NULL_HANDLE;
     VkDescriptorPool benchmark_descriptor_pool = VK_NULL_HANDLE;
     std::array<VkDescriptorSet, frames_in_flight> benchmark_descriptor_sets{};
+    VkBuffer tile_header_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory tile_header_memory = VK_NULL_HANDLE;
+    void* tile_header_mapped = nullptr;
+    VkDeviceSize tile_header_size = 0;
+    VkMemoryPropertyFlags tile_header_memory_properties = 0;
+    VkBuffer tile_index_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory tile_index_memory = VK_NULL_HANDLE;
+    void* tile_index_mapped = nullptr;
+    VkDeviceSize tile_index_size = 0;
+    VkMemoryPropertyFlags tile_index_memory_properties = 0;
+    VkPipeline forward_plus_compute_pipeline = VK_NULL_HANDLE;
+    VkPipelineLayout forward_plus_compute_pipeline_layout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout forward_plus_compute_descriptor_set_layout = VK_NULL_HANDLE;
+    VkDescriptorPool forward_plus_compute_descriptor_pool = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, frames_in_flight> forward_plus_compute_descriptor_sets{};
     renderer::vulkan::PipelineCacheIdentity pipeline_cache_identity{};
     VkQueryPool timestamp_query_pool = VK_NULL_HANDLE;
     PFN_vkResetQueryPool reset_query_pool = nullptr;
@@ -275,6 +330,12 @@ struct Renderer::Impl final {
     const renderer::vulkan::ShaderArtifact* fragment_shader_artifact = nullptr;
     const renderer::vulkan::ShaderArtifact* compute_shader_artifact = nullptr;
     const renderer::vulkan::ShaderArtifact* benchmark_compute_shader_artifact = nullptr;
+    const renderer::vulkan::ShaderArtifact* forward_plus_vertex_shader_artifact = nullptr;
+    const renderer::vulkan::ShaderArtifact* forward_plus_fragment_shader_artifact = nullptr;
+    const renderer::vulkan::ShaderArtifact* forward_plus_compute_shader_artifact = nullptr;
+    const renderer::vulkan::ShaderArtifact* forward_plus_high_vertex_shader_artifact = nullptr;
+    const renderer::vulkan::ShaderArtifact* forward_plus_high_fragment_shader_artifact = nullptr;
+    const renderer::vulkan::ShaderArtifact* shadow_vertex_shader_artifact = nullptr;
     bool shader_hot_reload_enabled = false;
     scene::Scene bootstrap_scene;
     scene::Entity bootstrap_cube_entity{};
@@ -289,7 +350,11 @@ struct Renderer::Impl final {
     renderer::render_graph::ResourceHandle benchmark_input_resource{};
     renderer::render_graph::ResourceHandle benchmark_output_resource{};
     renderer::render_graph::ResourceHandle benchmark_gbuffer_resource{};
+    renderer::render_graph::ResourceHandle light_list_resource{};
+    renderer::render_graph::ResourceHandle shadow_map_resource{};
     renderer::render_graph::PassHandle gpu_cull_pass{};
+    renderer::render_graph::PassHandle light_list_pass{};
+    renderer::render_graph::PassHandle shadow_pass{};
     renderer::render_graph::PassHandle benchmark_compute_pass{};
     renderer::render_graph::PassHandle benchmark_gbuffer_pass{};
     renderer::render_graph::PassHandle benchmark_lighting_pass{};
@@ -303,6 +368,13 @@ struct Renderer::Impl final {
         renderer::gpu_culling::VisibilityMode::cpu;
     bool gpu_culling_available = false;
     bool gpu_culling_fallback = false;
+    renderer::quality::RendererQuality requested_quality =
+        renderer::quality::RendererQuality::medium;
+    renderer::quality::RendererQuality effective_quality =
+        renderer::quality::RendererQuality::low;
+    bool quality_compute_fallback = false;
+    bool quality_shadow_fallback = false;
+    bool quality_environment_fallback = false;
     bool benchmark_active = false;
     renderer::benchmark::LightingPath benchmark_path =
         renderer::benchmark::LightingPath::forward;
@@ -381,6 +453,8 @@ struct Renderer::Impl final {
     void destroy_gpu_culling_resources() noexcept;
     [[nodiscard]] core::Status set_visibility_mode(
         renderer::gpu_culling::VisibilityMode mode) noexcept;
+    [[nodiscard]] core::Status set_renderer_quality(
+        renderer::quality::RendererQuality quality) noexcept;
     [[nodiscard]] core::Status upload_gpu_source_instances() noexcept;
     [[nodiscard]] core::Status create_gpu_culling_pipeline() noexcept;
     [[nodiscard]] core::Status create_gpu_culling_descriptors() noexcept;
@@ -388,11 +462,21 @@ struct Renderer::Impl final {
     void resolve_gpu_visibility(core::u32 frame_index) noexcept;
     [[nodiscard]] core::Status create_benchmark_resources() noexcept;
     void destroy_benchmark_resources() noexcept;
+    [[nodiscard]] core::Status create_forward_plus_buffers() noexcept;
+    void destroy_forward_plus_buffers() noexcept;
+    [[nodiscard]] core::Status create_forward_plus_compute_pipeline() noexcept;
+    void destroy_forward_plus_compute_pipeline() noexcept;
+    [[nodiscard]] core::Status create_high_resources() noexcept;
+    void destroy_high_resources() noexcept;
+    [[nodiscard]] core::Status create_shadow_resources() noexcept;
+    [[nodiscard]] core::Status create_environment_resources() noexcept;
+    [[nodiscard]] core::Status create_shadow_pipeline() noexcept;
     [[nodiscard]] core::Status set_benchmark_case(
         const renderer::benchmark::BenchmarkCase& benchmark_case) noexcept;
     [[nodiscard]] core::Status run_renderer_benchmark(bool use_gpu_culling) noexcept;
     [[nodiscard]] core::Status create_bootstrap_material_resources() noexcept;
     [[nodiscard]] core::Status create_material_descriptors() noexcept;
+    [[nodiscard]] core::Status refresh_material_pipeline_resources() noexcept;
     void destroy_material_resources() noexcept;
     [[nodiscard]] core::Status rebuild_pipelines() noexcept;
     [[nodiscard]] core::Status build_pipeline_object(const PipelineSlot& slot,
@@ -586,6 +670,38 @@ core::Status Renderer::Impl::initialize(
     if (!status) {
         return status;
     }
+    static_cast<void>(renderer::benchmark::generate_point_lights(
+        renderer::benchmark::max_point_lights, benchmark_lights));
+    const auto quality_resolution = renderer::quality::resolve(
+        requested_quality, gpu_culling_available, false, false);
+    effective_quality = quality_resolution.effective;
+    quality_compute_fallback = quality_resolution.compute_fallback;
+    quality_shadow_fallback = quality_resolution.shadow_fallback;
+    quality_environment_fallback = quality_resolution.environment_fallback;
+    if (effective_quality != renderer::quality::RendererQuality::low) {
+        status = create_benchmark_resources();
+        if (!status) {
+            effective_quality = renderer::quality::RendererQuality::low;
+            quality_compute_fallback = true;
+            destroy_benchmark_resources();
+        } else {
+            status = create_forward_plus_buffers();
+            if (!status) {
+                effective_quality = renderer::quality::RendererQuality::low;
+                quality_compute_fallback = true;
+                destroy_forward_plus_buffers();
+                destroy_benchmark_resources();
+            } else {
+                status = create_forward_plus_compute_pipeline();
+                if (!status) {
+                    effective_quality = renderer::quality::RendererQuality::low;
+                    quality_compute_fallback = true;
+                    destroy_forward_plus_buffers();
+                    destroy_benchmark_resources();
+                }
+            }
+        }
+    }
     status = create_bootstrap_cube_resources();
     if (!status) {
         return status;
@@ -637,17 +753,21 @@ void Renderer::Impl::shutdown() noexcept
     }
 
     cleanup_swapchain();
+    // Descriptor sets must be released before the buffers and images they reference.
+    destroy_material_resources();
+    destroy_forward_plus_buffers();
+    destroy_high_resources();
     destroy_benchmark_resources();
     destroy_gpu_culling_resources();
     destroy_procedural_instance_resources();
     destroy_timing_resources();
-    destroy_material_resources();
     destroy_live_resources();
 
     if (device != VK_NULL_HANDLE && pipeline_layout != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
         pipeline_layout = VK_NULL_HANDLE;
     }
+    pipeline_layout_uses_forward_plus = false;
 
     if (device != VK_NULL_HANDLE && pipeline_cache != VK_NULL_HANDLE) {
         vkDestroyPipelineCache(device, pipeline_cache, nullptr);
@@ -710,7 +830,9 @@ void Renderer::Impl::shutdown() noexcept
     gpu_source_resource = {};
     gpu_visible_resource = {};
     gpu_indirect_resource = {};
+    light_list_resource = {};
     gpu_cull_pass = {};
+    light_list_pass = {};
     forward_opaque_pass = {};
     frame_timing = {};
     timing_pending = {};
@@ -727,11 +849,22 @@ void Renderer::Impl::shutdown() noexcept
     visibility_mode = renderer::gpu_culling::VisibilityMode::cpu;
     gpu_culling_available = false;
     gpu_culling_fallback = false;
+    requested_quality = renderer::quality::RendererQuality::medium;
+    effective_quality = renderer::quality::RendererQuality::low;
+    quality_compute_fallback = false;
+    quality_shadow_fallback = false;
+    quality_environment_fallback = false;
     shader_capabilities = {};
     vertex_shader_artifact = nullptr;
     fragment_shader_artifact = nullptr;
     compute_shader_artifact = nullptr;
     benchmark_compute_shader_artifact = nullptr;
+    forward_plus_vertex_shader_artifact = nullptr;
+    forward_plus_fragment_shader_artifact = nullptr;
+    forward_plus_compute_shader_artifact = nullptr;
+    forward_plus_high_vertex_shader_artifact = nullptr;
+    forward_plus_high_fragment_shader_artifact = nullptr;
+    shadow_vertex_shader_artifact = nullptr;
     shader_hot_reload_enabled = false;
     bootstrap_scene.clear();
     bootstrap_cube_entity = {};
@@ -1056,14 +1189,41 @@ core::Status Renderer::Impl::select_shader_variants() noexcept
     const auto benchmark_compute = renderer::vulkan::select_shader_variant(
         renderer::vulkan::bootstrap::benchmark_compute_shader_variants,
         shader_capabilities);
+    const auto forward_plus_vertex = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::forward_plus_vertex_shader_variants,
+        shader_capabilities);
+    const auto forward_plus_fragment = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::forward_plus_fragment_shader_variants,
+        shader_capabilities);
+    const auto forward_plus_compute = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::forward_plus_compute_shader_variants,
+        shader_capabilities);
+    const auto forward_plus_high_vertex = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::forward_plus_high_vertex_shader_variants,
+        shader_capabilities);
+    const auto forward_plus_high_fragment = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::forward_plus_high_fragment_shader_variants,
+        shader_capabilities);
+    const auto shadow_vertex = renderer::vulkan::select_shader_variant(
+        renderer::vulkan::bootstrap::shadow_vertex_shader_variants,
+        shader_capabilities);
     if (vertex == nullptr || fragment == nullptr || compute == nullptr ||
-        benchmark_compute == nullptr) {
+        benchmark_compute == nullptr || forward_plus_vertex == nullptr ||
+        forward_plus_fragment == nullptr || forward_plus_compute == nullptr ||
+        forward_plus_high_vertex == nullptr || forward_plus_high_fragment == nullptr ||
+        shadow_vertex == nullptr) {
         return core::Status{core::ErrorCode::shader_variant_unavailable};
     }
     vertex_shader_artifact = vertex;
     fragment_shader_artifact = fragment;
     compute_shader_artifact = compute;
     benchmark_compute_shader_artifact = benchmark_compute;
+    forward_plus_vertex_shader_artifact = forward_plus_vertex;
+    forward_plus_fragment_shader_artifact = forward_plus_fragment;
+    forward_plus_compute_shader_artifact = forward_plus_compute;
+    forward_plus_high_vertex_shader_artifact = forward_plus_high_vertex;
+    forward_plus_high_fragment_shader_artifact = forward_plus_high_fragment;
+    shadow_vertex_shader_artifact = shadow_vertex;
     return core::Status{};
 }
 
@@ -1133,7 +1293,11 @@ core::Status Renderer::Impl::create_render_graph() noexcept
     benchmark_input_resource = {};
     benchmark_output_resource = {};
     benchmark_gbuffer_resource = {};
+    light_list_resource = {};
+    shadow_map_resource = {};
     gpu_cull_pass = {};
+    light_list_pass = {};
+    shadow_pass = {};
     benchmark_compute_pass = {};
     benchmark_gbuffer_pass = {};
     benchmark_lighting_pass = {};
@@ -1151,7 +1315,7 @@ core::Status Renderer::Impl::create_render_graph() noexcept
         return core::Status{core::ErrorCode::vulkan_swapchain_failed};
     }
 
-    std::array<renderer::render_graph::ResourceHandle, 3> forward_reads{};
+    std::array<renderer::render_graph::ResourceHandle, 4> forward_reads{};
     core::u32 forward_read_count = 0U;
     if (visibility_mode == renderer::gpu_culling::VisibilityMode::gpu &&
         gpu_culling_available) {
@@ -1195,6 +1359,34 @@ core::Status Renderer::Impl::create_render_graph() noexcept
         }
         forward_reads = {gpu_visible_resource, gpu_indirect_resource};
         forward_read_count = 2U;
+    }
+
+    if (!benchmark_active && effective_quality == renderer::quality::RendererQuality::high) {
+        if (shadow_image_view == VK_NULL_HANDLE || shadow_pipeline == VK_NULL_HANDLE ||
+            shadow_framebuffer == VK_NULL_HANDLE ||
+            !render_graph
+                 .add_resource({"shadow_map",
+                                renderer::render_graph::ResourceKind::sampled_image,
+                                true},
+                               shadow_map_resource)
+                 .ok()) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+        const std::array<renderer::render_graph::ResourceHandle, 1> shadow_writes = {
+            shadow_map_resource,
+        };
+        const renderer::render_graph::PassDescription shadow_description{
+            .name = "shadow_depth",
+            .reads = {},
+            .writes = shadow_writes,
+            .dependencies = {},
+            .draw_calls = 1U,
+            .dispatch_calls = 0U,
+        };
+        if (!render_graph.add_pass(shadow_description, shadow_pass).ok()) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+        forward_reads[forward_read_count++] = shadow_map_resource;
     }
 
     const auto add_benchmark_resource = [this](const char* name,
@@ -1249,6 +1441,49 @@ core::Status Renderer::Impl::create_render_graph() noexcept
         } else {
             benchmark_gbuffer_resource = benchmark_output_resource;
         }
+    }
+
+    if (!benchmark_active &&
+        effective_quality != renderer::quality::RendererQuality::low) {
+        if (tile_header_buffer == VK_NULL_HANDLE || tile_index_buffer == VK_NULL_HANDLE ||
+            forward_plus_compute_pipeline == VK_NULL_HANDLE) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+        if (!render_graph
+                 .add_resource({"forward_plus_lights",
+                                renderer::render_graph::ResourceKind::storage_buffer,
+                                true},
+                               benchmark_input_resource)
+                 .ok() ||
+            !render_graph
+                 .add_resource({"forward_plus_light_lists",
+                                renderer::render_graph::ResourceKind::storage_buffer,
+                                true},
+                               light_list_resource)
+                 .ok()) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+        const std::array<renderer::render_graph::ResourceHandle, 1> light_reads = {
+            benchmark_input_resource,
+        };
+        const std::array<renderer::render_graph::ResourceHandle, 1> light_writes = {
+            light_list_resource,
+        };
+        const renderer::render_graph::PassDescription light_pass{
+            .name = "light_list_build",
+            .reads = light_reads,
+            .writes = light_writes,
+            .dependencies = {},
+            .draw_calls = 0U,
+            .dispatch_calls = 1U,
+        };
+        if (!render_graph.add_pass(light_pass, light_list_pass).ok()) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+        forward_reads[forward_read_count++] = light_list_resource;
+        benchmark_work_items = renderer::benchmark::tile_count(
+            swapchain_extent.width, swapchain_extent.height);
+        benchmark_light_count = renderer::benchmark::max_point_lights;
     }
 
     const std::array<renderer::render_graph::ResourceHandle, 2> writes = {
@@ -1754,17 +1989,33 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
     if (slot.description.vertex_layout != rhi::PipelineVertexLayout::position3_color3) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
-    if (vertex_shader_artifact == nullptr || fragment_shader_artifact == nullptr ||
+    const bool use_forward_plus = effective_quality != renderer::quality::RendererQuality::low &&
+                                  forward_plus_vertex_shader_artifact != nullptr &&
+                                  forward_plus_fragment_shader_artifact != nullptr;
+    const bool use_high = effective_quality == renderer::quality::RendererQuality::high &&
+                          forward_plus_high_vertex_shader_artifact != nullptr &&
+                          forward_plus_high_fragment_shader_artifact != nullptr &&
+                          shadow_image_view != VK_NULL_HANDLE &&
+                          environment_image_view != VK_NULL_HANDLE;
+    const auto* selected_vertex_shader = use_high
+                                             ? forward_plus_high_vertex_shader_artifact
+                                             : use_forward_plus ? forward_plus_vertex_shader_artifact
+                                                                 : vertex_shader_artifact;
+    const auto* selected_fragment_shader = use_high
+                                               ? forward_plus_high_fragment_shader_artifact
+                                               : use_forward_plus ? forward_plus_fragment_shader_artifact
+                                                                   : fragment_shader_artifact;
+    if (selected_vertex_shader == nullptr || selected_fragment_shader == nullptr ||
         pipeline_cache == VK_NULL_HANDLE) {
         return core::Status{core::ErrorCode::shader_variant_unavailable};
     }
 
     const VkShaderModule vertex_shader = create_shader_module(
-        vertex_shader_artifact->spirv,
-        vertex_shader_artifact->spirv_word_count * sizeof(std::uint32_t));
+        selected_vertex_shader->spirv,
+        selected_vertex_shader->spirv_word_count * sizeof(std::uint32_t));
     const VkShaderModule fragment_shader = create_shader_module(
-        fragment_shader_artifact->spirv,
-        fragment_shader_artifact->spirv_word_count * sizeof(std::uint32_t));
+        selected_fragment_shader->spirv,
+        selected_fragment_shader->spirv_word_count * sizeof(std::uint32_t));
     if (vertex_shader == VK_NULL_HANDLE || fragment_shader == VK_NULL_HANDLE) {
         if (vertex_shader != VK_NULL_HANDLE) {
             vkDestroyShaderModule(device, vertex_shader, nullptr);
@@ -1802,12 +2053,12 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
     vertex_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     vertex_stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
     vertex_stage.module = vertex_shader;
-    vertex_stage.pName = vertex_shader_artifact->entry_point.data();
+    vertex_stage.pName = selected_vertex_shader->entry_point.data();
     VkPipelineShaderStageCreateInfo fragment_stage{};
     fragment_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     fragment_stage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     fragment_stage.module = fragment_shader;
-    fragment_stage.pName = fragment_shader_artifact->entry_point.data();
+    fragment_stage.pName = selected_fragment_shader->entry_point.data();
     const std::array<VkPipelineShaderStageCreateInfo, 2> stages = {vertex_stage, fragment_stage};
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
@@ -1874,9 +2125,11 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
     bool created_layout = false;
     if (pipeline_layout == VK_NULL_HANDLE) {
         VkPushConstantRange push_constant_range{};
-        push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
+                                         (use_forward_plus ? VK_SHADER_STAGE_FRAGMENT_BIT : 0U);
         push_constant_range.offset = 0;
-        push_constant_range.size = sizeof(ViewProjectionPushConstants);
+        push_constant_range.size = use_forward_plus ? sizeof(ForwardPlusPushConstants)
+                                                     : sizeof(ViewProjectionPushConstants);
         VkPipelineLayoutCreateInfo layout_info{};
         layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         layout_info.setLayoutCount = 1;
@@ -1888,6 +2141,7 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
             vkDestroyShaderModule(device, fragment_shader, nullptr);
             return core::Status{core::ErrorCode::vulkan_swapchain_failed};
         }
+        pipeline_layout_uses_forward_plus = use_forward_plus;
         created_layout = true;
     }
 
@@ -2809,6 +3063,805 @@ core::Status Renderer::Impl::create_benchmark_resources() noexcept
     return core::Status{};
 }
 
+core::Status Renderer::Impl::create_forward_plus_buffers() noexcept
+{
+    if (effective_quality == renderer::quality::RendererQuality::low ||
+        device == VK_NULL_HANDLE) {
+        return core::Status{};
+    }
+    destroy_forward_plus_buffers();
+    const core::u32 width = std::max(last_window_size.width, 1U);
+    const core::u32 height = std::max(last_window_size.height, 1U);
+    const core::u32 tile_count = renderer::forward_plus::tile_count(width, height);
+    const VkDeviceSize header_bytes =
+        static_cast<VkDeviceSize>(tile_count) * sizeof(renderer::forward_plus::TileHeader);
+    const VkDeviceSize index_bytes =
+        static_cast<VkDeviceSize>(renderer::forward_plus::maximum_index_count(
+            width, height, renderer::benchmark::max_point_lights)) * sizeof(core::u32);
+    if (header_bytes == 0U || index_bytes == 0U ||
+        !create_buffer_resource(header_bytes,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                tile_header_buffer,
+                                tile_header_memory,
+                                &tile_header_memory_properties)
+             .ok() ||
+        !create_buffer_resource(index_bytes,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                tile_index_buffer,
+                                tile_index_memory,
+                                &tile_index_memory_properties)
+             .ok()) {
+        destroy_forward_plus_buffers();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    if (vkMapMemory(device, tile_header_memory, 0, header_bytes, 0, &tile_header_mapped) !=
+            VK_SUCCESS ||
+        vkMapMemory(device, tile_index_memory, 0, index_bytes, 0, &tile_index_mapped) !=
+            VK_SUCCESS) {
+        destroy_forward_plus_buffers();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const std::span<renderer::forward_plus::TileHeader> headers{
+        static_cast<renderer::forward_plus::TileHeader*>(tile_header_mapped), tile_count};
+    const std::span<core::u32> indices{static_cast<core::u32*>(tile_index_mapped),
+                                       static_cast<core::usize>(index_bytes / sizeof(core::u32))};
+    if (!renderer::forward_plus::build_tile_light_lists(
+            width,
+            height,
+            std::span<const renderer::benchmark::PointLight>{benchmark_lights},
+            headers,
+            indices)) {
+        destroy_forward_plus_buffers();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    if ((tile_header_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
+        const VkMappedMemoryRange range{
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = tile_header_memory,
+            .offset = 0,
+            .size = header_bytes,
+        };
+        if (vkFlushMappedMemoryRanges(device, 1, &range) != VK_SUCCESS) {
+            destroy_forward_plus_buffers();
+            return core::Status{core::ErrorCode::vulkan_device_failed};
+        }
+    }
+    if ((tile_index_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
+        const VkMappedMemoryRange range{
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = tile_index_memory,
+            .offset = 0,
+            .size = index_bytes,
+        };
+        if (vkFlushMappedMemoryRanges(device, 1, &range) != VK_SUCCESS) {
+            destroy_forward_plus_buffers();
+            return core::Status{core::ErrorCode::vulkan_device_failed};
+        }
+    }
+    tile_header_size = header_bytes;
+    tile_index_size = index_bytes;
+    set_debug_name(VK_OBJECT_TYPE_BUFFER,
+                   reinterpret_cast<std::uint64_t>(tile_header_buffer),
+                   "GameEngine.ForwardPlusTileHeaders");
+    set_debug_name(VK_OBJECT_TYPE_BUFFER,
+                   reinterpret_cast<std::uint64_t>(tile_index_buffer),
+                   "GameEngine.ForwardPlusTileIndices");
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_forward_plus_compute_pipeline() noexcept
+{
+    if (effective_quality == renderer::quality::RendererQuality::low ||
+        forward_plus_compute_shader_artifact == nullptr || tile_header_buffer == VK_NULL_HANDLE ||
+        tile_index_buffer == VK_NULL_HANDLE || benchmark_light_buffer == VK_NULL_HANDLE) {
+        return core::Status{core::ErrorCode::unsupported_platform};
+    }
+    destroy_forward_plus_compute_pipeline();
+    const std::array<VkDescriptorSetLayoutBinding, 3> bindings = {
+        VkDescriptorSetLayoutBinding{3,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_COMPUTE_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{4,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_COMPUTE_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{5,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_COMPUTE_BIT,
+                                     nullptr},
+    };
+    const VkDescriptorSetLayoutCreateInfo layout_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = static_cast<std::uint32_t>(bindings.size()),
+        .pBindings = bindings.data(),
+    };
+    if (vkCreateDescriptorSetLayout(device,
+                                    &layout_info,
+                                    nullptr,
+                                    &forward_plus_compute_descriptor_set_layout) != VK_SUCCESS) {
+        destroy_forward_plus_compute_pipeline();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkDescriptorPoolSize pool_size{
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        static_cast<std::uint32_t>(bindings.size()) * frames_in_flight,
+    };
+    const VkDescriptorPoolCreateInfo pool_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = frames_in_flight,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+    };
+    if (vkCreateDescriptorPool(device,
+                               &pool_info,
+                               nullptr,
+                               &forward_plus_compute_descriptor_pool) != VK_SUCCESS) {
+        destroy_forward_plus_compute_pipeline();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const std::array<VkDescriptorSetLayout, frames_in_flight> layouts = {
+        forward_plus_compute_descriptor_set_layout,
+        forward_plus_compute_descriptor_set_layout,
+    };
+    const VkDescriptorSetAllocateInfo allocate_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = forward_plus_compute_descriptor_pool,
+        .descriptorSetCount = frames_in_flight,
+        .pSetLayouts = layouts.data(),
+    };
+    if (vkAllocateDescriptorSets(device,
+                                 &allocate_info,
+                                 forward_plus_compute_descriptor_sets.data()) != VK_SUCCESS) {
+        destroy_forward_plus_compute_pipeline();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    for (core::u32 index = 0; index < frames_in_flight; ++index) {
+        const std::array<VkDescriptorBufferInfo, 3> infos = {
+            VkDescriptorBufferInfo{benchmark_light_buffer, 0, benchmark_light_size},
+            VkDescriptorBufferInfo{tile_header_buffer, 0, tile_header_size},
+            VkDescriptorBufferInfo{tile_index_buffer, 0, tile_index_size},
+        };
+        std::array<VkWriteDescriptorSet, 3> writes{};
+        for (core::u32 binding = 0; binding < writes.size(); ++binding) {
+            writes[binding] = VkWriteDescriptorSet{
+                VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                nullptr,
+                forward_plus_compute_descriptor_sets[index],
+                3U + binding,
+                0,
+                1,
+                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                nullptr,
+                &infos[binding],
+                nullptr,
+            };
+        }
+        vkUpdateDescriptorSets(device,
+                               static_cast<std::uint32_t>(writes.size()),
+                               writes.data(),
+                               0,
+                               nullptr);
+    }
+    const VkPushConstantRange push_constant_range{
+        VK_SHADER_STAGE_COMPUTE_BIT,
+        0,
+        sizeof(ForwardPlusComputePushConstants),
+    };
+    const VkPipelineLayoutCreateInfo pipeline_layout_info{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &forward_plus_compute_descriptor_set_layout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push_constant_range,
+    };
+    if (vkCreatePipelineLayout(device,
+                               &pipeline_layout_info,
+                               nullptr,
+                               &forward_plus_compute_pipeline_layout) != VK_SUCCESS) {
+        destroy_forward_plus_compute_pipeline();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkShaderModule shader_module = create_shader_module(
+        forward_plus_compute_shader_artifact->spirv,
+        forward_plus_compute_shader_artifact->spirv_word_count * sizeof(std::uint32_t));
+    if (shader_module == VK_NULL_HANDLE) {
+        destroy_forward_plus_compute_pipeline();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkPipelineShaderStageCreateInfo stage_info{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = shader_module,
+        .pName = forward_plus_compute_shader_artifact->entry_point.data(),
+    };
+    const VkComputePipelineCreateInfo pipeline_info{
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = stage_info,
+        .layout = forward_plus_compute_pipeline_layout,
+    };
+    const VkResult result = vkCreateComputePipelines(device,
+                                                      pipeline_cache,
+                                                      1,
+                                                      &pipeline_info,
+                                                      nullptr,
+                                                      &forward_plus_compute_pipeline);
+    vkDestroyShaderModule(device, shader_module, nullptr);
+    if (result != VK_SUCCESS) {
+        destroy_forward_plus_compute_pipeline();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    set_debug_name(VK_OBJECT_TYPE_PIPELINE,
+                   reinterpret_cast<std::uint64_t>(forward_plus_compute_pipeline),
+                   "GameEngine.ForwardPlusLightListPipeline");
+    return core::Status{};
+}
+
+void Renderer::Impl::destroy_forward_plus_compute_pipeline() noexcept
+{
+    if (device == VK_NULL_HANDLE) {
+        return;
+    }
+    if (forward_plus_compute_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, forward_plus_compute_pipeline, nullptr);
+        forward_plus_compute_pipeline = VK_NULL_HANDLE;
+    }
+    if (forward_plus_compute_pipeline_layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, forward_plus_compute_pipeline_layout, nullptr);
+        forward_plus_compute_pipeline_layout = VK_NULL_HANDLE;
+    }
+    if (forward_plus_compute_descriptor_pool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, forward_plus_compute_descriptor_pool, nullptr);
+        forward_plus_compute_descriptor_pool = VK_NULL_HANDLE;
+    }
+    if (forward_plus_compute_descriptor_set_layout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device,
+                                     forward_plus_compute_descriptor_set_layout,
+                                     nullptr);
+        forward_plus_compute_descriptor_set_layout = VK_NULL_HANDLE;
+    }
+    forward_plus_compute_descriptor_sets = {};
+}
+
+void Renderer::Impl::destroy_forward_plus_buffers() noexcept
+{
+    destroy_forward_plus_compute_pipeline();
+    if (device == VK_NULL_HANDLE) {
+        return;
+    }
+    if (tile_header_mapped != nullptr && tile_header_memory != VK_NULL_HANDLE) {
+        vkUnmapMemory(device, tile_header_memory);
+    }
+    if (tile_index_mapped != nullptr && tile_index_memory != VK_NULL_HANDLE) {
+        vkUnmapMemory(device, tile_index_memory);
+    }
+    tile_header_mapped = nullptr;
+    tile_index_mapped = nullptr;
+    if (tile_header_buffer != VK_NULL_HANDLE || tile_header_memory != VK_NULL_HANDLE) {
+        destroy_buffer_resource(tile_header_buffer, tile_header_memory);
+    }
+    if (tile_index_buffer != VK_NULL_HANDLE || tile_index_memory != VK_NULL_HANDLE) {
+        destroy_buffer_resource(tile_index_buffer, tile_index_memory);
+    }
+    tile_header_buffer = VK_NULL_HANDLE;
+    tile_header_memory = VK_NULL_HANDLE;
+    tile_index_buffer = VK_NULL_HANDLE;
+    tile_index_memory = VK_NULL_HANDLE;
+    tile_header_size = 0;
+    tile_index_size = 0;
+    tile_header_memory_properties = 0;
+    tile_index_memory_properties = 0;
+}
+
+core::Status Renderer::Impl::create_shadow_resources() noexcept
+{
+    constexpr std::array<VkFormat, 2> candidates = {
+        VK_FORMAT_D32_SFLOAT,
+        VK_FORMAT_D16_UNORM,
+    };
+    shadow_format = VK_FORMAT_UNDEFINED;
+    for (const VkFormat candidate : candidates) {
+        VkFormatProperties properties{};
+        vkGetPhysicalDeviceFormatProperties(physical_device, candidate, &properties);
+        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) !=
+                0U &&
+            (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0U) {
+            shadow_format = candidate;
+            break;
+        }
+    }
+    if (shadow_format == VK_FORMAT_UNDEFINED) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    VkImageCreateInfo image_info{};
+    image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = shadow_format;
+    image_info.extent = {1024U, 1024U, 1U};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                       VK_IMAGE_USAGE_SAMPLED_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(device, &image_info, nullptr, &shadow_image) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device, shadow_image, &requirements);
+    std::uint32_t memory_type = 0;
+    if (!find_memory_type(requirements.memoryTypeBits,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                          memory_type)) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkMemoryAllocateInfo allocation_info{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = memory_type,
+    };
+    if (vkAllocateMemory(device, &allocation_info, nullptr, &shadow_memory) != VK_SUCCESS ||
+        vkBindImageMemory(device, shadow_image, shadow_memory, 0) != VK_SUCCESS) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    VkImageViewCreateInfo view_info{};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = shadow_image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = shadow_format;
+    view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    view_info.subresourceRange.levelCount = 1;
+    view_info.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(device, &view_info, nullptr, &shadow_image_view) != VK_SUCCESS) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    VkAttachmentDescription attachment{};
+    attachment.format = shadow_format;
+    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    const VkAttachmentReference depth_reference{0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.pDepthStencilAttachment = &depth_reference;
+    const std::array<VkSubpassDependency, 2> dependencies = {
+        VkSubpassDependency{VK_SUBPASS_EXTERNAL,
+                            0,
+                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+                            VK_ACCESS_SHADER_READ_BIT,
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                            0},
+        VkSubpassDependency{0,
+                            VK_SUBPASS_EXTERNAL,
+                            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                            VK_ACCESS_SHADER_READ_BIT,
+                            0},
+    };
+    const VkRenderPassCreateInfo render_pass_info{
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = 1,
+        .pAttachments = &attachment,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+        .dependencyCount = static_cast<std::uint32_t>(dependencies.size()),
+        .pDependencies = dependencies.data(),
+    };
+    if (vkCreateRenderPass(device, &render_pass_info, nullptr, &shadow_render_pass) != VK_SUCCESS) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkFramebufferCreateInfo framebuffer_info{
+        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .renderPass = shadow_render_pass,
+        .attachmentCount = 1,
+        .pAttachments = &shadow_image_view,
+        .width = 1024U,
+        .height = 1024U,
+        .layers = 1,
+    };
+    if (vkCreateFramebuffer(device, &framebuffer_info, nullptr, &shadow_framebuffer) != VK_SUCCESS) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    set_debug_name(VK_OBJECT_TYPE_IMAGE,
+                   reinterpret_cast<std::uint64_t>(shadow_image),
+                   "GameEngine.ShadowMap");
+    set_debug_name(VK_OBJECT_TYPE_IMAGE_VIEW,
+                   reinterpret_cast<std::uint64_t>(shadow_image_view),
+                   "GameEngine.ShadowMapView");
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_environment_resources() noexcept
+{
+    constexpr core::u32 resolution = 64U;
+    constexpr core::u32 mip_count = 7U;
+    const core::usize byte_count = renderer::forward_plus::cubemap_rgba8_size(
+        resolution, mip_count);
+    if (byte_count == 0U) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    std::vector<std::byte> pixels(byte_count);
+    if (!renderer::forward_plus::generate_cubemap_rgba8(resolution, mip_count, pixels)) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    environment_format = VK_FORMAT_R8G8B8A8_UNORM;
+    environment_resolution = resolution;
+    environment_mip_count = mip_count;
+    environment_size = static_cast<VkDeviceSize>(byte_count);
+    VkImageCreateInfo image_info{};
+    image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = environment_format;
+    image_info.extent = {resolution, resolution, 1U};
+    image_info.mipLevels = mip_count;
+    image_info.arrayLayers = 6;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(device, &image_info, nullptr, &environment_image) != VK_SUCCESS) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device, environment_image, &requirements);
+    std::uint32_t memory_type = 0;
+    if (!find_memory_type(requirements.memoryTypeBits,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                          memory_type)) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkMemoryAllocateInfo allocation_info{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = memory_type,
+    };
+    if (vkAllocateMemory(device, &allocation_info, nullptr, &environment_memory) != VK_SUCCESS ||
+        vkBindImageMemory(device, environment_image, environment_memory, 0) != VK_SUCCESS) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    VkImageViewCreateInfo view_info{};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = environment_image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    view_info.format = environment_format;
+    view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    view_info.subresourceRange.levelCount = mip_count;
+    view_info.subresourceRange.layerCount = 6;
+    if (vkCreateImageView(device, &view_info, nullptr, &environment_image_view) != VK_SUCCESS) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+
+    VkBuffer staging_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+    if (!create_buffer_resource(static_cast<VkDeviceSize>(pixels.size()),
+                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                staging_buffer,
+                                staging_memory)) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    void* mapped = nullptr;
+    if (vkMapMemory(device, staging_memory, 0, pixels.size(), 0, &mapped) != VK_SUCCESS) {
+        destroy_buffer_resource(staging_buffer, staging_memory);
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    std::memcpy(mapped, pixels.data(), pixels.size());
+    vkUnmapMemory(device, staging_memory);
+    const VkCommandBuffer command_buffer = begin_one_time_commands();
+    if (command_buffer == VK_NULL_HANDLE) {
+        destroy_buffer_resource(staging_buffer, staging_memory);
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_frame_failed};
+    }
+    VkImageMemoryBarrier to_transfer{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = 0,
+        .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = environment_image,
+        .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mip_count, 0, 6},
+    };
+    vkCmdPipelineBarrier(command_buffer,
+                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0,
+                         0,
+                         nullptr,
+                         0,
+                         nullptr,
+                         1,
+                         &to_transfer);
+    std::vector<VkBufferImageCopy> copies;
+    copies.reserve(static_cast<std::size_t>(mip_count) * 6U);
+    VkDeviceSize offset = 0;
+    core::u32 extent = resolution;
+    for (core::u32 mip = 0; mip < mip_count; ++mip) {
+        const VkDeviceSize face_size = static_cast<VkDeviceSize>(extent) * extent * 4U;
+        for (core::u32 face = 0; face < 6U; ++face) {
+            copies.push_back(VkBufferImageCopy{
+                .bufferOffset = offset,
+                .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, face, 1},
+                .imageExtent = {extent, extent, 1U},
+            });
+            offset += face_size;
+        }
+        extent = std::max(extent / 2U, 1U);
+    }
+    vkCmdCopyBufferToImage(command_buffer,
+                           staging_buffer,
+                           environment_image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           static_cast<std::uint32_t>(copies.size()),
+                           copies.data());
+    VkImageMemoryBarrier to_shader = to_transfer;
+    to_shader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    to_shader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    to_shader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_shader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    vkCmdPipelineBarrier(command_buffer,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0,
+                         0,
+                         nullptr,
+                         0,
+                         nullptr,
+                         1,
+                         &to_shader);
+    const core::Status upload_status = end_one_time_commands(command_buffer);
+    destroy_buffer_resource(staging_buffer, staging_memory);
+    if (!upload_status) {
+        destroy_high_resources();
+        return upload_status;
+    }
+
+    VkSamplerCreateInfo sampler_info{};
+    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.maxLod = static_cast<float>(mip_count - 1U);
+    if (vkCreateSampler(device, &sampler_info, nullptr, &environment_sampler) != VK_SUCCESS) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    set_debug_name(VK_OBJECT_TYPE_IMAGE,
+                   reinterpret_cast<std::uint64_t>(environment_image),
+                   "GameEngine.ProceduralEnvironment");
+    set_debug_name(VK_OBJECT_TYPE_IMAGE_VIEW,
+                   reinterpret_cast<std::uint64_t>(environment_image_view),
+                   "GameEngine.ProceduralEnvironmentView");
+    set_debug_name(VK_OBJECT_TYPE_SAMPLER,
+                   reinterpret_cast<std::uint64_t>(environment_sampler),
+                   "GameEngine.ProceduralEnvironmentSampler");
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_shadow_pipeline() noexcept
+{
+    if (shadow_vertex_shader_artifact == nullptr || shadow_render_pass == VK_NULL_HANDLE) {
+        return core::Status{core::ErrorCode::shader_variant_unavailable};
+    }
+    const VkPushConstantRange push_constant_range{
+        VK_SHADER_STAGE_VERTEX_BIT,
+        0,
+        sizeof(ShadowPushConstants),
+    };
+    const VkPipelineLayoutCreateInfo layout_info{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push_constant_range,
+    };
+    if (vkCreatePipelineLayout(device,
+                               &layout_info,
+                               nullptr,
+                               &shadow_pipeline_layout) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkShaderModule shader_module = create_shader_module(
+        shadow_vertex_shader_artifact->spirv,
+        shadow_vertex_shader_artifact->spirv_word_count * sizeof(std::uint32_t));
+    if (shader_module == VK_NULL_HANDLE) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    const VkPipelineShaderStageCreateInfo stage_info{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_VERTEX_BIT,
+        .module = shader_module,
+        .pName = shadow_vertex_shader_artifact->entry_point.data(),
+    };
+    const std::array<VkVertexInputBindingDescription, 2> bindings = {
+        VkVertexInputBindingDescription{0, sizeof(scene::TexturedVertex), VK_VERTEX_INPUT_RATE_VERTEX},
+        VkVertexInputBindingDescription{1, sizeof(renderer::procedural::InstanceData), VK_VERTEX_INPUT_RATE_INSTANCE},
+    };
+    const std::array<VkVertexInputAttributeDescription, 5> attributes = {
+        VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
+        VkVertexInputAttributeDescription{3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0},
+        VkVertexInputAttributeDescription{4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(float) * 4U},
+        VkVertexInputAttributeDescription{5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(float) * 8U},
+        VkVertexInputAttributeDescription{6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(float) * 12U},
+    };
+    const VkPipelineVertexInputStateCreateInfo vertex_input{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = static_cast<std::uint32_t>(bindings.size()),
+        .pVertexBindingDescriptions = bindings.data(),
+        .vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size()),
+        .pVertexAttributeDescriptions = attributes.data(),
+    };
+    const VkPipelineInputAssemblyStateCreateInfo input_assembly{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+    };
+    VkViewport viewport{0.0F, 0.0F, 1024.0F, 1024.0F, 0.0F, 1.0F};
+    VkRect2D scissor{{0, 0}, {1024U, 1024U}};
+    const VkPipelineViewportStateCreateInfo viewport_state{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1,
+        .pViewports = &viewport,
+        .scissorCount = 1,
+        .pScissors = &scissor,
+    };
+    const VkPipelineRasterizationStateCreateInfo rasterizer{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .cullMode = VK_CULL_MODE_NONE,
+        .frontFace = VK_FRONT_FACE_CLOCKWISE,
+        .lineWidth = 1.0F,
+    };
+    const VkPipelineMultisampleStateCreateInfo multisampling{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+    };
+    const VkPipelineDepthStencilStateCreateInfo depth_stencil{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .depthTestEnable = VK_TRUE,
+        .depthWriteEnable = VK_TRUE,
+        .depthCompareOp = VK_COMPARE_OP_LESS,
+    };
+    const VkPipelineColorBlendStateCreateInfo color_blending{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+    };
+    const VkGraphicsPipelineCreateInfo pipeline_info{
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .stageCount = 1,
+        .pStages = &stage_info,
+        .pVertexInputState = &vertex_input,
+        .pInputAssemblyState = &input_assembly,
+        .pViewportState = &viewport_state,
+        .pRasterizationState = &rasterizer,
+        .pMultisampleState = &multisampling,
+        .pDepthStencilState = &depth_stencil,
+        .pColorBlendState = &color_blending,
+        .layout = shadow_pipeline_layout,
+        .renderPass = shadow_render_pass,
+    };
+    const VkResult result = vkCreateGraphicsPipelines(device,
+                                                      pipeline_cache,
+                                                      1,
+                                                      &pipeline_info,
+                                                      nullptr,
+                                                      &shadow_pipeline);
+    vkDestroyShaderModule(device, shader_module, nullptr);
+    if (result != VK_SUCCESS) {
+        destroy_high_resources();
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    set_debug_name(VK_OBJECT_TYPE_PIPELINE,
+                   reinterpret_cast<std::uint64_t>(shadow_pipeline),
+                   "GameEngine.ShadowPipeline");
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::create_high_resources() noexcept
+{
+    destroy_high_resources();
+    core::Status status = create_shadow_resources();
+    if (!status) {
+        destroy_high_resources();
+        return status;
+    }
+    status = create_environment_resources();
+    if (!status) {
+        destroy_high_resources();
+        return status;
+    }
+    status = create_shadow_pipeline();
+    return status;
+}
+
+void Renderer::Impl::destroy_high_resources() noexcept
+{
+    if (device == VK_NULL_HANDLE) {
+        return;
+    }
+    if (shadow_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, shadow_pipeline, nullptr);
+        shadow_pipeline = VK_NULL_HANDLE;
+    }
+    if (shadow_pipeline_layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, shadow_pipeline_layout, nullptr);
+        shadow_pipeline_layout = VK_NULL_HANDLE;
+    }
+    if (shadow_framebuffer != VK_NULL_HANDLE) {
+        vkDestroyFramebuffer(device, shadow_framebuffer, nullptr);
+        shadow_framebuffer = VK_NULL_HANDLE;
+    }
+    if (shadow_render_pass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(device, shadow_render_pass, nullptr);
+        shadow_render_pass = VK_NULL_HANDLE;
+    }
+    if (shadow_image_view != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, shadow_image_view, nullptr);
+        shadow_image_view = VK_NULL_HANDLE;
+    }
+    if (shadow_image != VK_NULL_HANDLE) {
+        vkDestroyImage(device, shadow_image, nullptr);
+        shadow_image = VK_NULL_HANDLE;
+    }
+    if (shadow_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, shadow_memory, nullptr);
+        shadow_memory = VK_NULL_HANDLE;
+    }
+    if (environment_sampler != VK_NULL_HANDLE) {
+        vkDestroySampler(device, environment_sampler, nullptr);
+        environment_sampler = VK_NULL_HANDLE;
+    }
+    if (environment_image_view != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, environment_image_view, nullptr);
+        environment_image_view = VK_NULL_HANDLE;
+    }
+    if (environment_image != VK_NULL_HANDLE) {
+        vkDestroyImage(device, environment_image, nullptr);
+        environment_image = VK_NULL_HANDLE;
+    }
+    if (environment_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, environment_memory, nullptr);
+        environment_memory = VK_NULL_HANDLE;
+    }
+    shadow_format = VK_FORMAT_UNDEFINED;
+    environment_format = VK_FORMAT_UNDEFINED;
+    environment_resolution = 0;
+    environment_mip_count = 0;
+    environment_size = 0;
+}
+
 void Renderer::Impl::destroy_benchmark_resources() noexcept
 {
     if (device == VK_NULL_HANDLE) {
@@ -2927,6 +3980,13 @@ core::Status Renderer::Impl::run_renderer_benchmark(bool use_gpu_culling) noexce
     const core::Status resource_status = create_benchmark_resources();
     if (!resource_status) {
         return resource_status;
+    }
+    if (effective_quality != renderer::quality::RendererQuality::low) {
+        const core::Status refresh_status = refresh_material_pipeline_resources();
+        if (!refresh_status) {
+            destroy_benchmark_resources();
+            return refresh_status;
+        }
     }
 
     std::error_code directory_error;
@@ -3071,7 +4131,9 @@ core::Status Renderer::Impl::run_renderer_benchmark(bool use_gpu_culling) noexce
     }
 
     std::fclose(report_file);
-    destroy_benchmark_resources();
+    if (effective_quality == renderer::quality::RendererQuality::low) {
+        destroy_benchmark_resources();
+    }
     benchmark_active = false;
     benchmark_path = renderer::benchmark::LightingPath::forward;
     benchmark_light_count = 0;
@@ -3092,26 +4154,88 @@ core::Status Renderer::Impl::set_visibility_mode(
     return graph_status;
 }
 
+core::Status Renderer::Impl::set_renderer_quality(
+    renderer::quality::RendererQuality quality) noexcept
+{
+    if (effective_quality == renderer::quality::RendererQuality::high) {
+        if (cube_pipeline.valid() && cube_pipeline.index < pipelines.size()) {
+            destroy_pipeline_object(pipelines[cube_pipeline.index]);
+        }
+        if (pipeline_layout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+            pipeline_layout = VK_NULL_HANDLE;
+        }
+        pipeline_layout_uses_forward_plus = false;
+        destroy_material_resources();
+    }
+    requested_quality = quality;
+    const auto compute_resolution = renderer::quality::resolve(
+        requested_quality,
+        gpu_culling_available,
+        true,
+        true);
+    effective_quality = compute_resolution.effective;
+    quality_compute_fallback = compute_resolution.compute_fallback;
+    quality_shadow_fallback = false;
+    quality_environment_fallback = false;
+    if (effective_quality == renderer::quality::RendererQuality::high) {
+        if (!create_high_resources()) {
+            effective_quality = renderer::quality::RendererQuality::medium;
+            quality_shadow_fallback = true;
+            quality_environment_fallback = true;
+        }
+    } else {
+        destroy_high_resources();
+    }
+    if (effective_quality != renderer::quality::RendererQuality::low &&
+        (benchmark_input_buffer == VK_NULL_HANDLE || benchmark_compute_pipeline == VK_NULL_HANDLE)) {
+        const core::Status status = create_benchmark_resources();
+        if (!status) {
+            effective_quality = renderer::quality::RendererQuality::low;
+            quality_compute_fallback = true;
+            destroy_benchmark_resources();
+        } else if (!create_forward_plus_buffers() ||
+                   !create_forward_plus_compute_pipeline()) {
+            effective_quality = renderer::quality::RendererQuality::low;
+            quality_compute_fallback = true;
+            destroy_forward_plus_buffers();
+            destroy_benchmark_resources();
+        }
+    }
+    const core::Status pipeline_status = refresh_material_pipeline_resources();
+    if (!pipeline_status) {
+        return pipeline_status;
+    }
+    const core::Status graph_status = create_render_graph();
+    timing_accumulator.reset();
+    return graph_status;
+}
+
 core::Status Renderer::Impl::create_bootstrap_material_resources() noexcept
 {
-    const rhi::ImageDescription image_description{
-        .width = scene::bootstrap_texture_width,
-        .height = scene::bootstrap_texture_height,
-        .format = rhi::ImageFormat::rgba8_unorm,
-    };
-    core::Status status = create_image(image_description, bootstrap_albedo_image);
-    if (!status) {
-        return status;
+    core::Status status{};
+    if (!bootstrap_albedo_image.valid()) {
+        const rhi::ImageDescription image_description{
+            .width = scene::bootstrap_texture_width,
+            .height = scene::bootstrap_texture_height,
+            .format = rhi::ImageFormat::rgba8_unorm,
+        };
+        status = create_image(image_description, bootstrap_albedo_image);
+        if (!status) {
+            return status;
+        }
+        status = upload_image(bootstrap_albedo_image, scene::bootstrap_checkerboard);
+        if (!status) {
+            return status;
+        }
     }
-    status = upload_image(bootstrap_albedo_image, scene::bootstrap_checkerboard);
-    if (!status) {
-        return status;
-    }
-    status = create_sampler(
-        {.min_filter = rhi::SamplerFilter::linear, .mag_filter = rhi::SamplerFilter::linear},
-        bootstrap_albedo_sampler);
-    if (!status) {
-        return status;
+    if (!bootstrap_albedo_sampler.valid()) {
+        status = create_sampler(
+            {.min_filter = rhi::SamplerFilter::linear, .mag_filter = rhi::SamplerFilter::linear},
+            bootstrap_albedo_sampler);
+        if (!status) {
+            return status;
+        }
     }
 
     status = create_buffer_resource(sizeof(scene::BootstrapMaterialConstants),
@@ -3152,11 +4276,21 @@ core::Status Renderer::Impl::create_material_descriptors() noexcept
         return core::Status{core::ErrorCode::invalid_argument};
     }
 
-    const std::array<VkDescriptorSetLayoutBinding, 3> bindings = {
+    const bool use_forward_plus =
+        effective_quality != renderer::quality::RendererQuality::low &&
+        benchmark_light_buffer != VK_NULL_HANDLE && tile_header_buffer != VK_NULL_HANDLE &&
+        tile_index_buffer != VK_NULL_HANDLE;
+    const bool use_high = effective_quality == renderer::quality::RendererQuality::high &&
+                          shadow_image_view != VK_NULL_HANDLE &&
+                          environment_image_view != VK_NULL_HANDLE;
+    const std::array<VkDescriptorSetLayoutBinding, 8> bindings = {
         VkDescriptorSetLayoutBinding{0,
                                      VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                                      1,
-                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     use_high ? static_cast<VkShaderStageFlags>(
+                                                    VK_SHADER_STAGE_VERTEX_BIT |
+                                                    VK_SHADER_STAGE_FRAGMENT_BIT)
+                                              : VK_SHADER_STAGE_FRAGMENT_BIT,
                                      nullptr},
         VkDescriptorSetLayoutBinding{1,
                                      VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
@@ -3168,10 +4302,36 @@ core::Status Renderer::Impl::create_material_descriptors() noexcept
                                      1,
                                      VK_SHADER_STAGE_FRAGMENT_BIT,
                                      nullptr},
+        VkDescriptorSetLayoutBinding{3,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{4,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{5,
+                                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{6,
+                                     VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                     1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     nullptr},
+        VkDescriptorSetLayoutBinding{7,
+                                     VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                     1,
+                                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                                     nullptr},
     };
     VkDescriptorSetLayoutCreateInfo layout_info{};
     layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_info.bindingCount = static_cast<std::uint32_t>(bindings.size());
+    layout_info.bindingCount = use_high ? static_cast<std::uint32_t>(bindings.size())
+                                        : use_forward_plus ? 6U : 3U;
     layout_info.pBindings = bindings.data();
     if (vkCreateDescriptorSetLayout(device,
                                     &layout_info,
@@ -3180,15 +4340,16 @@ core::Status Renderer::Impl::create_material_descriptors() noexcept
         return core::Status{core::ErrorCode::vulkan_device_failed};
     }
 
-    const std::array<VkDescriptorPoolSize, 3> pool_sizes = {
+    const std::array<VkDescriptorPoolSize, 4> pool_sizes = {
         VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, 1},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, use_high ? 3U : 1U},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, 1U},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, use_forward_plus ? 3U : 0U},
     };
     VkDescriptorPoolCreateInfo pool_info{};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_info.maxSets = 1;
-    pool_info.poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size());
+    pool_info.poolSizeCount = use_forward_plus ? static_cast<std::uint32_t>(pool_sizes.size()) : 3U;
     pool_info.pPoolSizes = pool_sizes.data();
     if (vkCreateDescriptorPool(device,
                                 &pool_info,
@@ -3215,7 +4376,7 @@ core::Status Renderer::Impl::create_material_descriptors() noexcept
     image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDescriptorImageInfo sampler_info{};
     sampler_info.sampler = sampler->sampler;
-    const std::array<VkWriteDescriptorSet, 3> writes = {
+    std::array<VkWriteDescriptorSet, 8> writes = {
         VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                              nullptr,
                              material_descriptor_set,
@@ -3247,11 +4408,106 @@ core::Status Renderer::Impl::create_material_descriptors() noexcept
                              nullptr,
                              nullptr},
     };
-    vkUpdateDescriptorSets(device,
-                           static_cast<std::uint32_t>(writes.size()),
-                           writes.data(),
-                           0,
-                           nullptr);
+    VkDescriptorBufferInfo point_lights_info{
+        .buffer = benchmark_light_buffer,
+        .offset = 0,
+        .range = benchmark_light_size,
+    };
+    VkDescriptorBufferInfo tile_headers_info{
+        .buffer = tile_header_buffer,
+        .offset = 0,
+        .range = tile_header_size,
+    };
+    VkDescriptorBufferInfo tile_indices_info{
+        .buffer = tile_index_buffer,
+        .offset = 0,
+        .range = tile_index_size,
+    };
+    if (use_forward_plus) {
+        writes[3] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         nullptr,
+                                         material_descriptor_set,
+                                         3,
+                                         0,
+                                         1,
+                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                         nullptr,
+                                         &point_lights_info,
+                                         nullptr};
+        writes[4] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         nullptr,
+                                         material_descriptor_set,
+                                         4,
+                                         0,
+                                         1,
+                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                         nullptr,
+                                         &tile_headers_info,
+                                         nullptr};
+        writes[5] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         nullptr,
+                                         material_descriptor_set,
+                                         5,
+                                         0,
+                                         1,
+                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                         nullptr,
+                                         &tile_indices_info,
+                                         nullptr};
+    }
+    if (use_high) {
+        const VkDescriptorImageInfo shadow_image_info{
+            .sampler = VK_NULL_HANDLE,
+            .imageView = shadow_image_view,
+            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        };
+        const VkDescriptorImageInfo environment_image_info{
+            .sampler = VK_NULL_HANDLE,
+            .imageView = environment_image_view,
+            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        };
+        writes[6] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         nullptr,
+                                         material_descriptor_set,
+                                         6,
+                                         0,
+                                         1,
+                                         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                         &shadow_image_info,
+                                         nullptr,
+                                         nullptr};
+        writes[6] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         nullptr,
+                                         material_descriptor_set,
+                                         6,
+                                         0,
+                                         1,
+                                         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                         &shadow_image_info,
+                                         nullptr,
+                                         nullptr};
+        writes[7] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         nullptr,
+                                         material_descriptor_set,
+                                         7,
+                                         0,
+                                         1,
+                                         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                         &environment_image_info,
+                                         nullptr,
+                                         nullptr};
+    }
+    const std::uint32_t base_write_count = use_forward_plus ? 6U : 3U;
+    vkUpdateDescriptorSets(device, base_write_count, writes.data(), 0, nullptr);
+    if (use_high) {
+        for (std::uint32_t index = 0; index < 2U; ++index) {
+            vkUpdateDescriptorSets(device,
+                                   1U,
+                                   writes.data() + base_write_count + index,
+                                   0,
+                                   nullptr);
+        }
+    }
     set_debug_name(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT,
                    reinterpret_cast<std::uint64_t>(material_descriptor_set_layout),
                    "GameEngine.BootstrapMaterialSetLayout");
@@ -3259,6 +4515,35 @@ core::Status Renderer::Impl::create_material_descriptors() noexcept
                    reinterpret_cast<std::uint64_t>(material_descriptor_pool),
                    "GameEngine.BootstrapMaterialPool");
     return core::Status{};
+}
+
+core::Status Renderer::Impl::refresh_material_pipeline_resources() noexcept
+{
+    if (cube_pipeline.valid() && cube_pipeline.index < pipelines.size()) {
+        destroy_pipeline_object(pipelines[cube_pipeline.index]);
+    }
+    if (pipeline_layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+        pipeline_layout = VK_NULL_HANDLE;
+    }
+    pipeline_layout_uses_forward_plus = false;
+    destroy_material_resources();
+    core::Status status = create_bootstrap_material_resources();
+    if (!status) {
+        return status;
+    }
+    status = create_material_descriptors();
+    if (!status) {
+        return status;
+    }
+    if (effective_quality != renderer::quality::RendererQuality::low) {
+        status = create_forward_plus_compute_pipeline();
+        if (!status) {
+            return status;
+        }
+    }
+    status = rebuild_pipelines();
+    return status;
 }
 
 void Renderer::Impl::destroy_material_resources() noexcept
@@ -4148,7 +5433,23 @@ core::Status Renderer::Impl::recreate_swapchain(platform::WindowSize window_size
     for (core::u32 index = 0; index < frames_in_flight; ++index) {
         collect_deferred(index);
     }
+    const bool refresh_forward_plus_buffers =
+        effective_quality != renderer::quality::RendererQuality::low;
+    last_window_size = window_size;
     cleanup_swapchain();
+    if (refresh_forward_plus_buffers) {
+        destroy_material_resources();
+        if (pipeline_layout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+            pipeline_layout = VK_NULL_HANDLE;
+        }
+        destroy_forward_plus_buffers();
+        if (!create_forward_plus_buffers() || !create_forward_plus_compute_pipeline() ||
+            !create_bootstrap_material_resources() ||
+            !create_material_descriptors()) {
+            return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+        }
+    }
     return create_swapchain(window_size);
 }
 
@@ -4222,6 +5523,11 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         camera_position.z,
         1.0F,
     };
+    const math::Mat4 shadow_view_projection = renderer::forward_plus::make_shadow_matrix(
+        light_component->direction);
+    std::copy(shadow_view_projection.values.begin(),
+              shadow_view_projection.values.end(),
+              material_constants.shadow_view_projection.begin());
     void* material_mapped = nullptr;
     if (vkMapMemory(device,
                     material_uniform_memory,
@@ -4252,7 +5558,12 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                  visibility_mode,
                  gpu_culling_available,
                  use_gpu_culling,
-                 gpu_culling_fallback);
+                 gpu_culling_fallback,
+                 requested_quality,
+                 effective_quality,
+                 quality_compute_fallback,
+                 quality_shadow_fallback,
+                 quality_environment_fallback);
     timing.total_instances = active_instance_count;
     timing.benchmark_active = benchmark_active;
     timing.benchmark_path = benchmark_path;
@@ -4261,6 +5572,22 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
     timing.gpu_source_buffer_bytes = gpu_source_buffer_size;
     timing.gpu_visible_buffer_bytes = gpu_visible_buffer_size;
     timing.gpu_indirect_buffer_bytes = gpu_indirect_buffer_size;
+    timing.light_buffer_bytes = effective_quality == renderer::quality::RendererQuality::low
+                                    ? 0U
+                                    : benchmark_light_size;
+    timing.tile_header_buffer_bytes = effective_quality == renderer::quality::RendererQuality::low
+                                          ? 0U
+                                          : tile_header_size;
+    timing.tile_index_buffer_bytes = effective_quality == renderer::quality::RendererQuality::low
+                                        ? 0U
+                                        : tile_index_size;
+    timing.shadow_map_bytes = effective_quality == renderer::quality::RendererQuality::high
+                                  ? 1024U * 1024U *
+                                        (shadow_format == VK_FORMAT_D16_UNORM ? 2U : 4U)
+                                  : 0U;
+    timing.environment_bytes = effective_quality == renderer::quality::RendererQuality::high
+                                   ? environment_size
+                                   : 0U;
 
     const auto visibility_start = std::chrono::steady_clock::now();
     math::Frustum frustum{};
@@ -4433,10 +5760,7 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                 1U);
             continue;
         }
-        const bool is_benchmark_compute =
-            benchmark_active &&
-            (pass.index == benchmark_compute_pass.index || pass.index == benchmark_gbuffer_pass.index);
-        if (is_benchmark_compute) {
+        if (pass.index == shadow_pass.index && pass_name == "shadow_depth") {
             const auto pass_start = std::chrono::steady_clock::now();
             const core::u32 query_base =
                 frame_index * timestamp_queries_per_frame + timing.pass_count * 2U;
@@ -4446,12 +5770,193 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                                     timestamp_query_pool,
                                     query_base);
             }
+            if (shadow_pipeline == VK_NULL_HANDLE || shadow_framebuffer == VK_NULL_HANDLE) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            const VkClearValue clear_value{.depthStencil = {1.0F, 0}};
+            const VkRenderPassBeginInfo shadow_begin_info{
+                .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+                .renderPass = shadow_render_pass,
+                .framebuffer = shadow_framebuffer,
+                .renderArea = {{0, 0}, {1024U, 1024U}},
+                .clearValueCount = 1,
+                .pClearValues = &clear_value,
+            };
+            vkCmdBeginRenderPass(command_buffer,
+                                 &shadow_begin_info,
+                                 VK_SUBPASS_CONTENTS_INLINE);
+            const VkViewport shadow_viewport{0.0F, 0.0F, 1024.0F, 1024.0F, 0.0F, 1.0F};
+            const VkRect2D shadow_scissor{{0, 0}, {1024U, 1024U}};
+            vkCmdSetViewport(command_buffer, 0, 1, &shadow_viewport);
+            vkCmdSetScissor(command_buffer, 0, 1, &shadow_scissor);
+            const std::array<VkBuffer, 2> shadow_vertex_buffers = {
+                vertex_buffer->buffer,
+                use_gpu_culling ? gpu_visible_buffer : instance_buffer,
+            };
+            const std::array<VkDeviceSize, 2> shadow_offsets = {
+                0,
+                use_gpu_culling ? gpu_visible_slice_stride * frame_index : instance_offset,
+            };
+            vkCmdBindVertexBuffers(command_buffer,
+                                   0,
+                                   static_cast<std::uint32_t>(shadow_vertex_buffers.size()),
+                                   shadow_vertex_buffers.data(),
+                                   shadow_offsets.data());
+            vkCmdBindIndexBuffer(command_buffer,
+                                 index_buffer->buffer,
+                                 0,
+                                 VK_INDEX_TYPE_UINT16);
+            vkCmdBindPipeline(command_buffer,
+                              VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              shadow_pipeline);
+            const ShadowPushConstants shadow_constants{shadow_view_projection};
+            vkCmdPushConstants(command_buffer,
+                               shadow_pipeline_layout,
+                               VK_SHADER_STAGE_VERTEX_BIT,
+                               0,
+                               sizeof(shadow_constants),
+                               &shadow_constants);
+            if (use_gpu_culling) {
+                vkCmdDrawIndexedIndirect(command_buffer,
+                                         gpu_indirect_buffer,
+                                         gpu_indirect_slice_stride * frame_index,
+                                         1,
+                                         sizeof(renderer::gpu_culling::IndirectCommand));
+            } else if (visible_count > 0U) {
+                vkCmdDrawIndexed(command_buffer,
+                                 static_cast<std::uint32_t>(scene::bootstrap_cube_indices.size()),
+                                 visible_count,
+                                 0,
+                                 0,
+                                 0);
+            }
+            vkCmdEndRenderPass(command_buffer);
+            if (gpu_timestamps_enabled) {
+                vkCmdWriteTimestamp(command_buffer,
+                                    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                    timestamp_query_pool,
+                                    query_base + 1U);
+            }
+            const auto pass_end = std::chrono::steady_clock::now();
+            timing.add_pass(
+                pass_name,
+                static_cast<core::u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(pass_end - pass_start)
+                        .count()),
+                use_gpu_culling || visible_count > 0U ? 1U : 0U,
+                gpu_timestamps_enabled);
+            continue;
+        }
+        const bool is_benchmark_compute =
+            benchmark_active &&
+            (pass.index == benchmark_compute_pass.index || pass.index == benchmark_gbuffer_pass.index);
+        const bool is_production_light_list =
+            !benchmark_active && pass.index == light_list_pass.index &&
+            pass_name == "light_list_build";
+        if (is_benchmark_compute || is_production_light_list) {
+            const auto pass_start = std::chrono::steady_clock::now();
+            const core::u32 query_base =
+                frame_index * timestamp_queries_per_frame + timing.pass_count * 2U;
+            if (gpu_timestamps_enabled) {
+                vkCmdWriteTimestamp(command_buffer,
+                                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                    timestamp_query_pool,
+                                    query_base);
+            }
+            if (is_production_light_list) {
+                if (forward_plus_compute_pipeline == VK_NULL_HANDLE ||
+                    forward_plus_compute_pipeline_layout == VK_NULL_HANDLE) {
+                    return VK_ERROR_INITIALIZATION_FAILED;
+                }
+                const ForwardPlusComputePushConstants push_constants{
+                    .tile_columns = std::max(
+                        (swapchain_extent.width + renderer::forward_plus::tile_width - 1U) /
+                            renderer::forward_plus::tile_width,
+                        1U),
+                    .tile_rows = std::max(
+                        (swapchain_extent.height + renderer::forward_plus::tile_height - 1U) /
+                            renderer::forward_plus::tile_height,
+                        1U),
+                    .light_count = renderer::benchmark::max_point_lights,
+                };
+                begin_debug_label(command_buffer, "GameEngine.ForwardPlusLightList");
+                vkCmdBindPipeline(command_buffer,
+                                  VK_PIPELINE_BIND_POINT_COMPUTE,
+                                  forward_plus_compute_pipeline);
+                vkCmdBindDescriptorSets(command_buffer,
+                                        VK_PIPELINE_BIND_POINT_COMPUTE,
+                                        forward_plus_compute_pipeline_layout,
+                                        0,
+                                        1,
+                                        &forward_plus_compute_descriptor_sets[frame_index],
+                                        0,
+                                        nullptr);
+                vkCmdPushConstants(command_buffer,
+                                   forward_plus_compute_pipeline_layout,
+                                   VK_SHADER_STAGE_COMPUTE_BIT,
+                                   0,
+                                   sizeof(push_constants),
+                                   &push_constants);
+                vkCmdDispatch(command_buffer, push_constants.tile_columns,
+                              push_constants.tile_rows, 1);
+                const std::array<VkBufferMemoryBarrier, 2> list_barriers = {
+                    VkBufferMemoryBarrier{
+                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .buffer = tile_header_buffer,
+                        .offset = 0,
+                        .size = tile_header_size,
+                    },
+                    VkBufferMemoryBarrier{
+                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .buffer = tile_index_buffer,
+                        .offset = 0,
+                        .size = tile_index_size,
+                    },
+                };
+                vkCmdPipelineBarrier(command_buffer,
+                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                     0,
+                                     0,
+                                     nullptr,
+                                     static_cast<std::uint32_t>(list_barriers.size()),
+                                     list_barriers.data(),
+                                     0,
+                                     nullptr);
+                end_debug_label(command_buffer);
+                if (gpu_timestamps_enabled) {
+                    vkCmdWriteTimestamp(command_buffer,
+                                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                        timestamp_query_pool,
+                                        query_base + 1U);
+                }
+                const auto pass_end = std::chrono::steady_clock::now();
+                timing.add_pass(
+                    pass_name,
+                    static_cast<core::u64>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(pass_end - pass_start)
+                            .count()),
+                    0U,
+                    gpu_timestamps_enabled,
+                    1U);
+                continue;
+            }
             const BenchmarkComputePushConstants push_constants{
                 .work_item_count = benchmark_work_items,
                 .input_count = active_instance_count,
                 .output_count = benchmark_output_capacity,
-                .path = static_cast<core::u32>(benchmark_path),
-                .light_count = benchmark_light_count,
+                .path = is_production_light_list
+                            ? static_cast<core::u32>(renderer::benchmark::LightingPath::forward_plus)
+                            : static_cast<core::u32>(benchmark_path),
+                .light_count = std::max(benchmark_light_count, 1U),
             };
             begin_debug_label(command_buffer, pass_name == "deferred_gbuffer"
                                                  ? "GameEngine.DeferredGBuffer"
@@ -4574,7 +6079,17 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                                vertex_buffers.data(),
                                vertex_offsets.data());
         vkCmdBindIndexBuffer(command_buffer, index_buffer->buffer, 0, VK_INDEX_TYPE_UINT16);
-        const ViewProjectionPushConstants push_constants{.view_projection = view_projection};
+        const ForwardPlusPushConstants forward_plus_push_constants{
+            .view_projection = view_projection,
+            .tile_columns = std::max((swapchain_extent.width + renderer::forward_plus::tile_width -
+                                      1U) /
+                                         renderer::forward_plus::tile_width,
+                                     1U),
+            .tile_rows = std::max((swapchain_extent.height + renderer::forward_plus::tile_height -
+                                   1U) /
+                                      renderer::forward_plus::tile_height,
+                                  1U),
+        };
         begin_debug_label(command_buffer, "GameEngine.ForwardOpaque");
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
         vkCmdBindDescriptorSets(command_buffer,
@@ -4585,12 +6100,23 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                                 &material_descriptor_set,
                                 0,
                                 nullptr);
-        vkCmdPushConstants(command_buffer,
-                           pipeline_layout,
-                           VK_SHADER_STAGE_VERTEX_BIT,
-                           0,
-                           sizeof(push_constants),
-                           &push_constants);
+        if (effective_quality == renderer::quality::RendererQuality::low &&
+            !pipeline_layout_uses_forward_plus) {
+            const ViewProjectionPushConstants push_constants{.view_projection = view_projection};
+            vkCmdPushConstants(command_buffer,
+                               pipeline_layout,
+                               VK_SHADER_STAGE_VERTEX_BIT,
+                               0,
+                               sizeof(push_constants),
+                               &push_constants);
+        } else {
+            vkCmdPushConstants(command_buffer,
+                               pipeline_layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0,
+                               sizeof(forward_plus_push_constants),
+                               &forward_plus_push_constants);
+        }
         if (use_gpu_culling) {
             vkCmdDrawIndexedIndirect(command_buffer,
                                      gpu_indirect_buffer,
@@ -4962,6 +6488,21 @@ core::Status set_visibility_mode(const gameengine::rhi::Renderer& renderer,
     return renderer.impl_->set_visibility_mode(mode);
 }
 
+core::Status set_renderer_quality(
+    const gameengine::rhi::Renderer& renderer,
+    quality::RendererQuality quality) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    if (renderer.impl_->device == VK_NULL_HANDLE ||
+        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    renderer.impl_->resolve_all_timing();
+    return renderer.impl_->set_renderer_quality(quality);
+}
+
 core::Status set_procedural_workload(const gameengine::rhi::Renderer& renderer,
                                      core::u32 instance_count) noexcept
 {
@@ -5001,13 +6542,20 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
                                 : !accumulator.gpu_culling_available
                                       ? "unavailable"
                                       : accumulator.gpu_culling_active ? "active" : "available";
+    const char* requested_quality = quality::name(accumulator.requested_quality).data();
+    const char* effective_quality = quality::name(accumulator.effective_quality).data();
     std::fprintf(stderr,
-                 "[gameengine] [info] renderer metrics: mode=%s gpu_culling=%s instances=%u frames=%llu "
+                 "[gameengine] [info] renderer metrics: mode=%s gpu_culling=%s quality=%s->%s "
+                 "instances=%u frames=%llu "
                  "draw_calls=%llu visible_avg=%llu culled_avg=%llu "
                  "instance_buffer_bytes=%llu gpu_source_bytes=%llu gpu_visible_bytes=%llu "
-                 "gpu_indirect_bytes=%llu gpu_timestamps=%s\n",
+                 "gpu_indirect_bytes=%llu light_bytes=%llu tile_headers=%llu tile_indices=%llu "
+                 "shadow_map_bytes=%llu environment_bytes=%llu "
+                 "gpu_timestamps=%s fallbacks(compute/shadow/environment)=%s/%s/%s\n",
                  mode,
                  gpu_state,
+                 requested_quality,
+                 effective_quality,
                  renderer.impl_->active_instance_count,
                  static_cast<unsigned long long>(accumulator.frame_count),
                  static_cast<unsigned long long>(accumulator.total_draw_calls),
@@ -5023,7 +6571,15 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
                  static_cast<unsigned long long>(accumulator.gpu_source_buffer_bytes),
                  static_cast<unsigned long long>(accumulator.gpu_visible_buffer_bytes),
                  static_cast<unsigned long long>(accumulator.gpu_indirect_buffer_bytes),
-                 accumulator.gpu_timestamps_available ? "available" : "unavailable");
+                 static_cast<unsigned long long>(accumulator.light_buffer_bytes),
+                 static_cast<unsigned long long>(accumulator.tile_header_buffer_bytes),
+                 static_cast<unsigned long long>(accumulator.tile_index_buffer_bytes),
+                 static_cast<unsigned long long>(accumulator.shadow_map_bytes),
+                 static_cast<unsigned long long>(accumulator.environment_bytes),
+                 accumulator.gpu_timestamps_available ? "available" : "unavailable",
+                 accumulator.quality_compute_fallback ? "yes" : "no",
+                 accumulator.quality_shadow_fallback ? "yes" : "no",
+                 accumulator.quality_environment_fallback ? "yes" : "no");
     if (accumulator.frame_count > 0U) {
         if (accumulator.visibility_mode == gpu_culling::VisibilityMode::gpu) {
             std::fprintf(stderr,

@@ -3,6 +3,7 @@
 #include "engine/core/diagnostics.hpp"
 #include "engine/platform/platform.hpp"
 #include "engine/renderer/renderer_metrics.hpp"
+#include "engine/renderer/renderer_quality.hpp"
 #include "engine/rhi/rhi.hpp"
 
 #include <array>
@@ -27,6 +28,8 @@ int main(int argc, char** argv)
     bool metrics_test = false;
     bool renderer_benchmark = false;
     bool gpu_culling = false;
+    gameengine::renderer::quality::RendererQuality renderer_quality =
+        gameengine::renderer::quality::RendererQuality::medium;
     for (int index = 1; index < argc; ++index) {
         if (std::strcmp(argv[index], "--smoke-test") == 0) {
             smoke_test = true;
@@ -36,10 +39,19 @@ int main(int argc, char** argv)
             renderer_benchmark = true;
         } else if (std::strcmp(argv[index], "--gpu-culling") == 0) {
             gpu_culling = true;
+        } else if (std::strcmp(argv[index], "--renderer-quality") == 0) {
+            if (index + 1 >= argc ||
+                !gameengine::renderer::quality::parse(argv[++index], renderer_quality)) {
+                gameengine::core::log(gameengine::core::LogLevel::error,
+                                      "--renderer-quality expects low, medium or high");
+                core.shutdown();
+                return 2;
+            }
         } else {
             gameengine::core::log(gameengine::core::LogLevel::error,
                                   "unknown argument; use --smoke-test, --metrics, "
-                                  "--renderer-benchmark or --gpu-culling");
+                                  "--renderer-benchmark, --gpu-culling or "
+                                  "--renderer-quality low|medium|high");
             core.shutdown();
             return 2;
         }
@@ -80,6 +92,16 @@ int main(int argc, char** argv)
         platform.shutdown();
         core.shutdown();
         return 5;
+    }
+    const gameengine::core::Status quality_status =
+        gameengine::renderer::diagnostics::set_renderer_quality(renderer, renderer_quality);
+    if (!quality_status) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              gameengine::core::to_string(quality_status.code));
+        renderer.shutdown();
+        platform.shutdown();
+        core.shutdown();
+        return 6;
     }
     if (gpu_culling) {
         const gameengine::core::Status visibility_status =
@@ -129,6 +151,7 @@ int main(int argc, char** argv)
     (void)metrics_warmup_frames;
     (void)metrics_measured_frames;
     (void)metrics_frames_per_workload;
+    (void)renderer_quality;
 
     if (renderer_benchmark) {
         gameengine::core::log(gameengine::core::LogLevel::info,

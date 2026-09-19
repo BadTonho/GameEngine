@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 7C renderer foundation in use.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a procedural instanced cube, CPU frustum culling, opt-in GPU culling/indirect drawing, versioned asset formats/tools, an internal scene graph and measured render passes. It is not ready to create a complete game yet.
+> **Status: early development — Phase 7E Forward+ consolidation in progress.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a procedural instanced cube, CPU frustum culling, opt-in GPU culling/indirect drawing, production Low/Medium/High Forward+ profiles and measured render passes. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -23,7 +23,7 @@ The complete direction is documented in [Idea.md](Idea.md). The implementation s
 
 ## Current status
 
-Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7D now includes the first measurable renderer foundation and deterministic lighting-path benchmark:
+Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7E promotes the Low/Medium/High Forward+ profiles while keeping Clustered and Deferred benchmark-only:
 
 - CMake 3.25+ project using C++20 without compiler extensions;
 - `gameengine_core` with fixed-width types, status values, diagnostics, clock and input state;
@@ -43,6 +43,8 @@ Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7
 - deterministic procedural instancing with a persistent per-frame host-visible instance buffer and CPU frustum culling;
 - opt-in Vulkan compute culling with atomic compaction, persistent GPU buffers and indexed indirect drawing, with CPU fallback;
 - an internal `--renderer-benchmark` mode comparing procedural Forward, Forward+, Clustered and Deferred prototypes over deterministic 1k/10k/100k instance and 1/32/256 light workloads;
+- internal quality selection through `--renderer-quality low|medium|high`, with Low fallback when compute/storage support is unavailable;
+- deterministic 16x16 Forward+ tile-list preparation, procedural point-light data, a 1024² directional shadow map, a mipmapped 64² procedural cubemap and versioned Forward+/shadow/environment Slang artifacts;
 - versioned benchmark reports in `build/renderer-benchmarks/lighting_benchmark_v1.txt`, with explicit unavailable markers for unsupported RAM/VRAM metrics;
 - generation-checked handles and fence-based deferred resource destruction;
 - Vulkan object names and command labels through `VK_EXT_debug_utils`;
@@ -58,7 +60,7 @@ The following are intentionally outside the current procedural renderer scope:
 - asset-file texture/material loading;
 - runtime shader file loading, automatic polling and editor integration;
 - prepared asset runtime integration, editor, Lua and a final ECS storage choice;
-- shadows, IBL, quality levels and the final Forward+/Clustered/Deferred decision based on reference hardware;
+- VRAM policy and the hardware baseline for the final lighting decision;
 - physics, audio, networking or gameplay APIs;
 - a functional C ABI.
 
@@ -224,6 +226,20 @@ The generator writes the checked-in `src/engine/renderer/vulkan/triangle_shaders
 The regular runtime build does not require `slangc` because the generated header is already included in the repository. The Vulkan renderer stores a device-specific pipeline cache in `gameengine.pipeline.cache` by default; `RendererConfiguration::pipeline_cache_path` can select another path. The C++ configuration also exposes explicit development-only `reload_shaders()` support. The bootstrap mesh, checkerboard texture and material constants are generated in memory; no asset file is required. The C ABI is unchanged.
 
 `gameengine_runtime --metrics` executes 10 warmup frames and 30 measured frames for each procedural workload of 1,000, 10,000 and 100,000 instances. Each block reports CPU visibility time, visible/culled instances, draw calls and optional GPU timing for `forward_opaque`. Add `--gpu-culling` to select the opt-in compute path; its output includes the `gpu_cull` pass, dispatch preparation time, persistent buffer sizes and CPU fallback state when the device has no compute support.
+
+The production lighting profile is selected internally with `--renderer-quality low|medium|high`
+and defaults to Medium. Low is the directional-light fallback; Medium builds deterministic 16x16
+Forward+ tile data from 256 procedural point lights. High adds the persistent directional shadow
+pass and a procedural mipmapped cubemap, with an explicit fallback when the device cannot provide
+the required resources. These profiles
+are compatible with `--smoke-test`, `--metrics`, `--renderer-benchmark` and `--gpu-culling`.
+
+```text
+gameengine_runtime --smoke-test --renderer-quality low
+gameengine_runtime --smoke-test --renderer-quality medium
+gameengine_runtime --smoke-test --renderer-quality high
+gameengine_runtime --metrics --renderer-quality medium
+```
 
 ### Offline asset tools
 

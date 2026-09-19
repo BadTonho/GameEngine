@@ -9,6 +9,11 @@ set(_expected_slang_version "2026.13.1-1-g84792eb15")
 set(_shader_source "${_repository_dir}/assets/shaders/bootstrap/triangle.slang")
 set(_compute_shader_source "${_repository_dir}/assets/shaders/bootstrap/cull.slang")
 set(_benchmark_shader_source "${_repository_dir}/assets/shaders/bootstrap/benchmark.slang")
+set(_forward_plus_shader_source "${_repository_dir}/assets/shaders/bootstrap/forward_plus.slang")
+set(_forward_plus_high_shader_source "${_repository_dir}/assets/shaders/bootstrap/forward_plus_high.slang")
+set(_forward_plus_compute_shader_source "${_repository_dir}/assets/shaders/bootstrap/forward_plus_compute.slang")
+set(_shadow_shader_source "${_repository_dir}/assets/shaders/bootstrap/shadow.slang")
+set(_environment_shader_source "${_repository_dir}/assets/shaders/bootstrap/environment.slang")
 set(_default_header "${_repository_dir}/src/engine/renderer/vulkan/triangle_shaders.hpp")
 set(_default_reflection_dir "${_repository_dir}/build/shader-reflection")
 set(_default_cache_dir "${_repository_dir}/build/shader-cache")
@@ -62,6 +67,21 @@ endif()
 if(NOT EXISTS "${_benchmark_shader_source}")
     message(FATAL_ERROR "Benchmark shader source does not exist: ${_benchmark_shader_source}")
 endif()
+if(NOT EXISTS "${_forward_plus_shader_source}")
+    message(FATAL_ERROR "Forward+ shader source does not exist: ${_forward_plus_shader_source}")
+endif()
+if(NOT EXISTS "${_forward_plus_high_shader_source}")
+    message(FATAL_ERROR "Forward+ High shader source does not exist: ${_forward_plus_high_shader_source}")
+endif()
+if(NOT EXISTS "${_forward_plus_compute_shader_source}")
+    message(FATAL_ERROR "Forward+ compute shader source does not exist: ${_forward_plus_compute_shader_source}")
+endif()
+if(NOT EXISTS "${_shadow_shader_source}")
+    message(FATAL_ERROR "Shadow shader source does not exist: ${_shadow_shader_source}")
+endif()
+if(NOT EXISTS "${_environment_shader_source}")
+    message(FATAL_ERROR "Environment shader source does not exist: ${_environment_shader_source}")
+endif()
 
 execute_process(
     COMMAND "${_slangc}" -version
@@ -91,6 +111,11 @@ file(MAKE_DIRECTORY "${_header_directory}")
 file(SHA256 "${_shader_source}" _source_sha256)
 file(SHA256 "${_compute_shader_source}" _compute_source_sha256)
 file(SHA256 "${_benchmark_shader_source}" _benchmark_source_sha256)
+file(SHA256 "${_forward_plus_shader_source}" _forward_plus_source_sha256)
+file(SHA256 "${_forward_plus_high_shader_source}" _forward_plus_high_source_sha256)
+file(SHA256 "${_forward_plus_compute_shader_source}" _forward_plus_compute_source_sha256)
+file(SHA256 "${_shadow_shader_source}" _shadow_source_sha256)
+file(SHA256 "${_environment_shader_source}" _environment_source_sha256)
 
 set(_base_manifest
     "schema=1\n"
@@ -174,10 +199,55 @@ function(_validate_shader_outputs _stage _entry _output _reflection)
                     "Benchmark reflection is missing resource '${_resource_name}': ${_reflection}")
             endif()
         endforeach()
+    elseif(_stage STREQUAL "compute" AND _entry STREQUAL "forward_plus_light_list_main")
+        foreach(_resource_name IN ITEMS point_lights tile_headers tile_light_indices)
+            string(FIND "${_reflection_content}" "\"name\": \"${_resource_name}\"" _resource_position)
+            if(_resource_position EQUAL -1)
+                message(FATAL_ERROR
+                    "Forward+ compute reflection is missing resource '${_resource_name}': ${_reflection}")
+            endif()
+        endforeach()
+    elseif(_entry STREQUAL "forward_plus_vertex_main")
+        foreach(_input_name IN ITEMS model_column0 model_column1 model_column2 model_column3)
+            string(FIND "${_reflection_content}" "\"name\": \"${_input_name}\"" _input_position)
+            if(_input_position EQUAL -1)
+                message(FATAL_ERROR
+                    "Forward+ vertex reflection is missing instance input '${_input_name}': ${_reflection}")
+            endif()
+        endforeach()
+    elseif(_entry STREQUAL "forward_plus_fragment_main")
+        foreach(_resource_name IN ITEMS point_lights tile_headers tile_light_indices)
+            string(FIND "${_reflection_content}" "\"name\": \"${_resource_name}\"" _resource_position)
+            if(_resource_position EQUAL -1)
+                message(FATAL_ERROR
+                    "Forward+ reflection is missing resource '${_resource_name}': ${_reflection}")
+            endif()
+        endforeach()
+    elseif(_entry STREQUAL "forward_plus_high_fragment_main")
+        foreach(_resource_name IN ITEMS point_lights tile_headers tile_light_indices shadow_map environment_map)
+            string(FIND "${_reflection_content}" "\"name\": \"${_resource_name}\"" _resource_position)
+            if(_resource_position EQUAL -1)
+                message(FATAL_ERROR
+                    "Forward+ High reflection is missing resource '${_resource_name}': ${_reflection}")
+            endif()
+        endforeach()
+    elseif(_entry STREQUAL "forward_plus_high_vertex_main")
+        foreach(_input_name IN ITEMS model_column0 model_column1 model_column2 model_column3)
+            string(FIND "${_reflection_content}" "\"name\": \"${_input_name}\"" _input_position)
+            if(_input_position EQUAL -1)
+                message(FATAL_ERROR
+                    "Forward+ High vertex reflection is missing instance input '${_input_name}': ${_reflection}")
+            endif()
+        endforeach()
+    elseif(_entry STREQUAL "shadow_vertex_main")
+        string(FIND "${_reflection_content}" "\"name\": \"model_column0\"" _input_position)
+        if(_input_position EQUAL -1)
+            message(FATAL_ERROR "Shadow reflection is missing model input: ${_reflection}")
+        endif()
     endif()
 endfunction()
 
-function(_compile_shader _source _stage _entry _id _manifest _output_result _reflection_result)
+function(_compile_shader _label _source _stage _entry _id _manifest _output_result _reflection_result)
     set(_artifact_dir "${_cache_dir}/${_configuration}/${_id}")
     set(_cached_output "${_artifact_dir}/shader.spv")
     set(_cached_reflection "${_artifact_dir}/reflection.json")
@@ -237,8 +307,8 @@ function(_compile_shader _source _stage _entry _id _manifest _output_result _ref
     endif()
 
     _validate_shader_outputs("${_stage}" "${_entry}" "${_cached_output}" "${_cached_reflection}")
-    set(_staged_output "${_reflection_dir}/triangle.${_stage}.spv")
-    set(_staged_reflection "${_reflection_dir}/triangle.${_stage}.reflection.json")
+    set(_staged_output "${_reflection_dir}/${_label}.${_stage}.spv")
+    set(_staged_reflection "${_reflection_dir}/${_label}.${_stage}.reflection.json")
     configure_file("${_cached_output}" "${_staged_output}" COPYONLY)
     configure_file("${_cached_reflection}" "${_staged_reflection}" COPYONLY)
     set(${_output_result} "${_cached_output}" PARENT_SCOPE)
@@ -249,10 +319,24 @@ _make_shader_identity("${_source_sha256}" vertex vertex_main _vertex_id _vertex_
 _make_shader_identity("${_source_sha256}" fragment fragment_main _fragment_id _fragment_manifest)
 _make_shader_identity("${_compute_source_sha256}" compute compute_main _compute_id _compute_manifest)
 _make_shader_identity("${_benchmark_source_sha256}" compute benchmark_compute_main _benchmark_compute_id _benchmark_compute_manifest)
-_compile_shader("${_shader_source}" vertex vertex_main "${_vertex_id}" "${_vertex_manifest}" _vertex_spirv _vertex_reflection)
-_compile_shader("${_shader_source}" fragment fragment_main "${_fragment_id}" "${_fragment_manifest}" _fragment_spirv _fragment_reflection)
-_compile_shader("${_compute_shader_source}" compute compute_main "${_compute_id}" "${_compute_manifest}" _compute_spirv _compute_reflection)
-_compile_shader("${_benchmark_shader_source}" compute benchmark_compute_main "${_benchmark_compute_id}" "${_benchmark_compute_manifest}" _benchmark_compute_spirv _benchmark_compute_reflection)
+_make_shader_identity("${_forward_plus_source_sha256}" vertex forward_plus_vertex_main _forward_plus_vertex_id _forward_plus_vertex_manifest)
+_make_shader_identity("${_forward_plus_source_sha256}" fragment forward_plus_fragment_main _forward_plus_fragment_id _forward_plus_fragment_manifest)
+_make_shader_identity("${_forward_plus_high_source_sha256}" vertex forward_plus_high_vertex_main _forward_plus_high_vertex_id _forward_plus_high_vertex_manifest)
+_make_shader_identity("${_forward_plus_high_source_sha256}" fragment forward_plus_high_fragment_main _forward_plus_high_fragment_id _forward_plus_high_fragment_manifest)
+_make_shader_identity("${_forward_plus_compute_source_sha256}" compute forward_plus_light_list_main _forward_plus_compute_id _forward_plus_compute_manifest)
+_make_shader_identity("${_shadow_source_sha256}" vertex shadow_vertex_main _shadow_vertex_id _shadow_vertex_manifest)
+_make_shader_identity("${_environment_source_sha256}" compute environment_compute_main _environment_compute_id _environment_compute_manifest)
+_compile_shader("triangle" "${_shader_source}" vertex vertex_main "${_vertex_id}" "${_vertex_manifest}" _vertex_spirv _vertex_reflection)
+_compile_shader("triangle" "${_shader_source}" fragment fragment_main "${_fragment_id}" "${_fragment_manifest}" _fragment_spirv _fragment_reflection)
+_compile_shader("cull" "${_compute_shader_source}" compute compute_main "${_compute_id}" "${_compute_manifest}" _compute_spirv _compute_reflection)
+_compile_shader("benchmark" "${_benchmark_shader_source}" compute benchmark_compute_main "${_benchmark_compute_id}" "${_benchmark_compute_manifest}" _benchmark_compute_spirv _benchmark_compute_reflection)
+_compile_shader("forward_plus" "${_forward_plus_shader_source}" vertex forward_plus_vertex_main "${_forward_plus_vertex_id}" "${_forward_plus_vertex_manifest}" _forward_plus_vertex_spirv _forward_plus_vertex_reflection)
+_compile_shader("forward_plus" "${_forward_plus_shader_source}" fragment forward_plus_fragment_main "${_forward_plus_fragment_id}" "${_forward_plus_fragment_manifest}" _forward_plus_fragment_spirv _forward_plus_fragment_reflection)
+_compile_shader("forward_plus_high" "${_forward_plus_high_shader_source}" vertex forward_plus_high_vertex_main "${_forward_plus_high_vertex_id}" "${_forward_plus_high_vertex_manifest}" _forward_plus_high_vertex_spirv _forward_plus_high_vertex_reflection)
+_compile_shader("forward_plus_high" "${_forward_plus_high_shader_source}" fragment forward_plus_high_fragment_main "${_forward_plus_high_fragment_id}" "${_forward_plus_high_fragment_manifest}" _forward_plus_high_fragment_spirv _forward_plus_high_fragment_reflection)
+_compile_shader("forward_plus_compute" "${_forward_plus_compute_shader_source}" compute forward_plus_light_list_main "${_forward_plus_compute_id}" "${_forward_plus_compute_manifest}" _forward_plus_compute_spirv _forward_plus_compute_reflection)
+_compile_shader("shadow" "${_shadow_shader_source}" vertex shadow_vertex_main "${_shadow_vertex_id}" "${_shadow_vertex_manifest}" _shadow_vertex_spirv _shadow_vertex_reflection)
+_compile_shader("environment" "${_environment_shader_source}" compute environment_compute_main "${_environment_compute_id}" "${_environment_compute_manifest}" _environment_compute_spirv _environment_compute_reflection)
 
 function(_read_spirv_words _path _symbol _result)
     file(READ "${_path}" _hex HEX)
@@ -277,6 +361,13 @@ _read_spirv_words("${_vertex_spirv}" vertex_shader _vertex_array)
 _read_spirv_words("${_fragment_spirv}" fragment_shader _fragment_array)
 _read_spirv_words("${_compute_spirv}" compute_shader _compute_array)
 _read_spirv_words("${_benchmark_compute_spirv}" benchmark_compute_shader _benchmark_compute_array)
+_read_spirv_words("${_forward_plus_vertex_spirv}" forward_plus_vertex_shader _forward_plus_vertex_array)
+_read_spirv_words("${_forward_plus_fragment_spirv}" forward_plus_fragment_shader _forward_plus_fragment_array)
+_read_spirv_words("${_forward_plus_high_vertex_spirv}" forward_plus_high_vertex_shader _forward_plus_high_vertex_array)
+_read_spirv_words("${_forward_plus_high_fragment_spirv}" forward_plus_high_fragment_shader _forward_plus_high_fragment_array)
+_read_spirv_words("${_forward_plus_compute_spirv}" forward_plus_compute_shader _forward_plus_compute_array)
+_read_spirv_words("${_shadow_vertex_spirv}" shadow_vertex_shader _shadow_vertex_array)
+_read_spirv_words("${_environment_compute_spirv}" environment_compute_shader _environment_compute_array)
 
 file(WRITE "${_shader_header}" "#pragma once\n\n")
 file(APPEND "${_shader_header}"
@@ -293,6 +384,7 @@ file(APPEND "${_shader_header}"
     "inline constexpr std::string_view benchmark_compute_shader_source_sha256 = \"${_benchmark_source_sha256}\";\n"
     "inline constexpr std::string_view shader_vertex_layout = \"position3_normal3_uv2+instance_model4\";\n"
     "inline constexpr std::uint32_t shader_push_constant_size = 64U;\n"
+    "inline constexpr std::uint32_t forward_plus_push_constant_size = 72U;\n"
     "inline constexpr std::string_view shader_vertex_inputs =\n"
     "    \"location0:position3,location1:normal3,location2:uv2,location3:model_column0,\"\n"
     "    \"location4:model_column1,location5:model_column2,location6:model_column3\";\n"
@@ -304,8 +396,22 @@ file(APPEND "${_shader_header}"
 file(APPEND "${_shader_header}"
     "inline constexpr std::string_view benchmark_compute_resource_layout =\n"
     "    \"set0:storage_buffer+storage_buffer+storage_buffer\";\n"
-    "inline constexpr std::uint32_t benchmark_compute_workgroup_size = 64U;\n")
-file(APPEND "${_shader_header}" "${_vertex_array}${_fragment_array}${_compute_array}${_benchmark_compute_array}\n")
+    "inline constexpr std::uint32_t benchmark_compute_workgroup_size = 64U;\n"
+    "inline constexpr std::string_view forward_plus_resource_layout =\n"
+    "    \"set0:uniform_buffer+sampled_image+sampler+storage_buffer+storage_buffer+storage_buffer\";\n"
+    "inline constexpr std::uint32_t forward_plus_workgroup_size = 16U;\n"
+    "inline constexpr std::string_view forward_plus_high_resource_layout =\n"
+    "    \"set0:uniform_buffer+sampled_image+sampler+storage_buffer+storage_buffer+storage_buffer+sampled_image+sampled_image\";\n"
+    "inline constexpr std::string_view forward_plus_compute_resource_layout =\n"
+    "    \"set0:storage_buffer+storage_buffer+storage_buffer\";\n"
+    "inline constexpr std::uint32_t forward_plus_compute_workgroup_size = 16U;\n"
+    "inline constexpr std::string_view shadow_resource_layout = \"push_constant_only\";\n")
+file(APPEND "${_shader_header}"
+    "${_vertex_array}${_fragment_array}${_compute_array}${_benchmark_compute_array}"
+    "${_forward_plus_vertex_array}${_forward_plus_fragment_array}"
+    "${_forward_plus_high_vertex_array}${_forward_plus_high_fragment_array}"
+    "${_forward_plus_compute_array}"
+    "${_shadow_vertex_array}${_environment_compute_array}\n")
 file(APPEND "${_shader_header}"
     "inline constexpr std::string_view vertex_shader_id = \"${_vertex_id}\";\n"
     "inline constexpr std::string_view fragment_shader_id = \"${_fragment_id}\";\n"
@@ -338,6 +444,62 @@ file(APPEND "${_shader_header}"
     "};\n"
     "inline constexpr std::array<ShaderArtifact, 1> benchmark_compute_shader_variants = {\n"
     "    benchmark_compute_shader_artifact,\n"
+    "};\n"
+    "inline constexpr std::string_view forward_plus_vertex_shader_id = \"${_forward_plus_vertex_id}\";\n"
+    "inline constexpr std::string_view forward_plus_fragment_shader_id = \"${_forward_plus_fragment_id}\";\n"
+    "inline constexpr ShaderArtifact forward_plus_vertex_shader_artifact{\n"
+    "    forward_plus_vertex_shader_id, ShaderStage::vertex, \"forward_plus_vertex_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, forward_plus_vertex_shader.data(), forward_plus_vertex_shader.size()\n"
+    "};\n"
+    "inline constexpr ShaderArtifact forward_plus_fragment_shader_artifact{\n"
+    "    forward_plus_fragment_shader_id, ShaderStage::fragment, \"forward_plus_fragment_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, forward_plus_fragment_shader.data(), forward_plus_fragment_shader.size()\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> forward_plus_vertex_shader_variants = {\n"
+    "    forward_plus_vertex_shader_artifact,\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> forward_plus_fragment_shader_variants = {\n"
+    "    forward_plus_fragment_shader_artifact,\n"
+    "};\n"
+    "inline constexpr std::string_view forward_plus_high_vertex_shader_id = \"${_forward_plus_high_vertex_id}\";\n"
+    "inline constexpr std::string_view forward_plus_high_fragment_shader_id = \"${_forward_plus_high_fragment_id}\";\n"
+    "inline constexpr ShaderArtifact forward_plus_high_vertex_shader_artifact{\n"
+    "    forward_plus_high_vertex_shader_id, ShaderStage::vertex, \"forward_plus_high_vertex_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, forward_plus_high_vertex_shader.data(), forward_plus_high_vertex_shader.size()\n"
+    "};\n"
+    "inline constexpr ShaderArtifact forward_plus_high_fragment_shader_artifact{\n"
+    "    forward_plus_high_fragment_shader_id, ShaderStage::fragment, \"forward_plus_high_fragment_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, forward_plus_high_fragment_shader.data(), forward_plus_high_fragment_shader.size()\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> forward_plus_high_vertex_shader_variants = {\n"
+    "    forward_plus_high_vertex_shader_artifact,\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> forward_plus_high_fragment_shader_variants = {\n"
+    "    forward_plus_high_fragment_shader_artifact,\n"
+    "};\n"
+    "inline constexpr std::string_view forward_plus_compute_shader_id = \"${_forward_plus_compute_id}\";\n"
+    "inline constexpr ShaderArtifact forward_plus_compute_shader_artifact{\n"
+    "    forward_plus_compute_shader_id, ShaderStage::compute, \"forward_plus_light_list_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, forward_plus_compute_shader.data(), forward_plus_compute_shader.size()\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> forward_plus_compute_shader_variants = {\n"
+    "    forward_plus_compute_shader_artifact,\n"
+    "};\n"
+    "inline constexpr std::string_view shadow_vertex_shader_id = \"${_shadow_vertex_id}\";\n"
+    "inline constexpr ShaderArtifact shadow_vertex_shader_artifact{\n"
+    "    shadow_vertex_shader_id, ShaderStage::vertex, \"shadow_vertex_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, shadow_vertex_shader.data(), shadow_vertex_shader.size()\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> shadow_vertex_shader_variants = {\n"
+    "    shadow_vertex_shader_artifact,\n"
+    "};\n"
+    "inline constexpr std::string_view environment_compute_shader_id = \"${_environment_compute_id}\";\n"
+    "inline constexpr ShaderArtifact environment_compute_shader_artifact{\n"
+    "    environment_compute_shader_id, ShaderStage::compute, \"environment_compute_main\",\n"
+    "    shader_capability_vulkan_1_0, 0, environment_compute_shader.data(), environment_compute_shader.size()\n"
+    "};\n"
+    "inline constexpr std::array<ShaderArtifact, 1> environment_compute_shader_variants = {\n"
+    "    environment_compute_shader_artifact,\n"
     "};\n\n"
     "} // namespace gameengine::renderer::vulkan::bootstrap\n")
 

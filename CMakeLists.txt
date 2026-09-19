@@ -130,6 +130,10 @@ add_library(gameengine_renderer STATIC
     src/engine/renderer/gpu_culling.hpp
     src/engine/renderer/renderer_benchmark.cpp
     src/engine/renderer/renderer_benchmark.hpp
+    src/engine/renderer/renderer_quality.cpp
+    src/engine/renderer/renderer_quality.hpp
+    src/engine/renderer/forward_plus.cpp
+    src/engine/renderer/forward_plus.hpp
     src/engine/renderer/procedural_instances.cpp
     src/engine/renderer/procedural_instances.hpp
     src/engine/renderer/render_graph/render_graph.cpp
@@ -313,6 +317,32 @@ if(GAMEENGINE_BUILD_TESTS)
     gameengine_configure_target(gameengine_renderer_benchmark_tests)
     add_test(NAME gameengine_renderer_benchmark COMMAND gameengine_renderer_benchmark_tests)
 
+    add_executable(gameengine_renderer_quality_tests
+        tests/renderer_quality_tests.cpp
+    )
+    target_link_libraries(gameengine_renderer_quality_tests PRIVATE
+        gameengine_renderer
+        gameengine_core
+    )
+    target_include_directories(gameengine_renderer_quality_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    gameengine_configure_target(gameengine_renderer_quality_tests)
+    add_test(NAME gameengine_renderer_quality COMMAND gameengine_renderer_quality_tests)
+
+    add_executable(gameengine_forward_plus_tests
+        tests/forward_plus_tests.cpp
+    )
+    target_link_libraries(gameengine_forward_plus_tests PRIVATE
+        gameengine_renderer
+        gameengine_core
+    )
+    target_include_directories(gameengine_forward_plus_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    gameengine_configure_target(gameengine_forward_plus_tests)
+    add_test(NAME gameengine_forward_plus COMMAND gameengine_forward_plus_tests)
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         find_program(GAMEENGINE_XVFB_RUN xvfb-run)
 
@@ -364,6 +394,18 @@ if(GAMEENGINE_BUILD_TESTS)
                 COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_runtime> --renderer-benchmark
             )
             add_test(
+                NAME gameengine_runtime_quality_low
+                COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_runtime> --smoke-test --renderer-quality low
+            )
+            add_test(
+                NAME gameengine_runtime_quality_medium
+                COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_runtime> --smoke-test --renderer-quality medium
+            )
+            add_test(
+                NAME gameengine_runtime_quality_high
+                COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_runtime> --smoke-test --renderer-quality high
+            )
+            add_test(
                 NAME gameengine_platform_x11
                 COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_platform_tests>
             )
@@ -378,6 +420,9 @@ if(GAMEENGINE_BUILD_TESTS)
             add_test(NAME gameengine_runtime_metrics COMMAND gameengine_runtime --metrics)
             add_test(NAME gameengine_runtime_gpu_metrics COMMAND gameengine_runtime --metrics --gpu-culling)
             add_test(NAME gameengine_runtime_benchmark COMMAND gameengine_runtime --renderer-benchmark)
+            add_test(NAME gameengine_runtime_quality_low COMMAND gameengine_runtime --smoke-test --renderer-quality low)
+            add_test(NAME gameengine_runtime_quality_medium COMMAND gameengine_runtime --smoke-test --renderer-quality medium)
+            add_test(NAME gameengine_runtime_quality_high COMMAND gameengine_runtime --smoke-test --renderer-quality high)
             add_test(NAME gameengine_platform_x11 COMMAND gameengine_platform_tests)
             if(GAMEENGINE_BUILD_VULKAN)
                 add_test(NAME gameengine_vulkan_resize COMMAND gameengine_vulkan_tests)
@@ -429,6 +474,9 @@ if(GAMEENGINE_BUILD_TESTS)
         add_test(NAME gameengine_runtime_metrics COMMAND gameengine_runtime --metrics)
         add_test(NAME gameengine_runtime_gpu_metrics COMMAND gameengine_runtime --metrics --gpu-culling)
         add_test(NAME gameengine_runtime_benchmark COMMAND gameengine_runtime --renderer-benchmark)
+        add_test(NAME gameengine_runtime_quality_low COMMAND gameengine_runtime --smoke-test --renderer-quality low)
+        add_test(NAME gameengine_runtime_quality_medium COMMAND gameengine_runtime --smoke-test --renderer-quality medium)
+        add_test(NAME gameengine_runtime_quality_high COMMAND gameengine_runtime --smoke-test --renderer-quality high)
     else()
         add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
     endif()
@@ -444,6 +492,8 @@ if(GAMEENGINE_BUILD_TESTS)
     set_tests_properties(gameengine_renderer_instances PROPERTIES LABELS "unit")
     set_tests_properties(gameengine_renderer_gpu_culling PROPERTIES LABELS "unit")
     set_tests_properties(gameengine_renderer_benchmark PROPERTIES LABELS "unit")
+    set_tests_properties(gameengine_renderer_quality PROPERTIES LABELS "unit")
+    set_tests_properties(gameengine_forward_plus PROPERTIES LABELS "unit")
     if(TEST gameengine_shader_pipeline)
         set_tests_properties(gameengine_shader_pipeline PROPERTIES LABELS "shader")
     endif()
@@ -451,6 +501,9 @@ if(GAMEENGINE_BUILD_TESTS)
     set_tests_properties(gameengine_runtime_metrics PROPERTIES LABELS "smoke")
     set_tests_properties(gameengine_runtime_gpu_metrics PROPERTIES LABELS "smoke")
     set_tests_properties(gameengine_runtime_benchmark PROPERTIES LABELS "smoke")
+    set_tests_properties(gameengine_runtime_quality_low PROPERTIES LABELS "smoke")
+    set_tests_properties(gameengine_runtime_quality_medium PROPERTIES LABELS "smoke")
+    set_tests_properties(gameengine_runtime_quality_high PROPERTIES LABELS "smoke")
     if(TEST gameengine_platform_win32)
         set_tests_properties(gameengine_platform_win32 PROPERTIES LABELS "platform")
     endif()

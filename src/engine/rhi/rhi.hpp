@@ -14,12 +14,19 @@ namespace gameengine::renderer::gpu_culling {
 enum class VisibilityMode : core::u8;
 }
 
+namespace gameengine::renderer::quality {
+enum class RendererQuality : core::u8;
+}
+
 namespace gameengine::renderer::diagnostics {
 
 void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
 [[nodiscard]] core::Status set_visibility_mode(
     const gameengine::rhi::Renderer& renderer,
     gpu_culling::VisibilityMode mode) noexcept;
+[[nodiscard]] core::Status set_renderer_quality(
+    const gameengine::rhi::Renderer& renderer,
+    quality::RendererQuality quality) noexcept;
 [[nodiscard]] core::Status set_procedural_workload(const gameengine::rhi::Renderer& renderer,
                                                    core::u32 instance_count) noexcept;
 void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
@@ -162,6 +169,9 @@ private:
     friend core::Status renderer::diagnostics::set_visibility_mode(
         const Renderer& renderer,
         renderer::gpu_culling::VisibilityMode mode) noexcept;
+    friend core::Status renderer::diagnostics::set_renderer_quality(
+        const Renderer& renderer,
+        renderer::quality::RendererQuality quality) noexcept;
     friend core::Status renderer::diagnostics::set_procedural_workload(
         const Renderer& renderer,
         core::u32 instance_count) noexcept;

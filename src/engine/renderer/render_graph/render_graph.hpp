@@ -16,6 +16,7 @@ enum class ResourceKind : core::u8 {
     storage_buffer,
     vertex_buffer,
     indirect_buffer,
+    sampled_image,
 };
 
 struct ResourceHandle final {

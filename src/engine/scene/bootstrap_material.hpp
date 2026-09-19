@@ -37,9 +37,15 @@ struct alignas(16) BootstrapMaterialConstants final {
     std::array<core::f32, 4> light_direction_intensity = {-0.45F, -0.8F, -0.35F, 4.0F};
     std::array<core::f32, 4> camera_position_exposure = {2.5F, 2.0F, 4.0F, 1.0F};
     std::array<core::f32, 4> material_parameters = {0.05F, 0.42F, 0.03F, 0.0F};
+    std::array<core::f32, 16> shadow_view_projection = {
+        1.0F, 0.0F, 0.0F, 0.0F,
+        0.0F, 1.0F, 0.0F, 0.0F,
+        0.0F, 0.0F, 1.0F, 0.0F,
+        0.0F, 0.0F, 0.0F, 1.0F,
+    };
 };
 
-static_assert(sizeof(BootstrapMaterialConstants) == 64U);
+static_assert(sizeof(BootstrapMaterialConstants) == 128U);
 static_assert(alignof(BootstrapMaterialConstants) == 16U);
 
 } // namespace gameengine::scene

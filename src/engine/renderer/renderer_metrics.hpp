@@ -9,6 +9,7 @@
 #include "engine/core/types.hpp"
 #include "engine/renderer/gpu_culling.hpp"
 #include "engine/renderer/renderer_benchmark.hpp"
+#include "engine/renderer/renderer_quality.hpp"
 
 namespace gameengine::rhi {
 class Renderer;
@@ -48,12 +49,27 @@ struct FrameTimingReport final {
     bool gpu_culling_active = false;
     bool gpu_culling_fallback = false;
     bool gpu_timestamps_available = false;
+    quality::RendererQuality requested_quality = quality::RendererQuality::medium;
+    quality::RendererQuality effective_quality = quality::RendererQuality::low;
+    bool quality_compute_fallback = false;
+    bool quality_shadow_fallback = false;
+    bool quality_environment_fallback = false;
+    core::u64 light_buffer_bytes = 0;
+    core::u64 tile_header_buffer_bytes = 0;
+    core::u64 tile_index_buffer_bytes = 0;
+    core::u64 shadow_map_bytes = 0;
+    core::u64 environment_bytes = 0;
 
     void reset(bool gpu_available,
                gpu_culling::VisibilityMode mode = gpu_culling::VisibilityMode::cpu,
                bool gpu_available_for_culling = false,
                bool gpu_active = false,
-               bool gpu_fallback = false) noexcept
+               bool gpu_fallback = false,
+               quality::RendererQuality requested = quality::RendererQuality::medium,
+               quality::RendererQuality effective = quality::RendererQuality::low,
+               bool quality_compute = false,
+               bool quality_shadow = false,
+               bool quality_environment = false) noexcept
     {
         passes = {};
         pass_count = 0;
@@ -72,6 +88,16 @@ struct FrameTimingReport final {
         gpu_culling_active = gpu_active;
         gpu_culling_fallback = gpu_fallback;
         gpu_timestamps_available = gpu_available;
+        requested_quality = requested;
+        effective_quality = effective;
+        quality_compute_fallback = quality_compute;
+        quality_shadow_fallback = quality_shadow;
+        quality_environment_fallback = quality_environment;
+        light_buffer_bytes = 0;
+        tile_header_buffer_bytes = 0;
+        tile_index_buffer_bytes = 0;
+        shadow_map_bytes = 0;
+        environment_bytes = 0;
     }
 
     void add_pass(std::string_view pass_name,
@@ -133,6 +159,16 @@ struct TimingAccumulator final {
     bool gpu_culling_active = false;
     bool gpu_culling_fallback = false;
     bool gpu_timestamps_available = false;
+    quality::RendererQuality requested_quality = quality::RendererQuality::medium;
+    quality::RendererQuality effective_quality = quality::RendererQuality::low;
+    bool quality_compute_fallback = false;
+    bool quality_shadow_fallback = false;
+    bool quality_environment_fallback = false;
+    core::u64 light_buffer_bytes = 0;
+    core::u64 tile_header_buffer_bytes = 0;
+    core::u64 tile_index_buffer_bytes = 0;
+    core::u64 shadow_map_bytes = 0;
+    core::u64 environment_bytes = 0;
 
     void reset() noexcept
     {
@@ -161,6 +197,16 @@ struct TimingAccumulator final {
         gpu_culling_active = false;
         gpu_culling_fallback = false;
         gpu_timestamps_available = false;
+        requested_quality = quality::RendererQuality::medium;
+        effective_quality = quality::RendererQuality::low;
+        quality_compute_fallback = false;
+        quality_shadow_fallback = false;
+        quality_environment_fallback = false;
+        light_buffer_bytes = 0;
+        tile_header_buffer_bytes = 0;
+        tile_index_buffer_bytes = 0;
+        shadow_map_bytes = 0;
+        environment_bytes = 0;
     }
 
     void record(const FrameTimingReport& report) noexcept
@@ -196,6 +242,16 @@ struct TimingAccumulator final {
         gpu_culling_fallback = report.gpu_culling_fallback;
         gpu_timestamps_available = gpu_timestamps_available ||
                                     report.gpu_timestamps_available;
+        requested_quality = report.requested_quality;
+        effective_quality = report.effective_quality;
+        quality_compute_fallback = report.quality_compute_fallback;
+        quality_shadow_fallback = report.quality_shadow_fallback;
+        quality_environment_fallback = report.quality_environment_fallback;
+        light_buffer_bytes = report.light_buffer_bytes;
+        tile_header_buffer_bytes = report.tile_header_buffer_bytes;
+        tile_index_buffer_bytes = report.tile_index_buffer_bytes;
+        shadow_map_bytes = report.shadow_map_bytes;
+        environment_bytes = report.environment_bytes;
         for (core::u32 index = 0; index < report.pass_count; ++index) {
             const PassTiming& timing = report.passes[index];
             PassTimingAggregate* aggregate = nullptr;
