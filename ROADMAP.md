@@ -6,7 +6,7 @@ The roadmap does not define deadlines. Each phase is a technical milestone. A ph
 
 ## Current status
 
-The repository completed Phase 2 and Phase 3 and is implementing the first Phase 4 vertical slice. The public foundation, X11/Win32 platform paths, Vulkan RHI, resource uploads, deferred destruction, swapchain, offline Slang pipeline, internal 3D math, indexed cube and Vulkan depth path are implemented locally.
+The repository completed Phase 2 through Phase 6 and is implementing the first measurable slice of Phase 7. The public foundation, X11/Win32 platform paths, Vulkan RHI, resource uploads, deferred destruction, swapchain, offline Slang pipeline, internal 3D math, indexed cube, Vulkan depth path, procedural scene data and internal scene graph are implemented locally.
 
 ## Evolution rules
 
@@ -233,7 +233,7 @@ Goal: build the rendering architecture that supports high quality without imposi
 
 ### Tasks
 
-- [ ] Define real pass dependencies before freezing the render graph.
+- [x] Define real pass dependencies before freezing the render graph.
 - [ ] Implement the chosen lighting path based on benchmarks.
 - [ ] Implement IBL and shadows.
 - [ ] Implement instancing.
@@ -241,9 +241,21 @@ Goal: build the rendering architecture that supports high quality without imposi
 - [ ] Evaluate GPU culling and indirect drawing.
 - [ ] Evaluate Forward+, Clustered or Deferred for different scene classes.
 - [ ] Create quality levels and fallbacks.
-- [ ] Add GPU timestamps and per-pass reports.
+- [x] Add optional GPU timestamps and per-pass reports with a CPU fallback.
 - [ ] Control VRAM use and temporary-resource lifetime.
 - [ ] Verify that advanced resources do not increase the basic-path cost when absent.
+
+### Phase 7A validation status
+
+- [x] Create an internal deterministic graph with imported color/depth resources and `forward_opaque`.
+- [x] Validate pass dependencies, resource access, duplicate writes and cycles.
+- [x] Execute the graph through the existing Vulkan render pass without changing the public RHI.
+- [x] Add CPU pass timing and optional Vulkan timestamp queries.
+- [x] Add the development-only `gameengine_runtime --metrics` report.
+- [x] Validate Debug build, CTest, Vulkan smoke/resize and the metrics workload locally.
+
+The lighting architecture, instancing, culling, shadows, IBL, quality levels and performance
+comparison between Forward+, Clustered and Deferred remain open Phase 7 work.
 
 ### Completion criteria
 

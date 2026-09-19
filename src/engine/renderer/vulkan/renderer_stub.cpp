@@ -1,4 +1,7 @@
 #include "engine/rhi/rhi.hpp"
+#include "engine/renderer/renderer_metrics.hpp"
+
+#include <cstdio>
 
 namespace gameengine::rhi {
 
@@ -84,3 +87,14 @@ void Renderer::shutdown() noexcept
 }
 
 } // namespace gameengine::rhi
+
+namespace gameengine::renderer::diagnostics {
+
+void begin_metrics(const gameengine::rhi::Renderer&) noexcept {}
+
+void print_metrics(const gameengine::rhi::Renderer&) noexcept
+{
+    std::fprintf(stderr, "[gameengine] [info] renderer metrics unavailable\n");
+}
+
+} // namespace gameengine::renderer::diagnostics

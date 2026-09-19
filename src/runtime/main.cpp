@@ -2,10 +2,12 @@
 #include "engine/core/clock.hpp"
 #include "engine/core/diagnostics.hpp"
 #include "engine/platform/platform.hpp"
+#include "engine/renderer/renderer_metrics.hpp"
 #include "engine/rhi/rhi.hpp"
 
 #include <chrono>
 #include <cstring>
+#include <cstdint>
 #include <thread>
 
 int main(int argc, char** argv)
@@ -21,9 +23,10 @@ int main(int argc, char** argv)
 
 #if GAMEENGINE_PLATFORM_HAS_WINDOW
     const bool smoke_test = argc == 2 && std::strcmp(argv[1], "--smoke-test") == 0;
-    if (argc > 1 && !smoke_test) {
+    const bool metrics_test = argc == 2 && std::strcmp(argv[1], "--metrics") == 0;
+    if (argc > 1 && !smoke_test && !metrics_test) {
         gameengine::core::log(gameengine::core::LogLevel::error,
-                              "unknown argument; use --smoke-test");
+                              "unknown argument; use --smoke-test or --metrics");
         core.shutdown();
         return 2;
     }
@@ -60,12 +63,18 @@ int main(int argc, char** argv)
 #endif
 
     gameengine::core::Clock clock;
+    std::uint32_t metrics_frame_count = 0;
+    constexpr std::uint32_t metrics_warmup_frames = 30;
+    constexpr std::uint32_t metrics_total_frames = 90;
     do {
         platform.poll_events();
         const gameengine::core::f64 delta_seconds = clock.tick();
         (void)delta_seconds;
 
 #if GAMEENGINE_RENDERER_HAS_VULKAN
+        if (metrics_test && metrics_frame_count == metrics_warmup_frames) {
+            gameengine::renderer::diagnostics::begin_metrics(renderer);
+        }
         const gameengine::core::Status frame_status = renderer.render_frame(platform);
         if (!frame_status) {
             gameengine::core::log(gameengine::core::LogLevel::error,
@@ -75,9 +84,14 @@ int main(int argc, char** argv)
             core.shutdown();
             return 6;
         }
+        if (metrics_test) {
+            ++metrics_frame_count;
+        }
 #endif
 
         if (smoke_test) {
+            platform.request_close();
+        } else if (metrics_test && metrics_frame_count >= metrics_total_frames) {
             platform.request_close();
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -85,6 +99,9 @@ int main(int argc, char** argv)
     } while (!platform.should_close());
 
 #if GAMEENGINE_RENDERER_HAS_VULKAN
+    if (metrics_test) {
+        gameengine::renderer::diagnostics::print_metrics(renderer);
+    }
     renderer.shutdown();
 #endif
     platform.shutdown();

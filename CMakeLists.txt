@@ -126,6 +126,9 @@ target_include_directories(gameengine_rhi
 
 add_library(gameengine_renderer STATIC
     src/engine/rhi/rhi.hpp
+    src/engine/renderer/render_graph/render_graph.cpp
+    src/engine/renderer/render_graph/render_graph.hpp
+    src/engine/renderer/renderer_metrics.hpp
 )
 target_link_libraries(gameengine_renderer PUBLIC gameengine_rhi gameengine_platform gameengine_scene)
 target_include_directories(gameengine_renderer
@@ -242,6 +245,26 @@ if(GAMEENGINE_BUILD_TESTS)
     gameengine_configure_target(gameengine_scene_tests)
     add_test(NAME gameengine_scene COMMAND gameengine_scene_tests)
 
+    add_executable(gameengine_render_graph_tests
+        tests/render_graph_tests.cpp
+    )
+    target_link_libraries(gameengine_render_graph_tests PRIVATE gameengine_renderer gameengine_core)
+    target_include_directories(gameengine_render_graph_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    gameengine_configure_target(gameengine_render_graph_tests)
+    add_test(NAME gameengine_render_graph COMMAND gameengine_render_graph_tests)
+
+    add_executable(gameengine_renderer_metrics_tests
+        tests/renderer_metrics_tests.cpp
+    )
+    target_link_libraries(gameengine_renderer_metrics_tests PRIVATE gameengine_renderer gameengine_core)
+    target_include_directories(gameengine_renderer_metrics_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    gameengine_configure_target(gameengine_renderer_metrics_tests)
+    add_test(NAME gameengine_renderer_metrics COMMAND gameengine_renderer_metrics_tests)
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         find_program(GAMEENGINE_XVFB_RUN xvfb-run)
 
@@ -281,6 +304,10 @@ if(GAMEENGINE_BUILD_TESTS)
                 COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_runtime> --smoke-test
             )
             add_test(
+                NAME gameengine_runtime_metrics
+                COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_runtime> --metrics
+            )
+            add_test(
                 NAME gameengine_platform_x11
                 COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_platform_tests>
             )
@@ -292,6 +319,7 @@ if(GAMEENGINE_BUILD_TESTS)
             endif()
         else()
             add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
+            add_test(NAME gameengine_runtime_metrics COMMAND gameengine_runtime --metrics)
             add_test(NAME gameengine_platform_x11 COMMAND gameengine_platform_tests)
             if(GAMEENGINE_BUILD_VULKAN)
                 add_test(NAME gameengine_vulkan_resize COMMAND gameengine_vulkan_tests)
@@ -340,6 +368,7 @@ if(GAMEENGINE_BUILD_TESTS)
             add_test(NAME gameengine_shader_pipeline COMMAND gameengine_shader_pipeline_tests)
         endif()
         add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
+        add_test(NAME gameengine_runtime_metrics COMMAND gameengine_runtime --metrics)
     else()
         add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
     endif()
@@ -350,10 +379,13 @@ if(GAMEENGINE_BUILD_TESTS)
     set_tests_properties(gameengine_shaders PROPERTIES LABELS "shader")
     set_tests_properties(gameengine_math PROPERTIES LABELS "unit")
     set_tests_properties(gameengine_scene PROPERTIES LABELS "unit")
+    set_tests_properties(gameengine_render_graph PROPERTIES LABELS "unit")
+    set_tests_properties(gameengine_renderer_metrics PROPERTIES LABELS "unit")
     if(TEST gameengine_shader_pipeline)
         set_tests_properties(gameengine_shader_pipeline PROPERTIES LABELS "shader")
     endif()
     set_tests_properties(gameengine_runtime_smoke PROPERTIES LABELS "smoke")
+    set_tests_properties(gameengine_runtime_metrics PROPERTIES LABELS "smoke")
     if(TEST gameengine_platform_win32)
         set_tests_properties(gameengine_platform_win32 PROPERTIES LABELS "platform")
     endif()

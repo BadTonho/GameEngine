@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 6 scene foundation in use.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a deterministic procedural textured cube, versioned asset formats/tools and an internal scene graph. It is not ready to create a complete game yet.
+> **Status: early development — Phase 7A renderer foundation in use.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a deterministic procedural textured cube, versioned asset formats/tools, an internal scene graph and a measured single-pass render graph. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -23,7 +23,7 @@ The complete direction is documented in [Idea.md](Idea.md). The implementation s
 
 ## Current status
 
-Phase 0 through Phase 4 are implemented in the current procedural scope. Phase 5 now adds the first prepared-asset foundation:
+Phase 0 through Phase 6 are implemented in the current procedural scope. Phase 7A now adds the first measurable renderer foundation:
 
 - CMake 3.25+ project using C++20 without compiler extensions;
 - `gameengine_core` with fixed-width types, status values, diagnostics, clock and input state;
@@ -36,11 +36,14 @@ Phase 0 through Phase 4 are implemented in the current procedural scope. Phase 5
 - an internal scene layer with generation-checked entity handles, sparse-set component pools, TRS hierarchy, retrocompatible `.gescene` graph serialization and synthetic benchmarks;
 - Vulkan vertex/index buffers, procedural RGBA8 texture, sampler, material descriptors, depth resources, graphics pipelines and staging uploads;
 - internal PBR material with directional lighting and deterministic HDR tone mapping;
+- internal render graph with deterministic pass dependencies and the `forward_opaque` pass;
+- optional Vulkan timestamp queries with CPU fallback and per-pass timing reports;
+- development metrics mode through `gameengine_runtime --metrics`;
 - internal `Vec3`/`Mat4` math with right-handed Vulkan-compatible perspective and look-at transforms;
 - generation-checked handles and fence-based deferred resource destruction;
 - Vulkan object names and command labels through `VK_EXT_debug_utils`;
-- `gameengine_tests`, `gameengine_asset_tests`, `gameengine_rhi_tests`, `gameengine_math_tests`, `gameengine_platform_tests` and shader pipeline tests without an external test framework;
-- CTest integration with core, assets, RHI, math, runtime, Vulkan, shader pipeline and X11 smoke tests;
+- `gameengine_tests`, `gameengine_asset_tests`, `gameengine_rhi_tests`, `gameengine_math_tests`, `gameengine_scene_tests`, render graph, renderer metrics, platform and shader pipeline tests without an external test framework;
+- CTest integration with core, assets, RHI, math, scene, render graph, metrics, runtime, Vulkan, shader pipeline and X11 smoke tests;
 - high-warning builds with warnings treated as errors;
 - Debug, Release and GCC sanitizer presets;
 - GitHub Actions for Windows/MSVC, Linux/GCC, Linux/Clang and ASan/UBSan.
@@ -51,6 +54,7 @@ The following are intentionally outside the current procedural renderer scope:
 - asset-file texture/material loading;
 - runtime shader file loading, automatic polling and editor integration;
 - prepared asset runtime integration, editor, Lua and a final ECS storage choice;
+- instancing, frustum/GPU culling, shadows, IBL, quality levels and the final Forward+/Clustered/Deferred decision;
 - physics, audio, networking or gameplay APIs;
 - a functional C ABI.
 

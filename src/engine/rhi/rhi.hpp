@@ -7,6 +7,17 @@
 #include "engine/platform/platform.hpp"
 
 namespace gameengine::rhi {
+class Renderer;
+}
+
+namespace gameengine::renderer::diagnostics {
+
+void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
+void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept;
+
+} // namespace gameengine::renderer::diagnostics
+
+namespace gameengine::rhi {
 
 constexpr core::u32 invalid_handle_index = 0xffffffffU;
 
@@ -135,6 +146,9 @@ public:
     struct Impl;
 
 private:
+    friend void renderer::diagnostics::begin_metrics(const Renderer& renderer) noexcept;
+    friend void renderer::diagnostics::print_metrics(const Renderer& renderer) noexcept;
+
     Impl* impl_ = nullptr;
     bool initialized_ = false;
 };

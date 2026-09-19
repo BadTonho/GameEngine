@@ -23,6 +23,8 @@
 
 #include "engine/core/diagnostics.hpp"
 #include "engine/math/math.hpp"
+#include "engine/renderer/render_graph/render_graph.hpp"
+#include "engine/renderer/renderer_metrics.hpp"
 #include "engine/renderer/vulkan/shader_pipeline.hpp"
 #include "engine/renderer/vulkan/triangle_shaders.hpp"
 #include "engine/renderer/vulkan/vulkan_pipeline_cache.hpp"
@@ -33,8 +35,10 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstring>
+#include <cstdio>
 #include <limits>
 #include <new>
 #include <optional>
@@ -179,11 +183,16 @@ struct Renderer::Impl final {
     VkDeviceMemory material_uniform_memory = VK_NULL_HANDLE;
     VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
     renderer::vulkan::PipelineCacheIdentity pipeline_cache_identity{};
+    VkQueryPool timestamp_query_pool = VK_NULL_HANDLE;
+    PFN_vkResetQueryPool reset_query_pool = nullptr;
+    core::f64 timestamp_period = 0.0;
+    core::u32 timestamp_valid_bits = 0;
+    bool gpu_timestamps_enabled = false;
     std::vector<VkFramebuffer> framebuffers;
     std::vector<VkCommandBuffer> command_buffers;
 
     std::array<VkSemaphore, frames_in_flight> image_available{};
-    std::array<VkSemaphore, frames_in_flight> render_finished{};
+    std::vector<VkSemaphore> render_finished;
     std::array<VkFence, frames_in_flight> in_flight_fences{};
     std::vector<VkFence> images_in_flight;
     core::u32 current_frame = 0;
@@ -204,6 +213,13 @@ struct Renderer::Impl final {
     scene::Entity bootstrap_cube_entity{};
     scene::Entity bootstrap_camera_entity{};
     scene::Entity bootstrap_light_entity{};
+    renderer::render_graph::RenderGraph render_graph;
+    renderer::render_graph::ResourceHandle swapchain_color_resource{};
+    renderer::render_graph::ResourceHandle depth_resource{};
+    renderer::render_graph::PassHandle forward_opaque_pass{};
+    std::array<renderer::metrics::FrameTimingReport, frames_in_flight> frame_timing{};
+    std::array<bool, frames_in_flight> timing_pending{};
+    renderer::metrics::TimingAccumulator timing_accumulator{};
     rhi::BufferHandle cube_vertex_buffer{};
     rhi::BufferHandle cube_index_buffer{};
     rhi::PipelineHandle cube_pipeline{};
@@ -247,6 +263,12 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status create_pipeline_cache() noexcept;
     void persist_pipeline_cache() noexcept;
     [[nodiscard]] core::Status select_shader_variants() noexcept;
+    [[nodiscard]] core::Status create_timing_resources() noexcept;
+    void destroy_timing_resources() noexcept;
+    [[nodiscard]] core::Status create_render_graph() noexcept;
+    void reset_timing_queries(core::u32 frame_index) noexcept;
+    void resolve_timing(core::u32 frame_index) noexcept;
+    void resolve_all_timing() noexcept;
     [[nodiscard]] core::Status create_command_pool() noexcept;
     [[nodiscard]] core::Status recreate_swapchain(platform::WindowSize window_size) noexcept;
     [[nodiscard]] core::Status create_swapchain(platform::WindowSize window_size) noexcept;
@@ -256,6 +278,8 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status create_render_pass() noexcept;
     [[nodiscard]] core::Status create_framebuffers() noexcept;
     [[nodiscard]] core::Status create_command_buffers() noexcept;
+    [[nodiscard]] core::Status create_render_finished_semaphores() noexcept;
+    void destroy_render_finished_semaphores() noexcept;
     [[nodiscard]] core::Status create_sync_objects() noexcept;
     [[nodiscard]] core::Status create_bootstrap_cube_resources() noexcept;
     [[nodiscard]] core::Status create_bootstrap_scene() noexcept;
@@ -266,7 +290,8 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status build_pipeline_object(const PipelineSlot& slot,
                                                      VkPipeline& pipeline) noexcept;
     [[nodiscard]] VkResult record_command_buffer(VkCommandBuffer command_buffer,
-                                                  core::u32 image_index) noexcept;
+                                                  core::u32 image_index,
+                                                  core::u32 frame_index) noexcept;
 
     void cleanup_swapchain() noexcept;
     void collect_deferred(core::u32 frame_index) noexcept;
@@ -435,6 +460,10 @@ core::Status Renderer::Impl::initialize(
     if (!status) {
         return status;
     }
+    status = create_timing_resources();
+    if (!status) {
+        return status;
+    }
     status = create_bootstrap_scene();
     if (!status) {
         return status;
@@ -455,6 +484,10 @@ core::Status Renderer::Impl::initialize(
     if (!status) {
         return status;
     }
+    status = create_render_graph();
+    if (!status) {
+        return status;
+    }
     status = create_sync_objects();
     if (!status) {
         return status;
@@ -469,6 +502,7 @@ void Renderer::Impl::shutdown() noexcept
         static_cast<void>(vkDeviceWaitIdle(device));
     }
 
+    resolve_all_timing();
     persist_pipeline_cache();
 
     for (core::u32 index = 0; index < frames_in_flight; ++index) {
@@ -479,15 +513,13 @@ void Renderer::Impl::shutdown() noexcept
         if (image_available[index] != VK_NULL_HANDLE) {
             vkDestroySemaphore(device, image_available[index], nullptr);
         }
-        if (render_finished[index] != VK_NULL_HANDLE) {
-            vkDestroySemaphore(device, render_finished[index], nullptr);
-        }
         if (in_flight_fences[index] != VK_NULL_HANDLE) {
             vkDestroyFence(device, in_flight_fences[index], nullptr);
         }
     }
 
     cleanup_swapchain();
+    destroy_timing_resources();
     destroy_material_resources();
     destroy_live_resources();
 
@@ -527,6 +559,17 @@ void Renderer::Impl::shutdown() noexcept
     last_window_size = {};
     pipeline_cache_path = {};
     pipeline_cache_identity = {};
+    reset_query_pool = nullptr;
+    timestamp_period = 0.0;
+    timestamp_valid_bits = 0;
+    gpu_timestamps_enabled = false;
+    render_graph.reset();
+    swapchain_color_resource = {};
+    depth_resource = {};
+    forward_opaque_pass = {};
+    frame_timing = {};
+    timing_pending = {};
+    timing_accumulator.reset();
     shader_capabilities = {};
     vertex_shader_artifact = nullptr;
     fragment_shader_artifact = nullptr;
@@ -856,6 +899,150 @@ core::Status Renderer::Impl::select_shader_variants() noexcept
     return core::Status{};
 }
 
+core::Status Renderer::Impl::create_timing_resources() noexcept
+{
+    gpu_timestamps_enabled = false;
+    reset_query_pool = nullptr;
+    timestamp_period = 0.0;
+    timestamp_valid_bits = 0;
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physical_device, &properties);
+    const QueueFamilies families = find_queue_families(physical_device);
+    if (!families.graphics.has_value() || properties.limits.timestampPeriod <= 0.0F) {
+        return core::Status{};
+    }
+
+    std::uint32_t family_count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &family_count, nullptr);
+    std::vector<VkQueueFamilyProperties> family_properties(family_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(
+        physical_device, &family_count, family_properties.data());
+    if (families.graphics.value() >= family_properties.size() ||
+        family_properties[families.graphics.value()].timestampValidBits == 0U) {
+        return core::Status{};
+    }
+
+    reset_query_pool = reinterpret_cast<PFN_vkResetQueryPool>(
+        vkGetDeviceProcAddr(device, "vkResetQueryPool"));
+    if (reset_query_pool == nullptr) {
+        return core::Status{};
+    }
+
+    VkQueryPoolCreateInfo create_info{};
+    create_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    create_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    create_info.queryCount = frames_in_flight * 2U;
+    if (vkCreateQueryPool(device, &create_info, nullptr, &timestamp_query_pool) != VK_SUCCESS) {
+        reset_query_pool = nullptr;
+        return core::Status{};
+    }
+
+    timestamp_period = static_cast<core::f64>(properties.limits.timestampPeriod);
+    timestamp_valid_bits = family_properties[families.graphics.value()].timestampValidBits;
+    gpu_timestamps_enabled = true;
+    return core::Status{};
+}
+
+void Renderer::Impl::destroy_timing_resources() noexcept
+{
+    if (device != VK_NULL_HANDLE && timestamp_query_pool != VK_NULL_HANDLE) {
+        vkDestroyQueryPool(device, timestamp_query_pool, nullptr);
+    }
+    timestamp_query_pool = VK_NULL_HANDLE;
+    reset_query_pool = nullptr;
+    timestamp_period = 0.0;
+    timestamp_valid_bits = 0;
+    gpu_timestamps_enabled = false;
+}
+
+core::Status Renderer::Impl::create_render_graph() noexcept
+{
+    render_graph.reset();
+    if (!render_graph
+             .add_resource({"swapchain_color", renderer::render_graph::ResourceKind::color_attachment,
+                            true},
+                           swapchain_color_resource)
+             .ok() ||
+        !render_graph
+             .add_resource({"depth_attachment", renderer::render_graph::ResourceKind::depth_attachment,
+                            true},
+                           depth_resource)
+             .ok()) {
+        return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+    }
+
+    const std::array<renderer::render_graph::ResourceHandle, 2> writes = {
+        swapchain_color_resource,
+        depth_resource,
+    };
+    const renderer::render_graph::PassDescription forward_pass{
+        .name = "forward_opaque",
+        .reads = {},
+        .writes = writes,
+        .dependencies = {},
+        .draw_calls = 1U,
+    };
+    if (!render_graph.add_pass(forward_pass, forward_opaque_pass).ok() ||
+        !render_graph.compile().ok()) {
+        return core::Status{core::ErrorCode::vulkan_swapchain_failed};
+    }
+    return core::Status{};
+}
+
+void Renderer::Impl::reset_timing_queries(core::u32 frame_index) noexcept
+{
+    if (!gpu_timestamps_enabled || reset_query_pool == nullptr ||
+        frame_index >= frames_in_flight) {
+        return;
+    }
+    reset_query_pool(device, timestamp_query_pool, frame_index * 2U, 2U);
+}
+
+void Renderer::Impl::resolve_timing(core::u32 frame_index) noexcept
+{
+    if (frame_index >= frames_in_flight || !timing_pending[frame_index]) {
+        return;
+    }
+
+    renderer::metrics::FrameTimingReport& report = frame_timing[frame_index];
+    if (gpu_timestamps_enabled && report.pass_count > 0U) {
+        std::array<std::uint64_t, 2> timestamps{};
+        const VkResult result = vkGetQueryPoolResults(device,
+                                                       timestamp_query_pool,
+                                                       frame_index * 2U,
+                                                       2U,
+                                                       sizeof(timestamps),
+                                                       timestamps.data(),
+                                                       sizeof(std::uint64_t),
+                                                       VK_QUERY_RESULT_64_BIT);
+        if (result == VK_SUCCESS) {
+            renderer::metrics::PassTiming& pass = report.passes[0];
+            pass.gpu_nanoseconds = renderer::metrics::timestamp_delta_to_nanoseconds(
+                timestamps[0], timestamps[1], timestamp_period, timestamp_valid_bits);
+            pass.gpu_time_valid = true;
+        } else {
+            report.gpu_timestamps_available = false;
+            for (core::u32 index = 0; index < report.pass_count; ++index) {
+                report.passes[index].gpu_time_valid = false;
+            }
+        }
+    }
+
+    timing_accumulator.record(report);
+    timing_pending[frame_index] = false;
+}
+
+void Renderer::Impl::resolve_all_timing() noexcept
+{
+    if (device == VK_NULL_HANDLE) {
+        return;
+    }
+    for (core::u32 index = 0; index < frames_in_flight; ++index) {
+        resolve_timing(index);
+    }
+}
+
 core::Status Renderer::Impl::create_pipeline_cache() noexcept
 {
     VkPhysicalDeviceProperties properties{};
@@ -1020,6 +1207,10 @@ core::Status Renderer::Impl::create_swapchain(platform::WindowSize window_size) 
         return status;
     }
     status = create_command_buffers();
+    if (!status) {
+        return status;
+    }
+    status = create_render_finished_semaphores();
     if (!status) {
         return status;
     }
@@ -1439,6 +1630,32 @@ core::Status Renderer::Impl::create_command_buffers() noexcept
     return core::Status{};
 }
 
+core::Status Renderer::Impl::create_render_finished_semaphores() noexcept
+{
+    VkSemaphoreCreateInfo semaphore_info{};
+    semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    render_finished.resize(swapchain_images.size(), VK_NULL_HANDLE);
+    for (VkSemaphore& semaphore : render_finished) {
+        if (vkCreateSemaphore(device, &semaphore_info, nullptr, &semaphore) != VK_SUCCESS) {
+            destroy_render_finished_semaphores();
+            return core::Status{core::ErrorCode::vulkan_device_failed};
+        }
+    }
+    return core::Status{};
+}
+
+void Renderer::Impl::destroy_render_finished_semaphores() noexcept
+{
+    if (device != VK_NULL_HANDLE) {
+        for (VkSemaphore semaphore : render_finished) {
+            if (semaphore != VK_NULL_HANDLE) {
+                vkDestroySemaphore(device, semaphore, nullptr);
+            }
+        }
+    }
+    render_finished.clear();
+}
+
 core::Status Renderer::Impl::create_sync_objects() noexcept
 {
     VkSemaphoreCreateInfo semaphore_info{};
@@ -1449,8 +1666,6 @@ core::Status Renderer::Impl::create_sync_objects() noexcept
 
     for (core::u32 index = 0; index < frames_in_flight; ++index) {
         if (vkCreateSemaphore(device, &semaphore_info, nullptr, &image_available[index]) !=
-                VK_SUCCESS ||
-            vkCreateSemaphore(device, &semaphore_info, nullptr, &render_finished[index]) !=
                 VK_SUCCESS ||
             vkCreateFence(device, &fence_info, nullptr, &in_flight_fences[index]) != VK_SUCCESS) {
             return core::Status{core::ErrorCode::vulkan_device_failed};
@@ -2519,6 +2734,7 @@ void Renderer::Impl::cleanup_swapchain() noexcept
     if (device == VK_NULL_HANDLE) {
         return;
     }
+    destroy_render_finished_semaphores();
     if (!command_buffers.empty()) {
         vkFreeCommandBuffers(device,
                              command_pool,
@@ -2580,9 +2796,11 @@ core::Status Renderer::Impl::recreate_swapchain(platform::WindowSize window_size
 }
 
 VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
-                                                core::u32 image_index) noexcept
+                                                core::u32 image_index,
+                                                core::u32 frame_index) noexcept
 {
-    if (image_index >= framebuffers.size()) {
+    if (image_index >= framebuffers.size() || frame_index >= frames_in_flight ||
+        !render_graph.compiled() || render_graph.execution_order().empty()) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     const PipelineSlot* pipeline = nullptr;
@@ -2662,6 +2880,12 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
     std::memcpy(material_mapped, &material_constants, sizeof(material_constants));
     vkUnmapMemory(device, material_uniform_memory);
 
+    const auto execution_order = render_graph.execution_order();
+    if (execution_order.size() > renderer::metrics::max_timed_passes) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    frame_timing[frame_index].reset(gpu_timestamps_enabled);
+
     VkCommandBufferBeginInfo begin_info{};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     VkResult result = vkBeginCommandBuffer(command_buffer, &begin_info);
@@ -2669,71 +2893,106 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         return result;
     }
 
-    const std::array<VkClearValue, 2> clear_values = {
-        VkClearValue{.color = {{0.02F, 0.03F, 0.06F, 1.0F}}},
-        VkClearValue{.depthStencil = {1.0F, 0}},
-    };
-    VkRenderPassBeginInfo render_pass_info{};
-    render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    render_pass_info.renderPass = render_pass;
-    render_pass_info.framebuffer = framebuffers[image_index];
-    render_pass_info.renderArea.offset = {0, 0};
-    render_pass_info.renderArea.extent = swapchain_extent;
-    render_pass_info.clearValueCount = static_cast<std::uint32_t>(clear_values.size());
-    render_pass_info.pClearValues = clear_values.data();
+    for (const renderer::render_graph::PassHandle pass : execution_order) {
+        if (pass.index != forward_opaque_pass.index ||
+            render_graph.pass_name(pass) != "forward_opaque") {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto pass_start = std::chrono::steady_clock::now();
+        if (gpu_timestamps_enabled) {
+            vkCmdWriteTimestamp(command_buffer,
+                                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                timestamp_query_pool,
+                                frame_index * 2U);
+        }
 
-    vkCmdBeginRenderPass(command_buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
-    VkViewport viewport{};
-    viewport.width = static_cast<float>(swapchain_extent.width);
-    viewport.height = static_cast<float>(swapchain_extent.height);
-    viewport.maxDepth = 1.0F;
-    VkRect2D scissor{};
-    scissor.extent = swapchain_extent;
-    vkCmdSetViewport(command_buffer, 0, 1, &viewport);
-    vkCmdSetScissor(command_buffer, 0, 1, &scissor);
-    const VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(command_buffer, 0, 1, &vertex_buffer->buffer, &offset);
-    vkCmdBindIndexBuffer(command_buffer, index_buffer->buffer, 0, VK_INDEX_TYPE_UINT16);
-    const core::f32 aspect_ratio = static_cast<core::f32>(swapchain_extent.width) /
-                                    static_cast<core::f32>(swapchain_extent.height);
-    const math::Mat4 model = cube_transform->world_matrix;
-    const math::Mat4 view = math::look_at_rh(
-        camera_position, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
-    const math::Mat4 projection = math::perspective_rh_zo(
-        camera_component->vertical_field_of_view_radians,
-        aspect_ratio,
-        camera_component->near_plane,
-        camera_component->far_plane);
-    const math::Mat4 view_projection = math::multiply(projection, view);
-    const BootstrapPushConstants push_constants{
-        .model = model,
-        .view_projection = view_projection,
-    };
-    begin_debug_label(command_buffer, "GameEngine.Cube");
-    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
-    vkCmdBindDescriptorSets(command_buffer,
-                            VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            pipeline_layout,
-                            0,
-                            1,
-                            &material_descriptor_set,
-                            0,
-                            nullptr);
-    vkCmdPushConstants(command_buffer,
-                       pipeline_layout,
-                       VK_SHADER_STAGE_VERTEX_BIT,
-                       0,
-                       sizeof(push_constants),
-                       &push_constants);
-    vkCmdDrawIndexed(command_buffer,
-                     static_cast<std::uint32_t>(scene::bootstrap_cube_indices.size()),
-                     1,
-                     0,
-                     0,
-                     0);
-    end_debug_label(command_buffer);
-    vkCmdEndRenderPass(command_buffer);
-    return vkEndCommandBuffer(command_buffer);
+        const std::array<VkClearValue, 2> clear_values = {
+            VkClearValue{.color = {{0.02F, 0.03F, 0.06F, 1.0F}}},
+            VkClearValue{.depthStencil = {1.0F, 0}},
+        };
+        VkRenderPassBeginInfo render_pass_info{};
+        render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        render_pass_info.renderPass = render_pass;
+        render_pass_info.framebuffer = framebuffers[image_index];
+        render_pass_info.renderArea.offset = {0, 0};
+        render_pass_info.renderArea.extent = swapchain_extent;
+        render_pass_info.clearValueCount = static_cast<std::uint32_t>(clear_values.size());
+        render_pass_info.pClearValues = clear_values.data();
+
+        vkCmdBeginRenderPass(command_buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+        VkViewport viewport{};
+        viewport.width = static_cast<float>(swapchain_extent.width);
+        viewport.height = static_cast<float>(swapchain_extent.height);
+        viewport.maxDepth = 1.0F;
+        VkRect2D scissor{};
+        scissor.extent = swapchain_extent;
+        vkCmdSetViewport(command_buffer, 0, 1, &viewport);
+        vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+        const VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(command_buffer, 0, 1, &vertex_buffer->buffer, &offset);
+        vkCmdBindIndexBuffer(command_buffer, index_buffer->buffer, 0, VK_INDEX_TYPE_UINT16);
+        const core::f32 aspect_ratio = static_cast<core::f32>(swapchain_extent.width) /
+                                        static_cast<core::f32>(swapchain_extent.height);
+        const math::Mat4 model = cube_transform->world_matrix;
+        const math::Mat4 view = math::look_at_rh(
+            camera_position, {0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+        const math::Mat4 projection = math::perspective_rh_zo(
+            camera_component->vertical_field_of_view_radians,
+            aspect_ratio,
+            camera_component->near_plane,
+            camera_component->far_plane);
+        const math::Mat4 view_projection = math::multiply(projection, view);
+        const BootstrapPushConstants push_constants{
+            .model = model,
+            .view_projection = view_projection,
+        };
+        begin_debug_label(command_buffer, "GameEngine.ForwardOpaque");
+        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
+        vkCmdBindDescriptorSets(command_buffer,
+                                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipeline_layout,
+                                0,
+                                1,
+                                &material_descriptor_set,
+                                0,
+                                nullptr);
+        vkCmdPushConstants(command_buffer,
+                           pipeline_layout,
+                           VK_SHADER_STAGE_VERTEX_BIT,
+                           0,
+                           sizeof(push_constants),
+                           &push_constants);
+        vkCmdDrawIndexed(command_buffer,
+                         static_cast<std::uint32_t>(scene::bootstrap_cube_indices.size()),
+                         1,
+                         0,
+                         0,
+                         0);
+        end_debug_label(command_buffer);
+        vkCmdEndRenderPass(command_buffer);
+        if (gpu_timestamps_enabled) {
+            vkCmdWriteTimestamp(command_buffer,
+                                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                timestamp_query_pool,
+                                frame_index * 2U + 1U);
+        }
+
+        const auto pass_end = std::chrono::steady_clock::now();
+        const auto cpu_nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                         pass_end - pass_start)
+                                         .count();
+        frame_timing[frame_index].add_pass(
+            render_graph.pass_name(pass),
+            static_cast<core::u64>(cpu_nanoseconds),
+            render_graph.pass_draw_calls(pass),
+            gpu_timestamps_enabled);
+    }
+
+    result = vkEndCommandBuffer(command_buffer);
+    if (result == VK_SUCCESS) {
+        timing_pending[frame_index] = true;
+    }
+    return result;
 }
 
 core::Status Renderer::Impl::render_frame(platform::WindowSize window_size) noexcept
@@ -2756,6 +3015,8 @@ core::Status Renderer::Impl::render_frame(platform::WindowSize window_size) noex
                         std::numeric_limits<std::uint64_t>::max()) != VK_SUCCESS) {
         return core::Status{core::ErrorCode::vulkan_frame_failed};
     }
+    resolve_timing(current_frame);
+    reset_timing_queries(current_frame);
     collect_deferred(current_frame);
 
     std::uint32_t image_index = 0;
@@ -2774,6 +3035,9 @@ core::Status Renderer::Impl::render_frame(platform::WindowSize window_size) noex
     if (acquire_result != VK_SUCCESS && acquire_result != VK_SUBOPTIMAL_KHR) {
         return core::Status{core::ErrorCode::vulkan_frame_failed};
     }
+    if (image_index >= images_in_flight.size() || image_index >= render_finished.size()) {
+        return core::Status{core::ErrorCode::vulkan_frame_failed};
+    }
 
     if (images_in_flight[image_index] != VK_NULL_HANDLE) {
         if (vkWaitForFences(device,
@@ -2788,7 +3052,8 @@ core::Status Renderer::Impl::render_frame(platform::WindowSize window_size) noex
 
     if (vkResetFences(device, 1, &in_flight_fences[current_frame]) != VK_SUCCESS ||
         vkResetCommandBuffer(command_buffers[image_index], 0) != VK_SUCCESS ||
-        record_command_buffer(command_buffers[image_index], image_index) != VK_SUCCESS) {
+        record_command_buffer(command_buffers[image_index], image_index, current_frame) !=
+            VK_SUCCESS) {
         return core::Status{core::ErrorCode::vulkan_frame_failed};
     }
 
@@ -2803,7 +3068,7 @@ core::Status Renderer::Impl::render_frame(platform::WindowSize window_size) noex
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &command_buffers[image_index];
     submit_info.signalSemaphoreCount = 1;
-    submit_info.pSignalSemaphores = &render_finished[current_frame];
+    submit_info.pSignalSemaphores = &render_finished[image_index];
     if (vkQueueSubmit(graphics_queue,
                       1,
                       &submit_info,
@@ -2814,7 +3079,7 @@ core::Status Renderer::Impl::render_frame(platform::WindowSize window_size) noex
     VkPresentInfoKHR present_info{};
     present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     present_info.waitSemaphoreCount = 1;
-    present_info.pWaitSemaphores = &render_finished[current_frame];
+    present_info.pWaitSemaphores = &render_finished[image_index];
     present_info.swapchainCount = 1;
     present_info.pSwapchains = &swapchain;
     present_info.pImageIndices = &image_index;
@@ -3024,3 +3289,65 @@ void Renderer::shutdown() noexcept
 }
 
 } // namespace gameengine::rhi
+
+namespace gameengine::renderer::diagnostics {
+
+void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        return;
+    }
+    if (renderer.impl_->device != VK_NULL_HANDLE &&
+        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+        return;
+    }
+    renderer.impl_->resolve_all_timing();
+    renderer.impl_->timing_accumulator.reset();
+}
+
+void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        std::fprintf(stderr, "[gameengine] [info] renderer metrics unavailable\n");
+        return;
+    }
+    if (renderer.impl_->device != VK_NULL_HANDLE &&
+        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+        std::fprintf(stderr, "[gameengine] [warning] renderer metrics synchronization failed\n");
+        return;
+    }
+    renderer.impl_->resolve_all_timing();
+    const auto& accumulator = renderer.impl_->timing_accumulator;
+    std::fprintf(stderr,
+                 "[gameengine] [info] renderer metrics: frames=%llu draw_calls=%llu "
+                 "gpu_timestamps=%s\n",
+                 static_cast<unsigned long long>(accumulator.frame_count),
+                 static_cast<unsigned long long>(accumulator.total_draw_calls),
+                 accumulator.gpu_timestamps_available ? "available" : "unavailable");
+    for (const auto& pass : accumulator.passes) {
+        if (pass.name.empty() || pass.sample_count == 0U) {
+            continue;
+        }
+        const auto cpu_average = pass.cpu_total_nanoseconds / pass.sample_count;
+        std::fprintf(stderr,
+                     "[gameengine] [info] pass=%.*s cpu_ns(avg/min/max)=%llu/%llu/%llu "
+                     "draw_calls_avg=%llu",
+                     static_cast<int>(pass.name.size()),
+                     pass.name.data(),
+                     static_cast<unsigned long long>(cpu_average),
+                     static_cast<unsigned long long>(pass.cpu_min_nanoseconds),
+                     static_cast<unsigned long long>(pass.cpu_max_nanoseconds),
+                     static_cast<unsigned long long>(pass.draw_calls / pass.sample_count));
+        if (pass.gpu_sample_count > 0U) {
+            std::fprintf(stderr,
+                         " gpu_ns(avg/min/max)=%llu/%llu/%llu",
+                         static_cast<unsigned long long>(pass.gpu_total_nanoseconds /
+                                                         pass.gpu_sample_count),
+                         static_cast<unsigned long long>(pass.gpu_min_nanoseconds),
+                         static_cast<unsigned long long>(pass.gpu_max_nanoseconds));
+        }
+        std::fputc('\n', stderr);
+    }
+}
+
+} // namespace gameengine::renderer::diagnostics

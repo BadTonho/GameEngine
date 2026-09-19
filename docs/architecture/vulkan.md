@@ -20,6 +20,13 @@ Two frames in flight are used. A frame waits for its fence, acquires a swapchain
 
 The integration test resizes the X11 window, pumps the resulting configure event and renders again through the recreated swapchain. The bootstrap scene now renders a procedural indexed cube with a static camera, procedural material and a recreated depth attachment.
 
+The Phase 7A renderer builds a small internal render graph for each renderer instance. The graph
+contains the imported swapchain color and depth resources and one deterministic `forward_opaque`
+pass. It validates resource ownership, explicit and resource-derived dependencies, duplicate
+writes and cycles before command recording. The graph is deliberately not a public RHI object and
+does not allocate transient Vulkan resources yet; it currently schedules the existing Vulkan
+render pass and cube draw.
+
 Vertex and image uploads use temporary host-visible, coherent staging buffers and one-time command buffers. Completion waits on a dedicated fence, never on `vkDeviceWaitIdle` during normal frame submission. The bootstrap mesh uses a device-local vertex buffer with position, normal and UV attributes plus a device-local index buffer. A fixed 64x64 checkerboard image and linear sampler are generated in memory and bound to the material; no mesh or texture file is loaded.
 
 ## Validation and shaders
@@ -47,3 +54,19 @@ The swapchain render pass has a color attachment and a device-selected depth att
 `VkPipelineCache` is loaded after device creation and before graphics pipelines. Its payload is wrapped in a device-specific GameEngine header containing the vendor/device IDs, driver version, Vulkan API version and pipeline-cache UUID. Missing, truncated, incompatible or corrupt files are ignored. On shutdown, the cache is written through a temporary file and final replacement after the device is idle. The file is never accessed during frame submission.
 
 The C++ `RendererConfiguration` selects the pipeline-cache path and can enable explicit shader reload. Hot reload is rejected in Release builds, has no per-frame polling, waits for the device, builds replacement pipelines and swaps them only after every replacement succeeds. A failed reload leaves the active pipelines untouched. The C ABI is unchanged.
+
+The renderer records a fixed-size timing report for each completed frame. CPU pass recording uses
+`steady_clock`. GPU timing uses two timestamp queries per frame-in-flight only when the graphics
+queue exposes timestamp bits, a valid timestamp period and a usable query reset function. Devices
+without that combination continue normally and report CPU timings with GPU timing unavailable.
+The development executable runs a deterministic warmup and measurement sequence with:
+
+```text
+gameengine_runtime --metrics
+```
+
+The command waits for the device, resolves pending queries and prints frame count, draw calls and
+average/minimum/maximum CPU and GPU time for `forward_opaque`. The diagnostic bridge is internal;
+the public RHI and C ABI do not expose the report. The current baseline remains a single forward
+pass. Forward+, clustered and deferred lighting, shadows, IBL, culling, instancing and quality
+fallbacks require later measurements before becoming architecture commitments.
