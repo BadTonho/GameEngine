@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 9B optional audio in progress.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a procedural instanced cube, CPU frustum culling, opt-in GPU culling/indirect drawing, production Low/Medium/High Forward+ profiles, measured render passes, a separate minimal editor and an optional procedural audio module. It is not ready to create a complete game yet.
+> **Status: early development — Phase 9C optional physics implemented.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a procedural instanced cube, CPU frustum culling, opt-in GPU culling/indirect drawing, production Low/Medium/High Forward+ profiles, measured render passes, a separate minimal editor, an optional procedural audio module and an optional Jolt-backed physics module. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -52,6 +52,8 @@ Phase 0 through Phase 6, the Phase 7 renderer foundation and the Phase 8 editor 
   runtime/editor integration, fixed-step tests and 1k/10k/100k transform benchmarks;
 - optional `gameengine_audio` module with deterministic PCM sine voices, fixed-capacity mixing,
   generation-checked voice handles, WASAPI/ALSA backends and a stub fallback;
+- optional `gameengine_physics` module backed by an encapsulated Jolt Physics foundation with fixed-step updates,
+  box/sphere shapes, static/dynamic bodies and transform synchronization;
 - deterministic 16x16 Forward+ tile-list preparation, procedural point-light data, a 1024² directional shadow map, a mipmapped 64² procedural cubemap and versioned Forward+/shadow/environment Slang artifacts;
 - versioned benchmark reports in `build/renderer-benchmarks/lighting_benchmark_v1.txt`, with explicit unavailable markers for unsupported RAM/VRAM metrics;
 - generation-checked handles and fence-based deferred resource destruction;
@@ -69,7 +71,7 @@ The following are intentionally outside the current procedural renderer scope:
 - runtime shader file loading and automatic polling;
 - prepared asset runtime integration, asset editing/import, undo/redo, Lua and a final ECS storage choice;
 - VRAM policy and the hardware baseline for the final lighting decision;
-- physics, networking or gameplay APIs;
+- networking or gameplay APIs;
 - skeleton/skinning animation, animation assets, timelines and keyframe authoring;
 - a functional C ABI.
 
@@ -87,7 +89,7 @@ The following are intentionally outside the current procedural renderer scope:
 | Shader source | Slang, compiled offline | Phase 4 in use |
 | First graphics backend | Vulkan | In use |
 
-Vulkan, X11 and Mesa are system dependencies for the Linux rendering build. ALSA development headers are optional; when unavailable, the audio module builds with its stub backend. Slang is required only to regenerate offline shader artifacts; it is never a runtime dependency. Rust is optional and is required only for the offline asset tools; Lua is not required.
+Vulkan, X11 and Mesa are system dependencies for the Linux rendering build. ALSA development headers are optional; when unavailable, the audio module builds with its stub backend. Jolt Physics is an optional third-party library acquired via CMake FetchContent when GAMEENGINE_BUILD_PHYSICS=ON. Slang is required only to regenerate offline shader artifacts; it is never a runtime dependency. Rust is optional and is required only for the offline asset tools; Lua is not required.
 
 ## Quick start
 

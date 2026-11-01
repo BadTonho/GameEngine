@@ -5,10 +5,15 @@
 #include "engine/audio/audio.hpp"
 #endif
 #include "engine/platform/platform.hpp"
-#if GAMEENGINE_BUILD_ANIMATION
-#include "engine/animation/animation.hpp"
+#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS
 #include "engine/renderer/scene_bridge.hpp"
 #include "engine/scene/scene.hpp"
+#endif
+#if GAMEENGINE_BUILD_ANIMATION
+#include "engine/animation/animation.hpp"
+#endif
+#if GAMEENGINE_BUILD_PHYSICS
+#include "engine/physics/physics.hpp"
 #endif
 #include "engine/renderer/renderer_metrics.hpp"
 #include "engine/renderer/renderer_quality.hpp"
@@ -89,6 +94,7 @@ int main(int argc, char** argv)
     bool renderer_benchmark = false;
     bool gpu_culling = false;
     bool audio_smoke_test = false;
+    bool physics_demo = false;
     gameengine::renderer::quality::RendererQuality renderer_quality =
         gameengine::renderer::quality::RendererQuality::medium;
     for (int index = 1; index < argc; ++index) {
@@ -102,6 +108,8 @@ int main(int argc, char** argv)
             gpu_culling = true;
         } else if (std::strcmp(argv[index], "--audio-smoke-test") == 0) {
             audio_smoke_test = true;
+        } else if (std::strcmp(argv[index], "--physics-demo") == 0) {
+            physics_demo = true;
         } else if (std::strcmp(argv[index], "--renderer-quality") == 0) {
             if (index + 1 >= argc ||
                 !gameengine::renderer::quality::parse(argv[++index], renderer_quality)) {
@@ -114,7 +122,7 @@ int main(int argc, char** argv)
             gameengine::core::log(gameengine::core::LogLevel::error,
                               "unknown argument; use --smoke-test, --metrics, "
                                   "--renderer-benchmark, --gpu-culling, "
-                                  "--audio-smoke-test or "
+                                  "--audio-smoke-test, --physics-demo or "
                                   "--renderer-quality low|medium|high");
             core.shutdown();
             return 2;
@@ -134,6 +142,23 @@ int main(int argc, char** argv)
         core.shutdown();
         return 2;
     }
+    if (physics_demo && (metrics_test || renderer_benchmark || gpu_culling || audio_smoke_test)) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              "--physics-demo is exclusive with metrics, audio and benchmark modes");
+        core.shutdown();
+        return 2;
+    }
+
+#if !GAMEENGINE_BUILD_PHYSICS
+    if (physics_demo) {
+        gameengine::core::log(gameengine::core::LogLevel::info,
+                              "physics: unavailable (physics module disabled)");
+        if (smoke_test) {
+            core.shutdown();
+            return 0;
+        }
+    }
+#endif
 
     if (audio_smoke_test) {
 #if GAMEENGINE_BUILD_AUDIO
@@ -199,26 +224,112 @@ int main(int argc, char** argv)
             return 6;
         }
     }
+#if (GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS)
+    gameengine::scene::Scene runtime_scene;
 #if GAMEENGINE_BUILD_ANIMATION
-    gameengine::scene::Scene animation_scene;
     gameengine::animation::AnimationSystem animation_system;
-    if (!gameengine::scene::create_bootstrap_scene(animation_scene) ||
-        animation_scene.entities().empty()) {
+#endif
+#if GAMEENGINE_BUILD_PHYSICS
+    gameengine::physics::PhysicsWorld physics_world;
+#endif
+    if (!gameengine::scene::create_bootstrap_scene(runtime_scene) ||
+        runtime_scene.entities().empty()) {
         gameengine::core::log(gameengine::core::LogLevel::error,
-                              "animation scene creation failed");
+                              "runtime scene creation failed");
         renderer.shutdown();
         platform.shutdown();
         core.shutdown();
         return 6;
     }
-    const gameengine::scene::Entity animation_entity = animation_scene.entities().front();
-    const gameengine::scene::TransformComponent* animation_transform =
-        animation_scene.transform(animation_entity);
-    if (animation_transform == nullptr || !animation_system.reserve_players(1U) ||
-        !animation_system.add_procedural_player(animation_entity, *animation_transform) ||
-        !gameengine::renderer::scene_bridge::attach_scene(renderer, animation_scene)) {
+    const gameengine::scene::Entity bootstrap_entity = runtime_scene.entities().front();
+    const gameengine::scene::TransformComponent* bootstrap_transform =
+        runtime_scene.transform(bootstrap_entity);
+    if (bootstrap_transform == nullptr) {
         gameengine::core::log(gameengine::core::LogLevel::error,
-                              "animation scene attachment failed");
+                              "bootstrap transform missing");
+        renderer.shutdown();
+        platform.shutdown();
+        core.shutdown();
+        return 6;
+    }
+
+#if GAMEENGINE_BUILD_ANIMATION
+    if (!physics_demo) {
+        if (!animation_system.reserve_players(1U) ||
+            !animation_system.add_procedural_player(bootstrap_entity, *bootstrap_transform)) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  "animation player creation failed");
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+    }
+#endif
+
+#if GAMEENGINE_BUILD_PHYSICS
+    if (physics_demo) {
+        gameengine::scene::TransformComponent* cube_transform =
+            runtime_scene.transform(bootstrap_entity);
+        if (cube_transform != nullptr) {
+            cube_transform->local_position = {0.0F, 4.0F, 0.0F};
+            static_cast<void>(runtime_scene.update_transforms());
+        }
+
+        const gameengine::scene::Entity ground_entity = runtime_scene.create_entity();
+        if (!ground_entity.valid() ||
+            !runtime_scene.add_transform(ground_entity, {.local_position = {0.0F, -2.0F, 0.0F}}) ||
+            !runtime_scene.update_transforms()) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  "physics ground entity creation failed");
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+
+        const gameengine::core::Status physics_init_status = physics_world.initialize();
+        if (!physics_init_status) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  gameengine::core::to_string(physics_init_status.code));
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+
+        const gameengine::core::Status ground_status = physics_world.add_body(
+            runtime_scene, ground_entity,
+            {.shape = gameengine::physics::ShapeType::box,
+             .half_extents = {10.0F, 1.0F, 10.0F},
+             .motion = gameengine::physics::MotionType::static_body,
+             .friction = 0.6F});
+        const gameengine::core::Status cube_status = physics_world.add_body(
+            runtime_scene, bootstrap_entity,
+            {.shape = gameengine::physics::ShapeType::box,
+             .half_extents = {1.0F, 1.0F, 1.0F},
+             .motion = gameengine::physics::MotionType::dynamic_body,
+             .mass_kilograms = 5.0F,
+             .friction = 0.6F,
+             .restitution = 0.3F});
+        if (!ground_status || !cube_status) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  "physics bodies creation failed");
+            physics_world.shutdown();
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+    }
+#endif
+
+    if (!gameengine::renderer::scene_bridge::attach_scene(renderer, runtime_scene)) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              "runtime scene attachment failed");
+#if GAMEENGINE_BUILD_PHYSICS
+        physics_world.shutdown();
+#endif
         renderer.shutdown();
         platform.shutdown();
         core.shutdown();
@@ -232,16 +343,22 @@ int main(int argc, char** argv)
             benchmark_status.code != gameengine::core::ErrorCode::unsupported_platform) {
             gameengine::core::log(gameengine::core::LogLevel::error,
                                   gameengine::core::to_string(benchmark_status.code));
-#if GAMEENGINE_BUILD_ANIMATION
+#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS
             static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_PHYSICS
+            physics_world.shutdown();
+#endif
 #endif
             renderer.shutdown();
             platform.shutdown();
             core.shutdown();
             return 6;
         }
-#if GAMEENGINE_BUILD_ANIMATION
+#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS
         static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_PHYSICS
+        physics_world.shutdown();
+#endif
 #endif
         renderer.shutdown();
         platform.shutdown();
@@ -294,18 +411,53 @@ int main(int argc, char** argv)
     do {
         platform.poll_events();
         const gameengine::core::f64 delta_seconds = clock.tick();
-#if GAMEENGINE_BUILD_ANIMATION && GAMEENGINE_RENDERER_HAS_VULKAN
-        const gameengine::core::Status animation_status = animation_system.update(
-            animation_scene, static_cast<gameengine::core::f32>(delta_seconds));
-        if (!animation_status) {
-            gameengine::core::log(gameengine::core::LogLevel::error,
-                                  gameengine::core::to_string(animation_status.code));
-            static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
-            renderer.shutdown();
-            platform.shutdown();
-            core.shutdown();
-            return 6;
+#if GAMEENGINE_RENDERER_HAS_VULKAN
+#if GAMEENGINE_BUILD_PHYSICS
+        if (physics_demo) {
+            const gameengine::core::Status physics_status =
+                physics_world.update(static_cast<gameengine::core::f32>(delta_seconds));
+            if (!physics_status) {
+                gameengine::core::log(gameengine::core::LogLevel::error,
+                                      gameengine::core::to_string(physics_status.code));
+                static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+                physics_world.shutdown();
+                renderer.shutdown();
+                platform.shutdown();
+                core.shutdown();
+                return 6;
+            }
+            const gameengine::core::Status write_status =
+                physics_world.write_transforms(runtime_scene);
+            if (!write_status) {
+                gameengine::core::log(gameengine::core::LogLevel::error,
+                                      gameengine::core::to_string(write_status.code));
+                static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+                physics_world.shutdown();
+                renderer.shutdown();
+                platform.shutdown();
+                core.shutdown();
+                return 6;
+            }
         }
+#endif
+#if GAMEENGINE_BUILD_ANIMATION
+        if (!physics_demo) {
+            const gameengine::core::Status animation_status = animation_system.update(
+                runtime_scene, static_cast<gameengine::core::f32>(delta_seconds));
+            if (!animation_status) {
+                gameengine::core::log(gameengine::core::LogLevel::error,
+                                      gameengine::core::to_string(animation_status.code));
+                static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+                renderer.shutdown();
+                platform.shutdown();
+                core.shutdown();
+                return 6;
+            }
+        }
+#endif
+#if !GAMEENGINE_BUILD_ANIMATION && !GAMEENGINE_BUILD_PHYSICS
+        (void)delta_seconds;
+#endif
 #else
         (void)delta_seconds;
 #endif
@@ -362,8 +514,11 @@ int main(int argc, char** argv)
     } while (!platform.should_close());
 
 #if GAMEENGINE_RENDERER_HAS_VULKAN
-#if GAMEENGINE_BUILD_ANIMATION
+#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS
     static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_PHYSICS
+    physics_world.shutdown();
+#endif
 #endif
     renderer.shutdown();
 #endif

@@ -23,6 +23,7 @@ enum class ErrorCode : u8 {
     vulkan_validation_failed,
     shader_variant_unavailable,
     shader_reload_disabled,
+    physics_capacity_exceeded,
 };
 
 struct Status final {
@@ -74,6 +75,8 @@ struct Status final {
         return "shader_variant_unavailable";
     case ErrorCode::shader_reload_disabled:
         return "shader_reload_disabled";
+    case ErrorCode::physics_capacity_exceeded:
+        return "physics_capacity_exceeded";
     }
 
     return "unknown";

@@ -8,6 +8,9 @@ option(GAMEENGINE_BUILD_BENCHMARKS "Build optional scene benchmarks" OFF)
 option(GAMEENGINE_BUILD_EDITOR "Build the separate GameEngine editor" ON)
 option(GAMEENGINE_BUILD_ANIMATION "Build the optional transform animation module" ON)
 option(GAMEENGINE_BUILD_AUDIO "Build the optional procedural audio module" ON)
+# Off by default so a clean clone configures without downloading third-party code; the
+# development presets enable it.
+option(GAMEENGINE_BUILD_PHYSICS "Build the optional Jolt-backed physics module" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -167,6 +170,74 @@ if(GAMEENGINE_BUILD_ANIMATION)
     endif()
 endif()
 
+if(GAMEENGINE_BUILD_PHYSICS)
+    include(FetchContent)
+
+    # Jolt is pinned to a release archive and verified by hash. Set
+    # FETCHCONTENT_SOURCE_DIR_JOLTPHYSICS to a local extracted copy to configure offline.
+    # Every Jolt option below is chosen explicitly so its PUBLIC compile definitions stay stable.
+    set(JOLT_PHYSICS_VERSION 5.6.0)
+    set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF)
+    set(ENABLE_INSTALL OFF)
+    set(ENABLE_ALL_WARNINGS OFF)
+    set(OVERRIDE_CXX_FLAGS OFF)
+    set(INTERPROCEDURAL_OPTIMIZATION OFF)
+    set(CPP_EXCEPTIONS_ENABLED OFF)
+    set(CPP_RTTI_ENABLED OFF)
+    set(FLOATING_POINT_EXCEPTIONS_ENABLED OFF)
+    set(ENABLE_OBJECT_STREAM OFF)
+    set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF)
+    set(PROFILER_IN_DEBUG_AND_RELEASE OFF)
+    set(DOUBLE_PRECISION OFF)
+    set(CROSS_PLATFORM_DETERMINISTIC OFF)
+    # Jolt GPU compute would pull D3D12/Vulkan/Metal into physics and bypass the RHI boundary.
+    set(JPH_USE_DX12 OFF)
+    set(JPH_USE_VK OFF)
+    set(JPH_USE_MTL OFF)
+    set(JPH_USE_CPU_COMPUTE OFF)
+    # Baseline x86-64 target: SSE4.2 only, so physics does not raise the minimum CPU requirement.
+    set(USE_AVX OFF)
+    set(USE_AVX2 OFF)
+    set(USE_AVX512 OFF)
+    set(USE_LZCNT OFF)
+    set(USE_TZCNT OFF)
+    set(USE_F16C OFF)
+    set(USE_FMADD OFF)
+
+    FetchContent_Declare(JoltPhysics
+        URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v${JOLT_PHYSICS_VERSION}.tar.gz
+        URL_HASH SHA256=6e069ee0172478cc78182047aac87e5310ba14a67a53348ae14cc37801fd3f8e
+        SOURCE_SUBDIR Build
+        SYSTEM
+        EXCLUDE_FROM_ALL
+    )
+    FetchContent_MakeAvailable(JoltPhysics)
+    set_property(TARGET Jolt PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+
+    add_library(gameengine_physics STATIC
+        src/engine/physics/physics.cpp
+        src/engine/physics/physics.hpp
+    )
+    target_link_libraries(gameengine_physics PUBLIC gameengine_scene PRIVATE Jolt::Jolt)
+    target_include_directories(gameengine_physics
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    )
+    target_compile_definitions(gameengine_physics PUBLIC GAMEENGINE_BUILD_PHYSICS=1)
+    gameengine_configure_target(gameengine_physics)
+
+    if(GAMEENGINE_BUILD_BENCHMARKS)
+        add_executable(gameengine_physics_benchmark
+            benchmarks/physics_benchmark.cpp
+        )
+        target_link_libraries(gameengine_physics_benchmark PRIVATE
+            gameengine_physics
+            gameengine_scene
+        )
+        gameengine_configure_target(gameengine_physics_benchmark)
+    endif()
+endif()
+
 add_library(gameengine_platform STATIC
     src/engine/platform/platform.hpp
 )
@@ -280,6 +351,10 @@ endif()
 if(GAMEENGINE_BUILD_AUDIO)
     target_link_libraries(gameengine_runtime PRIVATE gameengine_audio)
     target_compile_definitions(gameengine_runtime PRIVATE GAMEENGINE_BUILD_AUDIO=1)
+endif()
+if(GAMEENGINE_BUILD_PHYSICS)
+    target_link_libraries(gameengine_runtime PRIVATE gameengine_physics)
+    target_compile_definitions(gameengine_runtime PRIVATE GAMEENGINE_BUILD_PHYSICS=1)
 endif()
 gameengine_configure_target(gameengine_runtime)
 
@@ -452,6 +527,22 @@ if(GAMEENGINE_BUILD_TESTS)
         add_test(NAME gameengine_audio COMMAND gameengine_audio_tests)
     endif()
 
+    if(GAMEENGINE_BUILD_PHYSICS)
+        add_executable(gameengine_physics_tests
+            tests/physics_tests.cpp
+        )
+        target_link_libraries(gameengine_physics_tests PRIVATE
+            gameengine_physics
+            gameengine_scene
+            gameengine_core
+        )
+        target_include_directories(gameengine_physics_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        gameengine_configure_target(gameengine_physics_tests)
+        add_test(NAME gameengine_physics COMMAND gameengine_physics_tests)
+    endif()
+
     add_executable(gameengine_render_graph_tests
         tests/render_graph_tests.cpp
     )
@@ -599,6 +690,12 @@ if(GAMEENGINE_BUILD_TESTS)
                 NAME gameengine_runtime_quality_high
                 COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_runtime> --smoke-test --renderer-quality high
             )
+            if(GAMEENGINE_BUILD_PHYSICS)
+                add_test(
+                    NAME gameengine_runtime_physics_demo
+                    COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_runtime> --smoke-test --physics-demo
+                )
+            endif()
             add_test(
                 NAME gameengine_platform_x11
                 COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_platform_tests>
@@ -617,6 +714,9 @@ if(GAMEENGINE_BUILD_TESTS)
             add_test(NAME gameengine_runtime_quality_low COMMAND gameengine_runtime --smoke-test --renderer-quality low)
             add_test(NAME gameengine_runtime_quality_medium COMMAND gameengine_runtime --smoke-test --renderer-quality medium)
             add_test(NAME gameengine_runtime_quality_high COMMAND gameengine_runtime --smoke-test --renderer-quality high)
+            if(GAMEENGINE_BUILD_PHYSICS)
+                add_test(NAME gameengine_runtime_physics_demo COMMAND gameengine_runtime --smoke-test --physics-demo)
+            endif()
             add_test(NAME gameengine_platform_x11 COMMAND gameengine_platform_tests)
             if(GAMEENGINE_BUILD_VULKAN)
                 add_test(NAME gameengine_vulkan_resize COMMAND gameengine_vulkan_tests)
@@ -671,6 +771,9 @@ if(GAMEENGINE_BUILD_TESTS)
         add_test(NAME gameengine_runtime_quality_low COMMAND gameengine_runtime --smoke-test --renderer-quality low)
         add_test(NAME gameengine_runtime_quality_medium COMMAND gameengine_runtime --smoke-test --renderer-quality medium)
         add_test(NAME gameengine_runtime_quality_high COMMAND gameengine_runtime --smoke-test --renderer-quality high)
+        if(GAMEENGINE_BUILD_PHYSICS)
+            add_test(NAME gameengine_runtime_physics_demo COMMAND gameengine_runtime --smoke-test --physics-demo)
+        endif()
     else()
         add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
     endif()
@@ -706,5 +809,11 @@ if(GAMEENGINE_BUILD_TESTS)
     endif()
     if(TEST gameengine_vulkan_resize)
         set_tests_properties(gameengine_vulkan_resize PROPERTIES LABELS "vulkan")
+    endif()
+    if(TEST gameengine_physics)
+        set_tests_properties(gameengine_physics PROPERTIES LABELS "unit")
+    endif()
+    if(TEST gameengine_runtime_physics_demo)
+        set_tests_properties(gameengine_runtime_physics_demo PROPERTIES LABELS "smoke")
     endif()
 endif()

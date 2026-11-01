@@ -7,9 +7,9 @@ The roadmap does not define deadlines. Each phase is a technical milestone. A ph
 ## Current status
 
 The repository completed Phase 2 through Phase 6, the Phase 7 renderer foundation and the Phase 8
-editor foundation. Phase 9A transform animation is complete and Phase 9B procedural audio is now
-implemented as an optional module. Forward+ is the selected production direction, with the
-procedural cube, generated lights and generated audio tone remaining reference fixtures. The
+editor foundation. Phase 9A transform animation, Phase 9B procedural audio and Phase 9C
+physics integration are now implemented as optional modules. Forward+ is the selected production direction, with the
+procedural cube, generated lights, generated audio tone and physics demo remaining reference fixtures. The
 final hardware baseline, VRAM policy and later optional runtime modules remain open.
 
 ## Evolution rules
@@ -365,7 +365,7 @@ Each module must have an API, build target, tests, documentation, measured cost 
 - [x] Animation transform/keyframe foundation with an optional C++ target, deterministic procedural
   clip, runtime/editor integration, fixed-step tests and measured synthetic workloads.
 - [x] Procedural audio foundation with fixed PCM mixing, native backends, stub fallback and diagnostics.
-- [ ] Physics integration.
+- [x] Physics integration backed by an encapsulated Jolt Physics foundation with fixed-step updates, box and sphere shapes, deterministic simulation and transform synchronization.
 - [ ] Optional Lua gameplay scripting.
 - [ ] Navigation.
 - [ ] Networking.
@@ -402,6 +402,21 @@ remain later Phase 9 modules.
 
 Audio files, codecs, streaming, 3D spatialization, DSP effects, music graphs and prepared audio
 assets remain future work.
+
+### Phase 9C validation status
+
+- [x] Add `gameengine_physics` behind `GAMEENGINE_BUILD_PHYSICS` without changing the RHI, C ABI or
+  asset formats.
+- [x] Integrate Jolt Physics v5.6.0 via `FetchContent` with private PIMPL encapsulation, zero public
+  leakage of third-party headers/types, and disabled exceptions/RTTI/GPU compute.
+- [x] Implement box and sphere shapes, static and dynamic motion types, deterministic fixed-step simulation
+  with frame accumulator and death-spiral step capping.
+- [x] Implement transform synchronization to `scene::Scene` with full validation of entity lifecycles.
+- [x] Add development `--physics-demo` runtime mode and `--smoke-test --physics-demo` validation.
+- [x] Add comprehensive unit tests, an optional 1k/10k bodies benchmark and architecture documentation
+  with third-party license notice.
+
+Constraints, joints, raycasting, character controllers, and mesh colliders remain later work.
 
 ## Phase 10 — Continuous quality, security and performance
 
