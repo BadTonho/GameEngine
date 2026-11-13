@@ -206,7 +206,7 @@ core::Status initialize_backend(AudioBackend& backend,
     backend = {};
     backend.name = "wasapi";
 
-    auto* state = new (std::nothrow) WasapiState{};
+    auto* state = new (std::nothrow) WasapiState();
     if (state == nullptr) {
         return core::Status{};
     }

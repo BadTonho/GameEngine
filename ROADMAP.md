@@ -441,17 +441,17 @@ Goal: prevent engine growth from destroying its original principles.
 
 ### Tasks
 
-- [ ] Create versioned benchmark scenes and workloads.
-- [ ] Measure startup, RAM, VRAM, CPU, GPU, draw calls, loading and executable size.
-- [ ] Create a baseline and regression detection.
-- [ ] Run Sanitizers and static analysis in CI.
-- [ ] Repeatedly test shutdown and destruction.
-- [ ] Fuzz parsers and asset formats.
-- [ ] Test handles, ownership and references after destruction.
-- [ ] Integrate validation layers and debug markers.
-- [ ] Document platform and GPU limitations.
-- [ ] Create Low, Medium and High profiles with explicit fallbacks.
-- [ ] Measure before and after important optimizations.
+- [x] Create versioned benchmark scenes and workloads.
+- [x] Measure startup, RAM, VRAM, CPU, GPU, draw calls, loading and executable size.
+- [x] Create a baseline and regression detection.
+- [x] Run Sanitizers and static analysis in CI. *(Executed locally via `windows-msvc-asan`, `windows-msvc-analyze`, and `linux-gcc-sanitizers` presets; GitHub Actions is not used per `AGENTS.md` Rule 23.)*
+- [x] Repeatedly test shutdown and destruction.
+- [x] Fuzz parsers and asset formats.
+- [x] Test handles, ownership and references after destruction.
+- [x] Integrate validation layers and debug markers.
+- [x] Document platform and GPU limitations.
+- [x] Create Low, Medium and High profiles with explicit fallbacks.
+- [x] Measure before and after important optimizations.
 
 ### Completion criteria
 

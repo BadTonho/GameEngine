@@ -544,6 +544,28 @@ if(GAMEENGINE_BUILD_TESTS)
     add_test(NAME gameengine_c_api COMMAND gameengine_c_api_tests)
     set_tests_properties(gameengine_c_api PROPERTIES LABELS "unit")
 
+    add_executable(gameengine_hardening_tests
+        tests/hardening_tests.cpp
+    )
+    target_link_libraries(gameengine_hardening_tests PRIVATE
+        gameengine_c_api
+        gameengine_audio
+        gameengine_scene
+        gameengine_assets
+        gameengine_core
+    )
+    if(GAMEENGINE_BUILD_PHYSICS)
+        target_link_libraries(gameengine_hardening_tests PRIVATE gameengine_physics)
+        target_compile_definitions(gameengine_hardening_tests PRIVATE GAMEENGINE_BUILD_PHYSICS=1)
+    endif()
+    if(GAMEENGINE_BUILD_LUA)
+        target_link_libraries(gameengine_hardening_tests PRIVATE gameengine_scripting)
+        target_compile_definitions(gameengine_hardening_tests PRIVATE GAMEENGINE_BUILD_LUA=1)
+    endif()
+    gameengine_configure_target(gameengine_hardening_tests)
+    add_test(NAME gameengine_hardening COMMAND gameengine_hardening_tests)
+    set_tests_properties(gameengine_hardening PROPERTIES LABELS "unit")
+
     add_executable(gameengine_asset_tests
         tests/asset_tests.cpp
     )

@@ -554,6 +554,18 @@ int main()
         std::remove("gameengine-vulkan-test.pipeline.cache.tmp");
     }
 
+    for (int cycle = 0; cycle < 5; ++cycle) {
+        gameengine::rhi::Renderer cycle_renderer;
+        if (!cycle_renderer.initialize(platform).ok() ||
+            !cycle_renderer.render_frame(platform).ok()) {
+            cycle_renderer.shutdown();
+            platform.shutdown();
+            return 43;
+        }
+        cycle_renderer.shutdown();
+        cycle_renderer.shutdown();
+    }
+
     platform.shutdown();
     return 0;
 }

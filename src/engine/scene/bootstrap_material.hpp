@@ -14,7 +14,7 @@ constexpr core::usize bootstrap_texture_byte_count =
     static_cast<core::usize>(bootstrap_texture_width) * bootstrap_texture_height *
     bootstrap_texture_channels;
 
-inline constexpr std::array<std::byte, bootstrap_texture_byte_count> bootstrap_checkerboard = [] {
+inline constexpr std::array<std::byte, bootstrap_texture_byte_count> bootstrap_checkerboard = []() consteval {
     std::array<std::byte, bootstrap_texture_byte_count> pixels{};
     for (core::u32 y = 0; y < bootstrap_texture_height; ++y) {
         for (core::u32 x = 0; x < bootstrap_texture_width; ++x) {

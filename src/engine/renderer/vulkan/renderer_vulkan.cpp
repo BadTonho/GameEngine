@@ -7635,7 +7635,7 @@ core::Status Renderer::initialize(const platform::Platform& platform,
     }
 
     const auto startup_start = std::chrono::steady_clock::now();
-    impl_ = new (std::nothrow) Impl{};
+    impl_ = new (std::nothrow) Impl();
     if (impl_ == nullptr) {
         return core::Status{core::ErrorCode::allocation_failed};
     }

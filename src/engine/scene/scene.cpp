@@ -22,7 +22,7 @@ public:
     SparseSet<DirectionalLightComponent> lights;
 };
 
-Scene::Scene() noexcept : storage_(new (std::nothrow) Storage{}) {}
+Scene::Scene() noexcept : storage_(new (std::nothrow) Storage()) {}
 
 Scene::~Scene() noexcept
 {

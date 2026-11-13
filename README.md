@@ -332,6 +332,10 @@ Build directories, compiler output, IDE files and local configuration are exclud
 
 `gameengine_c_api` exposes a versioned C11 boundary in [gameengine_c.h](src/api/c/gameengine_c.h) with opaque `GeEngine*` / `GeScene*` handles, `GeEntity` ids, `struct_size` + major-version ABI checks, prepared-asset loading, and `.gescene` serialization. See [the C ABI architecture](docs/architecture/c-abi.md).
 
+### Quality, benchmarks & platform limits
+
+Versioned benchmark workloads live in [benchmarks/README.md](benchmarks/README.md) and [workloads_v1.json](benchmarks/workloads_v1.json), with offline capture/regression checks in `gameengine-asset-tool` (`quality-capture` / `quality-compare`), hardening tests in [hardening_tests.cpp](tests/hardening_tests.cpp), local ASan/static-analysis presets in [CMakePresets.json](CMakePresets.json), and platform/GPU limits documented in [platform-gpu-limits.md](docs/architecture/platform-gpu-limits.md).
+
 ## Contributing
 
 The project is being built deliberately and incrementally. Before opening an issue or pull request:

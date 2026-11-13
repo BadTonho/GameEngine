@@ -9,6 +9,9 @@ use gameengine_asset_tool::model::{
     fixture_material, fixture_mesh, fixture_scene, fixture_texture, pack_material, pack_mesh,
     pack_scene, pack_texture, write_asset,
 };
+use gameengine_asset_tool::quality::{
+    capture_quality_report, compare_quality_reports, QualityReport, RegressionThresholds,
+};
 use gameengine_asset_tool::{AssetError, Result};
 
 struct PackageAsset {
@@ -534,6 +537,54 @@ fn run(args: &[String]) -> Result<()> {
                 "package path",
             )?;
             package_assets(&input, &output)
+        }
+        "quality-capture" => {
+            let build_flag = args.iter().position(|value| value == "--build-dir");
+            let output_flag = args.iter().position(|value| value == "--output");
+            let build_dir = require_path(
+                build_flag.and_then(|index| args.get(index + 1)),
+                "build directory",
+            )?;
+            let output = require_path(
+                output_flag.and_then(|index| args.get(index + 1)),
+                "output report path",
+            )?;
+            let work_dir = output
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("work");
+            let report = capture_quality_report(&build_dir, &work_dir, &output)?;
+            println!(
+                "captured {} binaries and {} workloads to {}",
+                report.binary_sizes.len(),
+                report.workloads.len(),
+                output.display()
+            );
+            Ok(())
+        }
+        "quality-compare" => {
+            let base_flag = args.iter().position(|value| value == "--baseline");
+            let cand_flag = args.iter().position(|value| value == "--candidate");
+            let baseline_path = require_path(
+                base_flag.and_then(|index| args.get(index + 1)),
+                "baseline report path",
+            )?;
+            let candidate_path = require_path(
+                cand_flag.and_then(|index| args.get(index + 1)),
+                "candidate report path",
+            )?;
+            let baseline: QualityReport = serde_json::from_slice(&fs::read(&baseline_path)?)?;
+            let candidate: QualityReport = serde_json::from_slice(&fs::read(&candidate_path)?)?;
+            match compare_quality_reports(&baseline, &candidate, &RegressionThresholds::default()) {
+                Ok(()) => {
+                    println!("quality-compare: no regressions detected");
+                    Ok(())
+                }
+                Err(regressions) => Err(AssetError::Invalid(format!(
+                    "regressions detected:\n{}",
+                    regressions.join("\n")
+                ))),
+            }
         }
         _ => {
             usage();

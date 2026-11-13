@@ -2,6 +2,7 @@ pub mod cache;
 pub mod format;
 pub mod gltf;
 pub mod model;
+pub mod quality;
 
 pub use format::{AssetKind, ChunkView, ParsedAsset};
 pub use model::{

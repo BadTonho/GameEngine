@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "renderer_workloads": [
+    {
+      "name": "renderer_low_cpu",
+      "args": ["--metrics", "--renderer-quality", "low"]
+    },
+    {
+      "name": "renderer_medium_cpu",
+      "args": ["--metrics", "--renderer-quality", "medium"]
+    },
+    {
+      "name": "renderer_high_cpu",
+      "args": ["--metrics", "--renderer-quality", "high"]
+    },
+    {
+      "name": "renderer_medium_gpu",
+      "args": ["--metrics", "--gpu-culling"]
+    }
+  ],
+  "renderer_benchmark": {
+    "name": "lighting_benchmark_v1",
+    "args": ["--renderer-benchmark"],
+    "cases": 36
+  },
+  "prepared_scene_workload": {
+    "name": "prepared_scene_v1",
+    "mesh_asset_id": 1001,
+    "texture_asset_id": 2001,
+    "material_asset_id": 3001,
+    "entity_count": 64
+  },
+  "subsystem_benchmarks": [
+    "gameengine_scene_benchmark",
+    "gameengine_animation_benchmark",
+    "gameengine_audio_benchmark",
+    "gameengine_physics_benchmark",
+    "gameengine_scripting_benchmark"
+  ],
+  "binary_targets": [
+    "gameengine_runtime.exe",
+    "gameengine_editor.exe",
+    "gameengine_c_api.lib"
+  ],
+  "regression_thresholds_percent": {
+    "binary_size": 10.0,
+    "vram_bytes": 15.0,
+    "ram_bytes": 15.0,
+    "startup_ns": 25.0,
+    "load_ns": 25.0,
+    "cpu_ns": 20.0,
+    "gpu_ns": 20.0
+  }
+}

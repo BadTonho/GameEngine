@@ -414,7 +414,9 @@ int main(int argc, char** argv)
         const std::array<gameengine::core::u64, 1> builtin_materials = {
             gameengine::scene::bootstrap_material_id,
         };
+        const auto asset_load_start = std::chrono::steady_clock::now();
         const gameengine::core::Status load_status = prepared_assets.load_directory(resolved_assets_dir);
+        const auto asset_load_end = std::chrono::steady_clock::now();
         if (!load_status ||
             !gameengine::assets::read_binary_asset_file(scene_path, scene_bytes) ||
             !gameengine::assets::read_scene(scene_bytes, scene_view) ||
@@ -433,6 +435,20 @@ int main(int argc, char** argv)
             core.shutdown();
             return 6;
         }
+        const auto scene_load_end = std::chrono::steady_clock::now();
+        const auto asset_load_ns = static_cast<unsigned long long>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(asset_load_end - asset_load_start)
+                .count());
+        const auto scene_load_ns = static_cast<unsigned long long>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(scene_load_end - asset_load_end)
+                .count());
+        std::fprintf(stderr,
+                     "[gameengine] [info] scene_load_telemetry asset_load_ns=%llu "
+                     "scene_load_ns=%llu assets=%zu entities=%zu\n",
+                     asset_load_ns,
+                     scene_load_ns,
+                     prepared_assets.total_count(),
+                     runtime_scene.entity_count());
     } else if (!gameengine::scene::create_bootstrap_scene(runtime_scene) ||
                runtime_scene.entities().empty()) {
         gameengine::core::log(gameengine::core::LogLevel::error,
