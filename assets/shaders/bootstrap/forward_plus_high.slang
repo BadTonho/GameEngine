@@ -1,12 +1,12 @@
 struct VertexInput
 {
-    [[vk::location(0)]] float3 position;
-    [[vk::location(1)]] float3 normal;
-    [[vk::location(2)]] float2 uv;
-    [[vk::location(3)]] float4 model_column0;
-    [[vk::location(4)]] float4 model_column1;
-    [[vk::location(5)]] float4 model_column2;
-    [[vk::location(6)]] float4 model_column3;
+    [[vk::location(0)]] float3 position : POSITION;
+    [[vk::location(1)]] float3 normal : NORMAL;
+    [[vk::location(2)]] float2 uv : TEXCOORD0;
+    [[vk::location(3)]] float4 model_column0 : TEXCOORD1;
+    [[vk::location(4)]] float4 model_column1 : TEXCOORD2;
+    [[vk::location(5)]] float4 model_column2 : TEXCOORD3;
+    [[vk::location(6)]] float4 model_column3 : TEXCOORD4;
 };
 
 struct ForwardPlusHighPushConstants
@@ -48,19 +48,19 @@ struct PointLight
 struct VertexOutput
 {
     float4 position : SV_Position;
-    [[vk::location(0)]] float3 world_position;
-    [[vk::location(1)]] float3 world_normal;
-    [[vk::location(2)]] float2 uv;
-    [[vk::location(3)]] float4 shadow_position;
+    [[vk::location(0)]] float3 world_position : TEXCOORD0;
+    [[vk::location(1)]] float3 world_normal : TEXCOORD1;
+    [[vk::location(2)]] float2 uv : TEXCOORD2;
+    [[vk::location(3)]] float4 shadow_position : TEXCOORD3;
 };
 
 struct FragmentInput
 {
     float4 position : SV_Position;
-    [[vk::location(0)]] float3 world_position;
-    [[vk::location(1)]] float3 world_normal;
-    [[vk::location(2)]] float2 uv;
-    [[vk::location(3)]] float4 shadow_position;
+    [[vk::location(0)]] float3 world_position : TEXCOORD0;
+    [[vk::location(1)]] float3 world_normal : TEXCOORD1;
+    [[vk::location(2)]] float2 uv : TEXCOORD2;
+    [[vk::location(3)]] float4 shadow_position : TEXCOORD3;
 };
 
 [shader("vertex")]

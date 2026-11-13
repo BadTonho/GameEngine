@@ -190,6 +190,8 @@ int main(int argc, char** argv)
     std::filesystem::path assets_dir{};
     gameengine::renderer::quality::RendererQuality renderer_quality =
         gameengine::renderer::quality::RendererQuality::medium;
+    gameengine::rhi::BackendKind renderer_backend =
+        gameengine::rhi::BackendKind::auto_select;
     for (int index = 1; index < argc; ++index) {
         if (std::strcmp(argv[index], "--smoke-test") == 0) {
             smoke_test = true;
@@ -228,6 +230,14 @@ int main(int argc, char** argv)
                 !gameengine::renderer::quality::parse(argv[++index], renderer_quality)) {
                 gameengine::core::log(gameengine::core::LogLevel::error,
                                       "--renderer-quality expects low, medium or high");
+                core.shutdown();
+                return 2;
+            }
+        } else if (std::strcmp(argv[index], "--renderer-backend") == 0) {
+            if (index + 1 >= argc ||
+                !gameengine::rhi::parse_backend_kind(argv[++index], renderer_backend)) {
+                gameengine::core::log(gameengine::core::LogLevel::error,
+                                      "--renderer-backend expects auto, vulkan, d3d12 or metal");
                 core.shutdown();
                 return 2;
             }
@@ -356,9 +366,11 @@ int main(int argc, char** argv)
         return 4;
     }
 
-#if GAMEENGINE_RENDERER_HAS_VULKAN
+#if GAMEENGINE_RENDERER_HAS_VULKAN || GAMEENGINE_RENDERER_HAS_D3D12 || GAMEENGINE_RENDERER_HAS_METAL || GAMEENGINE_RENDERER_HAS_D3D12 || GAMEENGINE_RENDERER_HAS_METAL
     gameengine::rhi::Renderer renderer;
-    const gameengine::core::Status renderer_status = renderer.initialize(platform);
+    gameengine::rhi::RendererConfiguration renderer_config{};
+    renderer_config.backend = renderer_backend;
+    const gameengine::core::Status renderer_status = renderer.initialize(platform, renderer_config);
     if (!renderer_status) {
         gameengine::core::log(gameengine::core::LogLevel::error,
                               gameengine::core::to_string(renderer_status.code));
@@ -678,7 +690,7 @@ int main(int argc, char** argv)
         return 0;
     }
 #endif
-#if GAMEENGINE_RENDERER_HAS_VULKAN
+#if GAMEENGINE_RENDERER_HAS_VULKAN || GAMEENGINE_RENDERER_HAS_D3D12 || GAMEENGINE_RENDERER_HAS_METAL
     if (metrics_test) {
         const gameengine::core::Status workload_status =
             gameengine::renderer::diagnostics::set_procedural_workload(
@@ -696,7 +708,7 @@ int main(int argc, char** argv)
     do {
         platform.poll_events();
         const gameengine::core::f64 delta_seconds = clock.tick();
-#if GAMEENGINE_RENDERER_HAS_VULKAN
+#if GAMEENGINE_RENDERER_HAS_VULKAN || GAMEENGINE_RENDERER_HAS_D3D12 || GAMEENGINE_RENDERER_HAS_METAL
 #if GAMEENGINE_BUILD_PHYSICS
         if (physics_demo) {
             const gameengine::core::Status physics_status =
@@ -778,7 +790,7 @@ int main(int argc, char** argv)
         (void)delta_seconds;
 #endif
 
-#if GAMEENGINE_RENDERER_HAS_VULKAN
+#if GAMEENGINE_RENDERER_HAS_VULKAN || GAMEENGINE_RENDERER_HAS_D3D12 || GAMEENGINE_RENDERER_HAS_METAL
         if (metrics_test && metrics_frame_count == metrics_warmup_frames) {
             gameengine::renderer::diagnostics::begin_metrics(renderer);
         }
@@ -829,7 +841,7 @@ int main(int argc, char** argv)
         }
     } while (!platform.should_close());
 
-#if GAMEENGINE_RENDERER_HAS_VULKAN
+#if GAMEENGINE_RENDERER_HAS_VULKAN || GAMEENGINE_RENDERER_HAS_D3D12 || GAMEENGINE_RENDERER_HAS_METAL
     static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
     static_cast<void>(gameengine::renderer::scene_bridge::clear_prepared_assets(renderer));
 #if GAMEENGINE_BUILD_LUA

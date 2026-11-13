@@ -3,13 +3,17 @@
 ## Platform Support Matrix
 
 - **Windows (x64, MSVC)**: Primary verified host. Win32 windowing, WASAPI audio, Vulkan 1.0+
-  rendering, Jolt physics, optional Lua 5.4.8 scripting, and C11 C ABI are supported and tested
-  locally (`windows-msvc-debug`, `windows-msvc-release`, `windows-msvc-asan`,
-  `windows-msvc-analyze`).
+  rendering, native D3D12 (`GAMEENGINE_BUILD_D3D12=ON`, `--renderer-backend d3d12`), Jolt physics,
+  optional Lua 5.4.8 scripting, and C11 C ABI are supported and tested locally
+  (`windows-msvc-debug`, `windows-msvc-release`, `windows-msvc-asan`, `windows-msvc-analyze`).
 - **Linux (GCC / Clang)**: Supported via X11 windowing, ALSA audio, Vulkan 1.0+, and
   `linux-gcc-sanitizers` (ASan + UBSan). Not executed directly on Windows hosts.
-- **macOS / other targets**: Platform/audio/renderer stubs compile cleanly and return
-  `ErrorCode::unsupported_platform`.
+- **macOS / Apple targets**: Metal backend (`src/engine/renderer/metal/renderer_metal.mm`,
+  `GAMEENGINE_BUILD_METAL=ON` on Apple) is isolated behind the `RendererBackend` RHI boundary;
+  shared `.slang` bootstrap shaders are validated offline to Metal (`metal_shaders.hpp`) and DXIL
+  (`d3d12_shaders.hpp`) alongside SPIR-V (`triangle_shaders.hpp`). On non-Apple hosts,
+  `renderer_metal_stub.cpp` returns `ErrorCode::unsupported_platform`. See
+  [rhi-backends.md](rhi-backends.md) for the full backend capabilities matrix.
 
 ## GPU & Vulkan Limitations
 

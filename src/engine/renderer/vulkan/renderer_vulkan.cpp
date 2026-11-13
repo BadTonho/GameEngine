@@ -1,4 +1,5 @@
-#include "engine/rhi/rhi.hpp"
+﻿#include "engine/rhi/rhi.hpp"
+#include "engine/rhi/rhi_backend.hpp"
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -134,7 +135,7 @@ static_assert(sizeof(ForwardPlusPushConstants) ==
 
 } // namespace
 
-struct Renderer::Impl final {
+struct VulkanBackend final : public RendererBackend {
     enum class ResourceState : core::u8 {
         free = 0,
         live,
@@ -651,6 +652,16 @@ struct Renderer::Impl final {
                         const char* name) noexcept;
     void begin_debug_label(VkCommandBuffer command_buffer, const char* name) noexcept;
     void end_debug_label(VkCommandBuffer command_buffer) noexcept;
+
+    [[nodiscard]] BackendCapabilities capabilities() const noexcept override;
+    [[nodiscard]] core::Status attach_scene(scene::Scene& scene) noexcept override;
+    [[nodiscard]] core::Status detach_scene() noexcept override;
+    [[nodiscard]] core::Status set_ui_vertices(
+        std::span<const editor::UiVertex> vertices) noexcept override;
+    [[nodiscard]] core::Status read_metrics(
+        renderer::metrics::FrameTimingReport& report) noexcept override;
+    void begin_metrics() noexcept override;
+    void print_metrics() noexcept override;
 };
 
 namespace {
@@ -667,7 +678,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
                                                const VkDebugUtilsMessengerCallbackDataEXT* data,
                                                void* user_data) noexcept
 {
-    auto* renderer = static_cast<Renderer::Impl*>(user_data);
+    auto* renderer = static_cast<VulkanBackend*>(user_data);
     const auto level = (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0
                            ? core::LogLevel::error
                            : core::LogLevel::warning;
@@ -680,7 +691,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
 }
 
 [[nodiscard]] VkDebugUtilsMessengerCreateInfoEXT debug_create_info(
-    Renderer::Impl* renderer) noexcept
+    VulkanBackend* renderer) noexcept
 {
     VkDebugUtilsMessengerCreateInfoEXT info{};
     info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
@@ -719,7 +730,7 @@ void destroy_debug_utils_messenger(VkInstance instance,
 
 } // namespace
 
-core::Status Renderer::Impl::initialize(
+core::Status VulkanBackend::initialize(
     platform::NativeWindowHandles handles,
     platform::WindowSize window_size,
     const rhi::RendererConfiguration& configuration) noexcept
@@ -848,7 +859,7 @@ core::Status Renderer::Impl::initialize(
                             : core::Status{};
 }
 
-void Renderer::Impl::shutdown() noexcept
+void VulkanBackend::shutdown() noexcept
 {
     if (device != VK_NULL_HANDLE) {
         static_cast<void>(vkDeviceWaitIdle(device));
@@ -1018,7 +1029,7 @@ void Renderer::Impl::shutdown() noexcept
     validation_error = false;
 }
 
-core::Status Renderer::Impl::create_instance() noexcept
+core::Status VulkanBackend::create_instance() noexcept
 {
     std::uint32_t layer_count = 0;
     if (vkEnumerateInstanceLayerProperties(&layer_count, nullptr) != VK_SUCCESS) {
@@ -1098,7 +1109,7 @@ core::Status Renderer::Impl::create_instance() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_debug_messenger() noexcept
+core::Status VulkanBackend::create_debug_messenger() noexcept
 {
     set_debug_utils_object_name = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
         vkGetInstanceProcAddr(instance, "vkSetDebugUtilsObjectNameEXT"));
@@ -1114,7 +1125,7 @@ core::Status Renderer::Impl::create_debug_messenger() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_surface() noexcept
+core::Status VulkanBackend::create_surface() noexcept
 {
 #if defined(_WIN32)
     const auto hinstance = reinterpret_cast<HINSTANCE>(native_handles.display);
@@ -1141,7 +1152,7 @@ core::Status Renderer::Impl::create_surface() noexcept
 #endif
 }
 
-Renderer::Impl::QueueFamilies Renderer::Impl::find_queue_families(
+VulkanBackend::QueueFamilies VulkanBackend::find_queue_families(
     VkPhysicalDevice candidate) const noexcept
 {
     std::uint32_t count = 0;
@@ -1167,7 +1178,7 @@ Renderer::Impl::QueueFamilies Renderer::Impl::find_queue_families(
     return result;
 }
 
-bool Renderer::Impl::check_device_extension_support(VkPhysicalDevice candidate) const noexcept
+bool VulkanBackend::check_device_extension_support(VkPhysicalDevice candidate) const noexcept
 {
     std::uint32_t count = 0;
     if (vkEnumerateDeviceExtensionProperties(candidate, nullptr, &count, nullptr) != VK_SUCCESS) {
@@ -1183,7 +1194,7 @@ bool Renderer::Impl::check_device_extension_support(VkPhysicalDevice candidate) 
                        [&available](const char* name) { return has_extension(available, name); });
 }
 
-bool Renderer::Impl::query_swapchain_support(VkPhysicalDevice candidate,
+bool VulkanBackend::query_swapchain_support(VkPhysicalDevice candidate,
                                                SwapchainSupport& support) const noexcept
 {
     if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(candidate, surface, &support.capabilities) !=
@@ -1220,7 +1231,7 @@ bool Renderer::Impl::query_swapchain_support(VkPhysicalDevice candidate,
     return !support.formats.empty() && !support.present_modes.empty();
 }
 
-bool Renderer::Impl::is_device_suitable(VkPhysicalDevice candidate,
+bool VulkanBackend::is_device_suitable(VkPhysicalDevice candidate,
                                          QueueFamilies& families) const noexcept
 {
     families = find_queue_families(candidate);
@@ -1232,7 +1243,7 @@ bool Renderer::Impl::is_device_suitable(VkPhysicalDevice candidate,
     return query_swapchain_support(candidate, support);
 }
 
-core::Status Renderer::Impl::pick_physical_device() noexcept
+core::Status VulkanBackend::pick_physical_device() noexcept
 {
     std::uint32_t count = 0;
     if (vkEnumeratePhysicalDevices(instance, &count, nullptr) != VK_SUCCESS || count == 0) {
@@ -1275,7 +1286,7 @@ core::Status Renderer::Impl::pick_physical_device() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_logical_device() noexcept
+core::Status VulkanBackend::create_logical_device() noexcept
 {
     const QueueFamilies families = find_queue_families(physical_device);
     std::vector<core::u32> unique_families = {families.graphics.value()};
@@ -1312,7 +1323,7 @@ core::Status Renderer::Impl::create_logical_device() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::select_shader_variants() noexcept
+core::Status VulkanBackend::select_shader_variants() noexcept
 {
     shader_capabilities.supported_capabilities =
         renderer::vulkan::shader_capability_vulkan_1_0;
@@ -1375,7 +1386,7 @@ core::Status Renderer::Impl::select_shader_variants() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_timing_resources() noexcept
+core::Status VulkanBackend::create_timing_resources() noexcept
 {
     gpu_timestamps_enabled = false;
     reset_query_pool = nullptr;
@@ -1420,7 +1431,7 @@ core::Status Renderer::Impl::create_timing_resources() noexcept
     return core::Status{};
 }
 
-void Renderer::Impl::destroy_timing_resources() noexcept
+void VulkanBackend::destroy_timing_resources() noexcept
 {
     if (device != VK_NULL_HANDLE && timestamp_query_pool != VK_NULL_HANDLE) {
         vkDestroyQueryPool(device, timestamp_query_pool, nullptr);
@@ -1432,7 +1443,7 @@ void Renderer::Impl::destroy_timing_resources() noexcept
     gpu_timestamps_enabled = false;
 }
 
-core::Status Renderer::Impl::create_render_graph() noexcept
+core::Status VulkanBackend::create_render_graph() noexcept
 {
     render_graph.reset();
     gpu_source_resource = {};
@@ -1677,7 +1688,7 @@ core::Status Renderer::Impl::create_render_graph() noexcept
     return core::Status{};
 }
 
-void Renderer::Impl::reset_timing_queries(core::u32 frame_index) noexcept
+void VulkanBackend::reset_timing_queries(core::u32 frame_index) noexcept
 {
     if (!gpu_timestamps_enabled || reset_query_pool == nullptr ||
         frame_index >= frames_in_flight) {
@@ -1689,7 +1700,7 @@ void Renderer::Impl::reset_timing_queries(core::u32 frame_index) noexcept
                     timestamp_queries_per_frame);
 }
 
-void Renderer::Impl::resolve_timing(core::u32 frame_index) noexcept
+void VulkanBackend::resolve_timing(core::u32 frame_index) noexcept
 {
     if (frame_index >= frames_in_flight || !timing_pending[frame_index]) {
         return;
@@ -1728,7 +1739,7 @@ void Renderer::Impl::resolve_timing(core::u32 frame_index) noexcept
     timing_pending[frame_index] = false;
 }
 
-void Renderer::Impl::resolve_all_timing() noexcept
+void VulkanBackend::resolve_all_timing() noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -1739,7 +1750,7 @@ void Renderer::Impl::resolve_all_timing() noexcept
     }
 }
 
-void Renderer::Impl::resolve_gpu_visibility(core::u32 frame_index) noexcept
+void VulkanBackend::resolve_gpu_visibility(core::u32 frame_index) noexcept
 {
     if (visibility_mode != renderer::gpu_culling::VisibilityMode::gpu ||
         !gpu_culling_available || frame_index >= frames_in_flight ||
@@ -1765,7 +1776,7 @@ void Renderer::Impl::resolve_gpu_visibility(core::u32 frame_index) noexcept
     report.culled_instances = report.total_instances - report.visible_instances;
 }
 
-core::Status Renderer::Impl::create_pipeline_cache() noexcept
+core::Status VulkanBackend::create_pipeline_cache() noexcept
 {
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(physical_device, &properties);
@@ -1801,7 +1812,7 @@ core::Status Renderer::Impl::create_pipeline_cache() noexcept
     return core::Status{};
 }
 
-void Renderer::Impl::persist_pipeline_cache() noexcept
+void VulkanBackend::persist_pipeline_cache() noexcept
 {
     if (device == VK_NULL_HANDLE || pipeline_cache == VK_NULL_HANDLE ||
         pipeline_cache_path[0] == '\0') {
@@ -1827,7 +1838,7 @@ void Renderer::Impl::persist_pipeline_cache() noexcept
     }
 }
 
-core::Status Renderer::Impl::create_command_pool() noexcept
+core::Status VulkanBackend::create_command_pool() noexcept
 {
     const QueueFamilies families = find_queue_families(physical_device);
     VkCommandPoolCreateInfo create_info{};
@@ -1840,7 +1851,7 @@ core::Status Renderer::Impl::create_command_pool() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_swapchain(platform::WindowSize window_size) noexcept
+core::Status VulkanBackend::create_swapchain(platform::WindowSize window_size) noexcept
 {
     SwapchainSupport support;
     if (!query_swapchain_support(physical_device, support)) {
@@ -1949,7 +1960,7 @@ core::Status Renderer::Impl::create_swapchain(platform::WindowSize window_size) 
                             : core::Status{};
 }
 
-core::Status Renderer::Impl::create_image_views() noexcept
+core::Status VulkanBackend::create_image_views() noexcept
 {
     swapchain_image_views.resize(swapchain_images.size());
     for (std::size_t index = 0; index < swapchain_images.size(); ++index) {
@@ -1977,7 +1988,7 @@ core::Status Renderer::Impl::create_image_views() noexcept
     return core::Status{};
 }
 
-VkFormat Renderer::Impl::find_depth_format() const noexcept
+VkFormat VulkanBackend::find_depth_format() const noexcept
 {
     constexpr std::array<VkFormat, 3> candidates = {
         VK_FORMAT_D32_SFLOAT,
@@ -1995,7 +2006,7 @@ VkFormat Renderer::Impl::find_depth_format() const noexcept
     return VK_FORMAT_UNDEFINED;
 }
 
-core::Status Renderer::Impl::create_depth_resources() noexcept
+core::Status VulkanBackend::create_depth_resources() noexcept
 {
     depth_format = find_depth_format();
     if (depth_format == VK_FORMAT_UNDEFINED) {
@@ -2057,7 +2068,7 @@ core::Status Renderer::Impl::create_depth_resources() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_render_pass() noexcept
+core::Status VulkanBackend::create_render_pass() noexcept
 {
     VkAttachmentDescription color_attachment{};
     color_attachment.format = swapchain_format;
@@ -2122,7 +2133,7 @@ core::Status Renderer::Impl::create_render_pass() noexcept
     return core::Status{};
 }
 
-VkShaderModule Renderer::Impl::create_shader_module(const std::uint32_t* code,
+VkShaderModule VulkanBackend::create_shader_module(const std::uint32_t* code,
                                                     std::size_t size) const noexcept
 {
     VkShaderModuleCreateInfo create_info{};
@@ -2136,7 +2147,7 @@ VkShaderModule Renderer::Impl::create_shader_module(const std::uint32_t* code,
     return shader_module;
 }
 
-core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
+core::Status VulkanBackend::build_pipeline_object(const PipelineSlot& slot,
                                                     VkPipeline& pipeline) noexcept
 {
     pipeline = VK_NULL_HANDLE;
@@ -2337,7 +2348,7 @@ core::Status Renderer::Impl::build_pipeline_object(const PipelineSlot& slot,
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_pipeline_object(PipelineSlot& slot) noexcept
+core::Status VulkanBackend::create_pipeline_object(PipelineSlot& slot) noexcept
 {
     VkPipeline replacement = VK_NULL_HANDLE;
     const core::Status status = build_pipeline_object(slot, replacement);
@@ -2349,7 +2360,7 @@ core::Status Renderer::Impl::create_pipeline_object(PipelineSlot& slot) noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_framebuffers() noexcept
+core::Status VulkanBackend::create_framebuffers() noexcept
 {
     framebuffers.resize(swapchain_image_views.size());
     for (std::size_t index = 0; index < swapchain_image_views.size(); ++index) {
@@ -2372,7 +2383,7 @@ core::Status Renderer::Impl::create_framebuffers() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_command_buffers() noexcept
+core::Status VulkanBackend::create_command_buffers() noexcept
 {
     command_buffers.resize(framebuffers.size());
     VkCommandBufferAllocateInfo allocate_info{};
@@ -2386,7 +2397,7 @@ core::Status Renderer::Impl::create_command_buffers() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_render_finished_semaphores() noexcept
+core::Status VulkanBackend::create_render_finished_semaphores() noexcept
 {
     VkSemaphoreCreateInfo semaphore_info{};
     semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -2400,7 +2411,7 @@ core::Status Renderer::Impl::create_render_finished_semaphores() noexcept
     return core::Status{};
 }
 
-void Renderer::Impl::destroy_render_finished_semaphores() noexcept
+void VulkanBackend::destroy_render_finished_semaphores() noexcept
 {
     if (device != VK_NULL_HANDLE) {
         for (VkSemaphore semaphore : render_finished) {
@@ -2412,7 +2423,7 @@ void Renderer::Impl::destroy_render_finished_semaphores() noexcept
     render_finished.clear();
 }
 
-core::Status Renderer::Impl::create_sync_objects() noexcept
+core::Status VulkanBackend::create_sync_objects() noexcept
 {
     VkSemaphoreCreateInfo semaphore_info{};
     semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -2430,7 +2441,7 @@ core::Status Renderer::Impl::create_sync_objects() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_bootstrap_cube_resources() noexcept
+core::Status VulkanBackend::create_bootstrap_cube_resources() noexcept
 {
     const rhi::BufferDescription vertex_description{
         .size = sizeof(scene::bootstrap_cube_vertices),
@@ -2466,7 +2477,7 @@ core::Status Renderer::Impl::create_bootstrap_cube_resources() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_bootstrap_scene() noexcept
+core::Status VulkanBackend::create_bootstrap_scene() noexcept
 {
     const core::Status status = scene::create_bootstrap_scene(bootstrap_scene);
     if (!status) {
@@ -2484,7 +2495,7 @@ core::Status Renderer::Impl::create_bootstrap_scene() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_procedural_instance_resources() noexcept
+core::Status VulkanBackend::create_procedural_instance_resources() noexcept
 {
     procedural_instances.resize(renderer::procedural::maximum_instance_count);
 
@@ -2532,7 +2543,7 @@ core::Status Renderer::Impl::create_procedural_instance_resources() noexcept
     return core::Status{};
 }
 
-void Renderer::Impl::destroy_procedural_instance_resources() noexcept
+void VulkanBackend::destroy_procedural_instance_resources() noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -2554,8 +2565,14 @@ void Renderer::Impl::destroy_procedural_instance_resources() noexcept
     active_instance_count = renderer::procedural::default_instance_count;
 }
 
-core::Status Renderer::Impl::set_procedural_workload(core::u32 instance_count) noexcept
+core::Status VulkanBackend::set_procedural_workload(core::u32 instance_count) noexcept
 {
+    if (device != VK_NULL_HANDLE) {
+        if (vkDeviceWaitIdle(device) != VK_SUCCESS) {
+            return core::Status{core::ErrorCode::vulkan_device_failed};
+        }
+        resolve_all_timing();
+    }
     if (instance_count == 0U || instance_count > renderer::procedural::maximum_instance_count ||
         procedural_instances.size() < instance_count) {
         return core::Status{core::ErrorCode::invalid_argument};
@@ -2578,7 +2595,7 @@ core::Status Renderer::Impl::set_procedural_workload(core::u32 instance_count) n
     return upload_gpu_source_instances();
 }
 
-core::Status Renderer::Impl::upload_gpu_source_instances() noexcept
+core::Status VulkanBackend::upload_gpu_source_instances() noexcept
 {
     if (gpu_source_mapped == nullptr || gpu_source_memory == VK_NULL_HANDLE) {
         return core::Status{};
@@ -2610,7 +2627,7 @@ core::Status Renderer::Impl::upload_gpu_source_instances() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_gpu_culling_resources() noexcept
+core::Status VulkanBackend::create_gpu_culling_resources() noexcept
 {
     gpu_culling_available = false;
     gpu_culling_fallback = false;
@@ -2744,7 +2761,7 @@ core::Status Renderer::Impl::create_gpu_culling_resources() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_gpu_culling_descriptors() noexcept
+core::Status VulkanBackend::create_gpu_culling_descriptors() noexcept
 {
     const std::array<VkDescriptorSetLayoutBinding, 3> bindings = {
         VkDescriptorSetLayoutBinding{0,
@@ -2842,7 +2859,7 @@ core::Status Renderer::Impl::create_gpu_culling_descriptors() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_gpu_culling_pipeline() noexcept
+core::Status VulkanBackend::create_gpu_culling_pipeline() noexcept
 {
     if (compute_shader_artifact == nullptr) {
         return core::Status{core::ErrorCode::shader_variant_unavailable};
@@ -2899,7 +2916,7 @@ core::Status Renderer::Impl::create_gpu_culling_pipeline() noexcept
     return core::Status{};
 }
 
-void Renderer::Impl::destroy_gpu_culling_pipeline() noexcept
+void VulkanBackend::destroy_gpu_culling_pipeline() noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -2923,7 +2940,7 @@ void Renderer::Impl::destroy_gpu_culling_pipeline() noexcept
     gpu_cull_descriptor_sets = {};
 }
 
-void Renderer::Impl::destroy_gpu_culling_resources() noexcept
+void VulkanBackend::destroy_gpu_culling_resources() noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -2962,7 +2979,7 @@ void Renderer::Impl::destroy_gpu_culling_resources() noexcept
     gpu_culling_available = false;
 }
 
-core::Status Renderer::Impl::create_benchmark_resources() noexcept
+core::Status VulkanBackend::create_benchmark_resources() noexcept
 {
     if (!gpu_culling_available || benchmark_compute_shader_artifact == nullptr) {
         return core::Status{core::ErrorCode::unsupported_platform};
@@ -3204,7 +3221,7 @@ core::Status Renderer::Impl::create_benchmark_resources() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_forward_plus_buffers() noexcept
+core::Status VulkanBackend::create_forward_plus_buffers() noexcept
 {
     if (effective_quality == renderer::quality::RendererQuality::low ||
         device == VK_NULL_HANDLE) {
@@ -3292,7 +3309,7 @@ core::Status Renderer::Impl::create_forward_plus_buffers() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_forward_plus_compute_pipeline() noexcept
+core::Status VulkanBackend::create_forward_plus_compute_pipeline() noexcept
 {
     if (effective_quality == renderer::quality::RendererQuality::low ||
         forward_plus_compute_shader_artifact == nullptr || tile_header_buffer == VK_NULL_HANDLE ||
@@ -3443,7 +3460,7 @@ core::Status Renderer::Impl::create_forward_plus_compute_pipeline() noexcept
     return core::Status{};
 }
 
-void Renderer::Impl::destroy_forward_plus_compute_pipeline() noexcept
+void VulkanBackend::destroy_forward_plus_compute_pipeline() noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -3469,7 +3486,7 @@ void Renderer::Impl::destroy_forward_plus_compute_pipeline() noexcept
     forward_plus_compute_descriptor_sets = {};
 }
 
-void Renderer::Impl::destroy_forward_plus_buffers() noexcept
+void VulkanBackend::destroy_forward_plus_buffers() noexcept
 {
     destroy_forward_plus_compute_pipeline();
     if (device == VK_NULL_HANDLE) {
@@ -3499,7 +3516,7 @@ void Renderer::Impl::destroy_forward_plus_buffers() noexcept
     tile_index_memory_properties = 0;
 }
 
-core::Status Renderer::Impl::create_shadow_resources() noexcept
+core::Status VulkanBackend::create_shadow_resources() noexcept
 {
     constexpr std::array<VkFormat, 2> candidates = {
         VK_FORMAT_D32_SFLOAT,
@@ -3639,7 +3656,7 @@ core::Status Renderer::Impl::create_shadow_resources() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_environment_resources() noexcept
+core::Status VulkanBackend::create_environment_resources() noexcept
 {
     constexpr core::u32 resolution = 64U;
     constexpr core::u32 mip_count = 7U;
@@ -3830,7 +3847,7 @@ core::Status Renderer::Impl::create_environment_resources() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_shadow_pipeline() noexcept
+core::Status VulkanBackend::create_shadow_pipeline() noexcept
 {
     if (shadow_vertex_shader_artifact == nullptr || shadow_render_pass == VK_NULL_HANDLE) {
         return core::Status{core::ErrorCode::shader_variant_unavailable};
@@ -3946,7 +3963,7 @@ core::Status Renderer::Impl::create_shadow_pipeline() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_high_resources() noexcept
+core::Status VulkanBackend::create_high_resources() noexcept
 {
     destroy_high_resources();
     core::Status status = create_shadow_resources();
@@ -3963,7 +3980,7 @@ core::Status Renderer::Impl::create_high_resources() noexcept
     return status;
 }
 
-void Renderer::Impl::destroy_high_resources() noexcept
+void VulkanBackend::destroy_high_resources() noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -4017,7 +4034,7 @@ void Renderer::Impl::destroy_high_resources() noexcept
     environment_size = 0;
 }
 
-void Renderer::Impl::destroy_benchmark_resources() noexcept
+void VulkanBackend::destroy_benchmark_resources() noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -4075,7 +4092,7 @@ void Renderer::Impl::destroy_benchmark_resources() noexcept
     benchmark_lights = {};
 }
 
-core::Status Renderer::Impl::set_benchmark_case(
+core::Status VulkanBackend::set_benchmark_case(
     const renderer::benchmark::BenchmarkCase& benchmark_case) noexcept
 {
     if (benchmark_case.instance_count == 0U ||
@@ -4121,7 +4138,7 @@ core::Status Renderer::Impl::set_benchmark_case(
     return create_render_graph();
 }
 
-core::Status Renderer::Impl::run_renderer_benchmark(bool use_gpu_culling) noexcept
+core::Status VulkanBackend::run_renderer_benchmark(bool use_gpu_culling) noexcept
 {
     if (device == VK_NULL_HANDLE || !gpu_culling_available ||
         !benchmark_compute_shader_artifact) {
@@ -4305,7 +4322,7 @@ core::Status Renderer::Impl::run_renderer_benchmark(bool use_gpu_culling) noexce
     return create_render_graph();
 }
 
-bool Renderer::Impl::probe_gpu_culling_support() const noexcept
+bool VulkanBackend::probe_gpu_culling_support() const noexcept
 {
     if (physical_device == VK_NULL_HANDLE) {
         return false;
@@ -4323,9 +4340,13 @@ bool Renderer::Impl::probe_gpu_culling_support() const noexcept
            (family_properties[families.graphics.value()].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0U;
 }
 
-core::Status Renderer::Impl::set_visibility_mode(
+core::Status VulkanBackend::set_visibility_mode(
     renderer::gpu_culling::VisibilityMode mode) noexcept
 {
+    if (device == VK_NULL_HANDLE || vkDeviceWaitIdle(device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    resolve_all_timing();
     if (mode == renderer::gpu_culling::VisibilityMode::gpu && gpu_culling_available &&
         gpu_source_buffer == VK_NULL_HANDLE) {
         static_cast<void>(create_gpu_culling_resources());
@@ -4343,9 +4364,13 @@ core::Status Renderer::Impl::set_visibility_mode(
     return graph_status;
 }
 
-core::Status Renderer::Impl::set_renderer_quality(
+core::Status VulkanBackend::set_renderer_quality(
     renderer::quality::RendererQuality quality) noexcept
 {
+    if (device == VK_NULL_HANDLE || vkDeviceWaitIdle(device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    resolve_all_timing();
     if (effective_quality == renderer::quality::RendererQuality::high) {
         if (cube_pipeline.valid() && cube_pipeline.index < pipelines.size()) {
             destroy_pipeline_object(pipelines[cube_pipeline.index]);
@@ -4403,7 +4428,7 @@ core::Status Renderer::Impl::set_renderer_quality(
     return graph_status;
 }
 
-const Renderer::Impl::UploadedPreparedMesh* Renderer::Impl::find_uploaded_mesh(
+const VulkanBackend::UploadedPreparedMesh* VulkanBackend::find_uploaded_mesh(
     core::u64 asset_id) const noexcept
 {
     for (const UploadedPreparedMesh& mesh : uploaded_meshes) {
@@ -4414,7 +4439,7 @@ const Renderer::Impl::UploadedPreparedMesh* Renderer::Impl::find_uploaded_mesh(
     return nullptr;
 }
 
-const Renderer::Impl::UploadedPreparedTexture* Renderer::Impl::find_uploaded_texture(
+const VulkanBackend::UploadedPreparedTexture* VulkanBackend::find_uploaded_texture(
     core::u64 asset_id) const noexcept
 {
     for (const UploadedPreparedTexture& texture : uploaded_textures) {
@@ -4425,7 +4450,7 @@ const Renderer::Impl::UploadedPreparedTexture* Renderer::Impl::find_uploaded_tex
     return nullptr;
 }
 
-const Renderer::Impl::UploadedPreparedMaterial* Renderer::Impl::find_uploaded_material(
+const VulkanBackend::UploadedPreparedMaterial* VulkanBackend::find_uploaded_material(
     core::u64 asset_id) const noexcept
 {
     for (const UploadedPreparedMaterial& material : uploaded_materials) {
@@ -4436,7 +4461,7 @@ const Renderer::Impl::UploadedPreparedMaterial* Renderer::Impl::find_uploaded_ma
     return nullptr;
 }
 
-void Renderer::Impl::destroy_prepared_assets_gpu() noexcept
+void VulkanBackend::destroy_prepared_assets_gpu() noexcept
 {
     if (device != VK_NULL_HANDLE) {
         for (UploadedPreparedMaterial& material : uploaded_materials) {
@@ -4501,7 +4526,7 @@ void Renderer::Impl::destroy_prepared_assets_gpu() noexcept
     scene_draw_commands.clear();
 }
 
-core::Status Renderer::Impl::ensure_default_white_albedo_image() noexcept
+core::Status VulkanBackend::ensure_default_white_albedo_image() noexcept
 {
     if (default_white_albedo_image.valid()) {
         return core::Status{};
@@ -4531,7 +4556,7 @@ core::Status Renderer::Impl::ensure_default_white_albedo_image() noexcept
     return status;
 }
 
-core::Status Renderer::Impl::set_prepared_assets(
+core::Status VulkanBackend::set_prepared_assets(
     const renderer::scene_bridge::PreparedRenderAssets& assets) noexcept
 {
     if (device == VK_NULL_HANDLE) {
@@ -4541,6 +4566,10 @@ core::Status Renderer::Impl::set_prepared_assets(
         assets::max_prepared_asset_count) {
         return core::Status{core::ErrorCode::invalid_argument};
     }
+    if (vkDeviceWaitIdle(device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    resolve_all_timing();
 
     auto rollback_and_restore = [this]() noexcept {
         destroy_material_resources();
@@ -4747,11 +4776,15 @@ core::Status Renderer::Impl::set_prepared_assets(
     return core::Status{};
 }
 
-core::Status Renderer::Impl::clear_prepared_assets() noexcept
+core::Status VulkanBackend::clear_prepared_assets() noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return core::Status{core::ErrorCode::not_initialized};
     }
+    if (vkDeviceWaitIdle(device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    resolve_all_timing();
     destroy_material_resources();
     destroy_prepared_assets_gpu();
     if (editor_scene != nullptr && !select_editor_scene_entities(*editor_scene)) {
@@ -4767,7 +4800,7 @@ core::Status Renderer::Impl::clear_prepared_assets() noexcept
     return create_material_descriptors();
 }
 
-core::Status Renderer::Impl::select_editor_scene_entities(scene::Scene& scene) noexcept
+core::Status VulkanBackend::select_editor_scene_entities(scene::Scene& scene) noexcept
 {
     if (!scene.validate() || !scene.active_camera().valid()) {
         return core::Status{core::ErrorCode::invalid_argument};
@@ -4806,7 +4839,7 @@ core::Status Renderer::Impl::select_editor_scene_entities(scene::Scene& scene) n
     return core::Status{};
 }
 
-core::Status Renderer::Impl::attach_editor_scene(scene::Scene& scene) noexcept
+core::Status VulkanBackend::attach_editor_scene(scene::Scene& scene) noexcept
 {
     const core::Status status = select_editor_scene_entities(scene);
     if (!status) {
@@ -4816,7 +4849,7 @@ core::Status Renderer::Impl::attach_editor_scene(scene::Scene& scene) noexcept
     return set_procedural_workload(active_instance_count);
 }
 
-core::Status Renderer::Impl::detach_editor_scene() noexcept
+core::Status VulkanBackend::detach_editor_scene() noexcept
 {
     editor_scene = nullptr;
     editor_ui_vertices = {};
@@ -4826,7 +4859,7 @@ core::Status Renderer::Impl::detach_editor_scene() noexcept
     return set_procedural_workload(active_instance_count);
 }
 
-core::Status Renderer::Impl::set_editor_ui_vertices(
+core::Status VulkanBackend::set_editor_ui_vertices(
     std::span<const editor::UiVertex> vertices) noexcept
 {
     editor_ui_vertices = {};
@@ -4844,7 +4877,7 @@ core::Status Renderer::Impl::set_editor_ui_vertices(
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_editor_ui_resources() noexcept
+core::Status VulkanBackend::create_editor_ui_resources() noexcept
 {
     if (editor_ui_buffer == VK_NULL_HANDLE) {
         core::Status status = create_buffer_resource(editor_ui_slice_stride * frames_in_flight,
@@ -4878,7 +4911,7 @@ core::Status Renderer::Impl::create_editor_ui_resources() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_editor_ui_pipeline() noexcept
+core::Status VulkanBackend::create_editor_ui_pipeline() noexcept
 {
     if (editor_ui_pipeline != VK_NULL_HANDLE) {
         return core::Status{};
@@ -5023,7 +5056,7 @@ core::Status Renderer::Impl::create_editor_ui_pipeline() noexcept
     return core::Status{};
 }
 
-void Renderer::Impl::destroy_editor_ui_pipeline() noexcept
+void VulkanBackend::destroy_editor_ui_pipeline() noexcept
 {
     if (device != VK_NULL_HANDLE && editor_ui_pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, editor_ui_pipeline, nullptr);
@@ -5035,7 +5068,7 @@ void Renderer::Impl::destroy_editor_ui_pipeline() noexcept
     }
 }
 
-void Renderer::Impl::destroy_editor_ui_resources() noexcept
+void VulkanBackend::destroy_editor_ui_resources() noexcept
 {
     destroy_editor_ui_pipeline();
     if (device != VK_NULL_HANDLE && editor_ui_mapped != nullptr) {
@@ -5055,7 +5088,7 @@ void Renderer::Impl::destroy_editor_ui_resources() noexcept
     editor_ui_vertices = {};
 }
 
-core::Status Renderer::Impl::create_bootstrap_material_resources() noexcept
+core::Status VulkanBackend::create_bootstrap_material_resources() noexcept
 {
     core::Status status{};
     if (!bootstrap_albedo_image.valid()) {
@@ -5110,7 +5143,7 @@ core::Status Renderer::Impl::create_bootstrap_material_resources() noexcept
     return core::Status{};
 }
 
-void Renderer::Impl::write_material_descriptor_set(VkDescriptorSet target_set,
+void VulkanBackend::write_material_descriptor_set(VkDescriptorSet target_set,
                                                  VkBuffer uniform_buffer,
                                                  VkImageView albedo_view,
                                                  VkSampler albedo_sampler,
@@ -5241,7 +5274,7 @@ void Renderer::Impl::write_material_descriptor_set(VkDescriptorSet target_set,
     vkUpdateDescriptorSets(device, write_count, writes.data(), 0, nullptr);
 }
 
-core::Status Renderer::Impl::create_material_descriptors() noexcept
+core::Status VulkanBackend::create_material_descriptors() noexcept
 {
     ImageSlot* image = nullptr;
     SamplerSlot* sampler = nullptr;
@@ -5388,7 +5421,7 @@ core::Status Renderer::Impl::create_material_descriptors() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::refresh_material_pipeline_resources() noexcept
+core::Status VulkanBackend::refresh_material_pipeline_resources() noexcept
 {
     if (cube_pipeline.valid() && cube_pipeline.index < pipelines.size()) {
         destroy_pipeline_object(pipelines[cube_pipeline.index]);
@@ -5417,7 +5450,7 @@ core::Status Renderer::Impl::refresh_material_pipeline_resources() noexcept
     return status;
 }
 
-void Renderer::Impl::destroy_material_resources() noexcept
+void VulkanBackend::destroy_material_resources() noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -5443,7 +5476,7 @@ void Renderer::Impl::destroy_material_resources() noexcept
     }
 }
 
-core::Status Renderer::Impl::find_memory_type(std::uint32_t type_filter,
+core::Status VulkanBackend::find_memory_type(std::uint32_t type_filter,
                                               VkMemoryPropertyFlags properties,
                                               std::uint32_t& memory_type) const noexcept
 {
@@ -5459,7 +5492,7 @@ core::Status Renderer::Impl::find_memory_type(std::uint32_t type_filter,
     return core::Status{core::ErrorCode::vulkan_device_failed};
 }
 
-void Renderer::Impl::init_default_vram_budget() noexcept
+void VulkanBackend::init_default_vram_budget() noexcept
 {
     if (physical_device == VK_NULL_HANDLE) {
         vram_budget_bytes = 256ULL * 1024ULL * 1024ULL;
@@ -5479,7 +5512,7 @@ void Renderer::Impl::init_default_vram_budget() noexcept
                             : std::min<core::u64>(device_local_heap_bytes, default_cap_bytes);
 }
 
-core::Status Renderer::Impl::check_vram_budget(VkDeviceSize additional_bytes) const noexcept
+core::Status VulkanBackend::check_vram_budget(VkDeviceSize additional_bytes) const noexcept
 {
     const core::u64 current_total = vram_device_local_bytes + vram_host_visible_bytes;
     if (vram_budget_bytes > 0U && current_total + additional_bytes > vram_budget_bytes) {
@@ -5488,7 +5521,7 @@ core::Status Renderer::Impl::check_vram_budget(VkDeviceSize additional_bytes) co
     return core::Status{};
 }
 
-core::Status Renderer::Impl::allocate_tracked_memory(
+core::Status VulkanBackend::allocate_tracked_memory(
     const VkMemoryAllocateInfo& allocation_info,
     VkMemoryPropertyFlags resolved_properties,
     VkDeviceMemory& memory,
@@ -5523,7 +5556,7 @@ core::Status Renderer::Impl::allocate_tracked_memory(
     return core::Status{};
 }
 
-void Renderer::Impl::free_tracked_memory(VkDeviceMemory& memory) noexcept
+void VulkanBackend::free_tracked_memory(VkDeviceMemory& memory) noexcept
 {
     if (device == VK_NULL_HANDLE || memory == VK_NULL_HANDLE) {
         return;
@@ -5553,7 +5586,7 @@ void Renderer::Impl::free_tracked_memory(VkDeviceMemory& memory) noexcept
     memory = VK_NULL_HANDLE;
 }
 
-renderer::metrics::VramBudgetSummary Renderer::Impl::current_vram_summary() const noexcept
+renderer::metrics::VramBudgetSummary VulkanBackend::current_vram_summary() const noexcept
 {
     const core::u64 total = vram_device_local_bytes + vram_host_visible_bytes;
     return renderer::metrics::VramBudgetSummary{
@@ -5570,13 +5603,13 @@ renderer::metrics::VramBudgetSummary Renderer::Impl::current_vram_summary() cons
     };
 }
 
-core::Status Renderer::Impl::set_vram_budget(core::u64 budget_bytes) noexcept
+core::Status VulkanBackend::set_vram_budget(core::u64 budget_bytes) noexcept
 {
     vram_budget_bytes = budget_bytes;
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_buffer_resource(VkDeviceSize size,
+core::Status VulkanBackend::create_buffer_resource(VkDeviceSize size,
                                                     VkBufferUsageFlags usage,
                                                     VkMemoryPropertyFlags properties,
                                                     VkBuffer& buffer,
@@ -5628,7 +5661,7 @@ core::Status Renderer::Impl::create_buffer_resource(VkDeviceSize size,
     return core::Status{};
 }
 
-void Renderer::Impl::destroy_buffer_resource(VkBuffer buffer, VkDeviceMemory memory) noexcept
+void VulkanBackend::destroy_buffer_resource(VkBuffer buffer, VkDeviceMemory memory) noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -5641,7 +5674,7 @@ void Renderer::Impl::destroy_buffer_resource(VkBuffer buffer, VkDeviceMemory mem
     }
 }
 
-VkCommandBuffer Renderer::Impl::begin_one_time_commands() noexcept
+VkCommandBuffer VulkanBackend::begin_one_time_commands() noexcept
 {
     VkCommandBufferAllocateInfo allocation_info{};
     allocation_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -5663,7 +5696,7 @@ VkCommandBuffer Renderer::Impl::begin_one_time_commands() noexcept
     return command_buffer;
 }
 
-core::Status Renderer::Impl::end_one_time_commands(VkCommandBuffer command_buffer) noexcept
+core::Status VulkanBackend::end_one_time_commands(VkCommandBuffer command_buffer) noexcept
 {
     if (command_buffer == VK_NULL_HANDLE || vkEndCommandBuffer(command_buffer) != VK_SUCCESS) {
         if (command_buffer != VK_NULL_HANDLE) {
@@ -5695,7 +5728,7 @@ core::Status Renderer::Impl::end_one_time_commands(VkCommandBuffer command_buffe
                                      : core::Status{core::ErrorCode::vulkan_frame_failed};
 }
 
-core::Status Renderer::Impl::allocate_buffer_slot(rhi::BufferHandle& handle) noexcept
+core::Status VulkanBackend::allocate_buffer_slot(rhi::BufferHandle& handle) noexcept
 {
     for (core::u32 index = 0; index < buffers.size(); ++index) {
         if (buffers[index].state == ResourceState::free) {
@@ -5711,7 +5744,7 @@ core::Status Renderer::Impl::allocate_buffer_slot(rhi::BufferHandle& handle) noe
     return core::Status{};
 }
 
-core::Status Renderer::Impl::allocate_image_slot(rhi::ImageHandle& handle) noexcept
+core::Status VulkanBackend::allocate_image_slot(rhi::ImageHandle& handle) noexcept
 {
     for (core::u32 index = 0; index < images.size(); ++index) {
         if (images[index].state == ResourceState::free) {
@@ -5727,7 +5760,7 @@ core::Status Renderer::Impl::allocate_image_slot(rhi::ImageHandle& handle) noexc
     return core::Status{};
 }
 
-core::Status Renderer::Impl::allocate_sampler_slot(rhi::SamplerHandle& handle) noexcept
+core::Status VulkanBackend::allocate_sampler_slot(rhi::SamplerHandle& handle) noexcept
 {
     for (core::u32 index = 0; index < samplers.size(); ++index) {
         if (samplers[index].state == ResourceState::free) {
@@ -5743,7 +5776,7 @@ core::Status Renderer::Impl::allocate_sampler_slot(rhi::SamplerHandle& handle) n
     return core::Status{};
 }
 
-core::Status Renderer::Impl::allocate_pipeline_slot(rhi::PipelineHandle& handle) noexcept
+core::Status VulkanBackend::allocate_pipeline_slot(rhi::PipelineHandle& handle) noexcept
 {
     for (core::u32 index = 0; index < pipelines.size(); ++index) {
         if (pipelines[index].state == ResourceState::free) {
@@ -5759,7 +5792,7 @@ core::Status Renderer::Impl::allocate_pipeline_slot(rhi::PipelineHandle& handle)
     return core::Status{};
 }
 
-bool Renderer::Impl::validate_buffer(rhi::BufferHandle handle, BufferSlot*& slot) noexcept
+bool VulkanBackend::validate_buffer(rhi::BufferHandle handle, BufferSlot*& slot) noexcept
 {
     if (!handle.valid() || handle.index >= buffers.size()) {
         return false;
@@ -5768,7 +5801,7 @@ bool Renderer::Impl::validate_buffer(rhi::BufferHandle handle, BufferSlot*& slot
     return slot->state == ResourceState::live && slot->generation == handle.generation;
 }
 
-bool Renderer::Impl::validate_image(rhi::ImageHandle handle, ImageSlot*& slot) noexcept
+bool VulkanBackend::validate_image(rhi::ImageHandle handle, ImageSlot*& slot) noexcept
 {
     if (!handle.valid() || handle.index >= images.size()) {
         return false;
@@ -5777,7 +5810,7 @@ bool Renderer::Impl::validate_image(rhi::ImageHandle handle, ImageSlot*& slot) n
     return slot->state == ResourceState::live && slot->generation == handle.generation;
 }
 
-bool Renderer::Impl::validate_sampler(rhi::SamplerHandle handle, SamplerSlot*& slot) noexcept
+bool VulkanBackend::validate_sampler(rhi::SamplerHandle handle, SamplerSlot*& slot) noexcept
 {
     if (!handle.valid() || handle.index >= samplers.size()) {
         return false;
@@ -5786,7 +5819,7 @@ bool Renderer::Impl::validate_sampler(rhi::SamplerHandle handle, SamplerSlot*& s
     return slot->state == ResourceState::live && slot->generation == handle.generation;
 }
 
-bool Renderer::Impl::validate_pipeline(rhi::PipelineHandle handle, PipelineSlot*& slot) noexcept
+bool VulkanBackend::validate_pipeline(rhi::PipelineHandle handle, PipelineSlot*& slot) noexcept
 {
     if (!handle.valid() || handle.index >= pipelines.size()) {
         return false;
@@ -5795,7 +5828,7 @@ bool Renderer::Impl::validate_pipeline(rhi::PipelineHandle handle, PipelineSlot*
     return slot->state == ResourceState::live && slot->generation == handle.generation;
 }
 
-core::Status Renderer::Impl::create_buffer(const rhi::BufferDescription& description,
+core::Status VulkanBackend::create_buffer(const rhi::BufferDescription& description,
                                            rhi::BufferHandle& handle) noexcept
 {
     handle = {};
@@ -5833,7 +5866,7 @@ core::Status Renderer::Impl::create_buffer(const rhi::BufferDescription& descrip
     return core::Status{};
 }
 
-core::Status Renderer::Impl::upload_buffer(rhi::BufferHandle handle,
+core::Status VulkanBackend::upload_buffer(rhi::BufferHandle handle,
                                            std::span<const std::byte> data) noexcept
 {
     BufferSlot* destination = nullptr;
@@ -5879,7 +5912,7 @@ core::Status Renderer::Impl::upload_buffer(rhi::BufferHandle handle,
     return status;
 }
 
-core::Status Renderer::Impl::destroy_buffer(rhi::BufferHandle handle) noexcept
+core::Status VulkanBackend::destroy_buffer(rhi::BufferHandle handle) noexcept
 {
     BufferSlot* slot = nullptr;
     if (!validate_buffer(handle, slot)) {
@@ -5891,7 +5924,7 @@ core::Status Renderer::Impl::destroy_buffer(rhi::BufferHandle handle) noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_image_view(ImageSlot& slot) noexcept
+core::Status VulkanBackend::create_image_view(ImageSlot& slot) noexcept
 {
     VkImageViewCreateInfo view_info{};
     view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -5910,7 +5943,7 @@ core::Status Renderer::Impl::create_image_view(ImageSlot& slot) noexcept
     return core::Status{};
 }
 
-void Renderer::Impl::destroy_image_resource(ImageSlot& slot) noexcept
+void VulkanBackend::destroy_image_resource(ImageSlot& slot) noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -5928,7 +5961,7 @@ void Renderer::Impl::destroy_image_resource(ImageSlot& slot) noexcept
     }
 }
 
-core::Status Renderer::Impl::create_image(const rhi::ImageDescription& description,
+core::Status VulkanBackend::create_image(const rhi::ImageDescription& description,
                                           rhi::ImageHandle& handle) noexcept
 {
     handle = {};
@@ -6006,7 +6039,7 @@ core::Status Renderer::Impl::create_image(const rhi::ImageDescription& descripti
     return core::Status{};
 }
 
-core::Status Renderer::Impl::upload_image(rhi::ImageHandle handle,
+core::Status VulkanBackend::upload_image(rhi::ImageHandle handle,
                                           std::span<const std::byte> data) noexcept
 {
     ImageSlot* destination = nullptr;
@@ -6109,7 +6142,7 @@ core::Status Renderer::Impl::upload_image(rhi::ImageHandle handle,
     return status;
 }
 
-core::Status Renderer::Impl::destroy_image(rhi::ImageHandle handle) noexcept
+core::Status VulkanBackend::destroy_image(rhi::ImageHandle handle) noexcept
 {
     ImageSlot* slot = nullptr;
     if (!validate_image(handle, slot)) {
@@ -6121,7 +6154,7 @@ core::Status Renderer::Impl::destroy_image(rhi::ImageHandle handle) noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_sampler(const rhi::SamplerDescription& description,
+core::Status VulkanBackend::create_sampler(const rhi::SamplerDescription& description,
                                             rhi::SamplerHandle& handle) noexcept
 {
     handle = {};
@@ -6159,7 +6192,7 @@ core::Status Renderer::Impl::create_sampler(const rhi::SamplerDescription& descr
     return core::Status{};
 }
 
-core::Status Renderer::Impl::destroy_sampler(rhi::SamplerHandle handle) noexcept
+core::Status VulkanBackend::destroy_sampler(rhi::SamplerHandle handle) noexcept
 {
     SamplerSlot* slot = nullptr;
     if (!validate_sampler(handle, slot)) {
@@ -6171,7 +6204,7 @@ core::Status Renderer::Impl::destroy_sampler(rhi::SamplerHandle handle) noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::create_graphics_pipeline(
+core::Status VulkanBackend::create_graphics_pipeline(
     const rhi::GraphicsPipelineDescription& description,
     rhi::PipelineHandle& handle) noexcept
 {
@@ -6195,7 +6228,7 @@ core::Status Renderer::Impl::create_graphics_pipeline(
     return core::Status{};
 }
 
-core::Status Renderer::Impl::rebuild_pipelines() noexcept
+core::Status VulkanBackend::rebuild_pipelines() noexcept
 {
     for (PipelineSlot& slot : pipelines) {
         if (slot.state == ResourceState::live) {
@@ -6208,7 +6241,7 @@ core::Status Renderer::Impl::rebuild_pipelines() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::reload_shaders() noexcept
+core::Status VulkanBackend::reload_shaders() noexcept
 {
     if (!shader_hot_reload_enabled) {
         return core::Status{core::ErrorCode::shader_reload_disabled};
@@ -6253,7 +6286,7 @@ core::Status Renderer::Impl::reload_shaders() noexcept
     return core::Status{};
 }
 
-core::Status Renderer::Impl::destroy_pipeline(rhi::PipelineHandle handle) noexcept
+core::Status VulkanBackend::destroy_pipeline(rhi::PipelineHandle handle) noexcept
 {
     PipelineSlot* slot = nullptr;
     if (!validate_pipeline(handle, slot)) {
@@ -6268,7 +6301,7 @@ core::Status Renderer::Impl::destroy_pipeline(rhi::PipelineHandle handle) noexce
     return core::Status{};
 }
 
-void Renderer::Impl::destroy_pipeline_object(PipelineSlot& slot) noexcept
+void VulkanBackend::destroy_pipeline_object(PipelineSlot& slot) noexcept
 {
     if (device != VK_NULL_HANDLE && slot.pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, slot.pipeline, nullptr);
@@ -6276,7 +6309,7 @@ void Renderer::Impl::destroy_pipeline_object(PipelineSlot& slot) noexcept
     }
 }
 
-void Renderer::Impl::release_deferred(const DeferredDeletion& deletion) noexcept
+void VulkanBackend::release_deferred(const DeferredDeletion& deletion) noexcept
 {
     switch (deletion.resource) {
     case DeferredResource::buffer:
@@ -6330,7 +6363,7 @@ void Renderer::Impl::release_deferred(const DeferredDeletion& deletion) noexcept
     }
 }
 
-void Renderer::Impl::collect_deferred(core::u32 frame_index) noexcept
+void VulkanBackend::collect_deferred(core::u32 frame_index) noexcept
 {
     if (frame_index >= deferred_deletions.size()) {
         return;
@@ -6341,7 +6374,7 @@ void Renderer::Impl::collect_deferred(core::u32 frame_index) noexcept
     deferred_deletions[frame_index].clear();
 }
 
-void Renderer::Impl::destroy_live_resources() noexcept
+void VulkanBackend::destroy_live_resources() noexcept
 {
     for (BufferSlot& slot : buffers) {
         if (slot.state != ResourceState::free) {
@@ -6377,7 +6410,7 @@ void Renderer::Impl::destroy_live_resources() noexcept
     }
 }
 
-void Renderer::Impl::cleanup_swapchain() noexcept
+void VulkanBackend::cleanup_swapchain() noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -6428,7 +6461,7 @@ void Renderer::Impl::cleanup_swapchain() noexcept
     images_in_flight.clear();
 }
 
-core::Status Renderer::Impl::recreate_swapchain(platform::WindowSize window_size) noexcept
+core::Status VulkanBackend::recreate_swapchain(platform::WindowSize window_size) noexcept
 {
     if (window_size.width == 0 || window_size.height == 0) {
         return core::Status{};
@@ -6459,7 +6492,7 @@ core::Status Renderer::Impl::recreate_swapchain(platform::WindowSize window_size
     return create_swapchain(window_size);
 }
 
-VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
+VkResult VulkanBackend::record_command_buffer(VkCommandBuffer command_buffer,
                                                 core::u32 image_index,
                                                 core::u32 frame_index) noexcept
 {
@@ -7474,7 +7507,7 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
     return result;
 }
 
-core::Status Renderer::Impl::render_frame(platform::WindowSize window_size) noexcept
+core::Status VulkanBackend::render_frame(platform::WindowSize window_size) noexcept
 {
     if (window_size.width == 0 || window_size.height == 0) {
         return core::Status{};
@@ -7582,7 +7615,7 @@ core::Status Renderer::Impl::render_frame(platform::WindowSize window_size) noex
                             : core::Status{};
 }
 
-void Renderer::Impl::set_debug_name(VkObjectType object_type,
+void VulkanBackend::set_debug_name(VkObjectType object_type,
                                     std::uint64_t object,
                                     const char* name) noexcept
 {
@@ -7597,7 +7630,7 @@ void Renderer::Impl::set_debug_name(VkObjectType object_type,
     static_cast<void>(set_debug_utils_object_name(device, &info));
 }
 
-void Renderer::Impl::begin_debug_label(VkCommandBuffer command_buffer, const char* name) noexcept
+void VulkanBackend::begin_debug_label(VkCommandBuffer command_buffer, const char* name) noexcept
 {
     if (cmd_begin_debug_utils_label == nullptr || name == nullptr) {
         return;
@@ -7612,381 +7645,99 @@ void Renderer::Impl::begin_debug_label(VkCommandBuffer command_buffer, const cha
     cmd_begin_debug_utils_label(command_buffer, &label);
 }
 
-void Renderer::Impl::end_debug_label(VkCommandBuffer command_buffer) noexcept
+void VulkanBackend::end_debug_label(VkCommandBuffer command_buffer) noexcept
 {
     if (cmd_end_debug_utils_label != nullptr) {
         cmd_end_debug_utils_label(command_buffer);
     }
 }
 
-Renderer::~Renderer() noexcept
+BackendCapabilities VulkanBackend::capabilities() const noexcept
 {
-    shutdown();
+    BackendCapabilities caps = query_static_backend_capabilities(BackendKind::vulkan);
+    caps.compiled = true;
+    caps.compute_supported = gpu_culling_available;
+    caps.indirect_draw_supported = gpu_culling_available;
+    caps.gpu_timestamps_supported = gpu_timestamps_enabled;
+    caps.shadow_map_supported = shadow_image_view != VK_NULL_HANDLE;
+    caps.environment_map_supported = environment_image_view != VK_NULL_HANDLE;
+    caps.validation_enabled = debug_messenger != VK_NULL_HANDLE;
+    caps.max_frames_in_flight = frames_in_flight;
+    caps.max_vram_budget_bytes = vram_budget_bytes;
+    return caps;
 }
 
-core::Status Renderer::initialize(const platform::Platform& platform,
-                                  const RendererConfiguration& configuration) noexcept
+core::Status VulkanBackend::attach_scene(scene::Scene& scene) noexcept
 {
-    if (initialized_) {
-        return core::Status{core::ErrorCode::already_initialized};
-    }
-    if (!platform.is_initialized() || !platform.has_window()) {
-        return core::Status{core::ErrorCode::invalid_argument};
-    }
-
-    const auto startup_start = std::chrono::steady_clock::now();
-    impl_ = new (std::nothrow) Impl();
-    if (impl_ == nullptr) {
-        return core::Status{core::ErrorCode::allocation_failed};
-    }
-
-    const core::Status status = impl_->initialize(platform.native_window_handles(),
-                                                  platform.window_size(),
-                                                  configuration);
-    if (!status) {
-        impl_->shutdown();
-        delete impl_;
-        impl_ = nullptr;
-        return status;
-    }
-    impl_->startup_nanoseconds = static_cast<core::u64>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() -
-                                                              startup_start)
-            .count());
-    initialized_ = true;
-    return core::Status{};
-}
-
-core::Status Renderer::render_frame(const platform::Platform& platform) noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    if (!platform.is_initialized() || !platform.has_window()) {
-        return core::Status{core::ErrorCode::invalid_argument};
-    }
-    return impl_->render_frame(platform.window_size());
-}
-
-core::Status Renderer::reload_shaders() noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return impl_->reload_shaders();
-}
-
-core::Status Renderer::create_buffer(const BufferDescription& description,
-                                     BufferHandle& handle) noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return impl_->create_buffer(description, handle);
-}
-
-core::Status Renderer::upload_buffer(BufferHandle handle,
-                                     std::span<const std::byte> data) noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return impl_->upload_buffer(handle, data);
-}
-
-core::Status Renderer::destroy_buffer(BufferHandle handle) noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return impl_->destroy_buffer(handle);
-}
-
-core::Status Renderer::create_image(const ImageDescription& description,
-                                    ImageHandle& handle) noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return impl_->create_image(description, handle);
-}
-
-core::Status Renderer::upload_image(ImageHandle handle,
-                                    std::span<const std::byte> data) noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return impl_->upload_image(handle, data);
-}
-
-core::Status Renderer::destroy_image(ImageHandle handle) noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return impl_->destroy_image(handle);
-}
-
-core::Status Renderer::create_sampler(const SamplerDescription& description,
-                                      SamplerHandle& handle) noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return impl_->create_sampler(description, handle);
-}
-
-core::Status Renderer::destroy_sampler(SamplerHandle handle) noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return impl_->destroy_sampler(handle);
-}
-
-core::Status Renderer::create_graphics_pipeline(
-    const GraphicsPipelineDescription& description,
-    PipelineHandle& handle) noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return impl_->create_graphics_pipeline(description, handle);
-}
-
-core::Status Renderer::destroy_pipeline(PipelineHandle handle) noexcept
-{
-    if (!initialized_ || impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return impl_->destroy_pipeline(handle);
-}
-
-void Renderer::shutdown() noexcept
-{
-    if (impl_ != nullptr) {
-        impl_->shutdown();
-        delete impl_;
-        impl_ = nullptr;
-    }
-    initialized_ = false;
-}
-
-} // namespace gameengine::rhi
-
-namespace gameengine::renderer::scene_bridge {
-
-core::Status set_prepared_assets(const gameengine::rhi::Renderer& renderer,
-                                 const PreparedRenderAssets& assets) noexcept
-{
-    if (renderer.impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    if (renderer.impl_->device == VK_NULL_HANDLE ||
-        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+    if (device == VK_NULL_HANDLE || vkDeviceWaitIdle(device) != VK_SUCCESS) {
         return core::Status{core::ErrorCode::vulkan_device_failed};
     }
-    renderer.impl_->resolve_all_timing();
-    return renderer.impl_->set_prepared_assets(assets);
+    resolve_all_timing();
+    return attach_editor_scene(scene);
 }
 
-core::Status clear_prepared_assets(const gameengine::rhi::Renderer& renderer) noexcept
+core::Status VulkanBackend::detach_scene() noexcept
 {
-    if (renderer.impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    if (renderer.impl_->device == VK_NULL_HANDLE ||
-        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+    if (device == VK_NULL_HANDLE || vkDeviceWaitIdle(device) != VK_SUCCESS) {
         return core::Status{core::ErrorCode::vulkan_device_failed};
     }
-    renderer.impl_->resolve_all_timing();
-    return renderer.impl_->clear_prepared_assets();
+    resolve_all_timing();
+    return detach_editor_scene();
 }
 
-core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
-                          gameengine::scene::Scene& scene) noexcept
+core::Status VulkanBackend::set_ui_vertices(
+    std::span<const editor::UiVertex> vertices) noexcept
 {
-    if (renderer.impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    if (renderer.impl_->device == VK_NULL_HANDLE ||
-        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+    if (device == VK_NULL_HANDLE) {
         return core::Status{core::ErrorCode::vulkan_device_failed};
     }
-    renderer.impl_->resolve_all_timing();
-    return renderer.impl_->attach_editor_scene(scene);
+    return set_editor_ui_vertices(vertices);
 }
 
-core::Status detach_scene(const gameengine::rhi::Renderer& renderer) noexcept
-{
-    if (renderer.impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    if (renderer.impl_->device == VK_NULL_HANDLE ||
-        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
-        return core::Status{core::ErrorCode::vulkan_device_failed};
-    }
-    renderer.impl_->resolve_all_timing();
-    return renderer.impl_->detach_editor_scene();
-}
-
-} // namespace gameengine::renderer::scene_bridge
-
-namespace gameengine::editor::renderer_bridge {
-
-core::Status set_prepared_assets(
-    const gameengine::rhi::Renderer& renderer,
-    const gameengine::renderer::scene_bridge::PreparedRenderAssets& assets) noexcept
-{
-    return gameengine::renderer::scene_bridge::set_prepared_assets(renderer, assets);
-}
-
-core::Status clear_prepared_assets(const gameengine::rhi::Renderer& renderer) noexcept
-{
-    return gameengine::renderer::scene_bridge::clear_prepared_assets(renderer);
-}
-
-core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
-                          gameengine::scene::Scene& scene) noexcept
-{
-    return gameengine::renderer::scene_bridge::attach_scene(renderer, scene);
-}
-
-core::Status detach_scene(const gameengine::rhi::Renderer& renderer) noexcept
-{
-    return gameengine::renderer::scene_bridge::detach_scene(renderer);
-}
-
-core::Status set_ui_vertices(const gameengine::rhi::Renderer& renderer,
-                             std::span<const gameengine::editor::UiVertex> vertices) noexcept
-{
-    if (renderer.impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    if (renderer.impl_->device == VK_NULL_HANDLE) {
-        return core::Status{core::ErrorCode::vulkan_device_failed};
-    }
-    return renderer.impl_->set_editor_ui_vertices(vertices);
-}
-
-core::Status read_metrics(
-    const gameengine::rhi::Renderer& renderer,
-    gameengine::renderer::metrics::FrameTimingReport& report) noexcept
+core::Status VulkanBackend::read_metrics(
+    renderer::metrics::FrameTimingReport& report) noexcept
 {
     report = {};
-    if (renderer.impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    if (renderer.impl_->device == VK_NULL_HANDLE) {
+    if (device == VK_NULL_HANDLE) {
         return core::Status{core::ErrorCode::vulkan_device_failed};
     }
-    const core::u32 frame_count = static_cast<core::u32>(renderer.impl_->frame_timing.size());
-    const core::u32 frame_index =
-        (renderer.impl_->current_frame + frame_count - 1U) % frame_count;
-    report = renderer.impl_->frame_timing[frame_index];
+    const core::u32 frame_count = static_cast<core::u32>(frame_timing.size());
+    const core::u32 frame_index = (current_frame + frame_count - 1U) % frame_count;
+    report = frame_timing[frame_index];
     return {};
 }
 
-} // namespace gameengine::editor::renderer_bridge
-
-namespace gameengine::renderer::diagnostics {
-
-void begin_metrics(const gameengine::rhi::Renderer& renderer) noexcept
+void VulkanBackend::begin_metrics() noexcept
 {
-    if (renderer.impl_ == nullptr) {
+    if (device != VK_NULL_HANDLE && vkDeviceWaitIdle(device) != VK_SUCCESS) {
         return;
     }
-    if (renderer.impl_->device != VK_NULL_HANDLE &&
-        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
-        return;
-    }
-    renderer.impl_->resolve_all_timing();
-    renderer.impl_->timing_accumulator.reset();
+    resolve_all_timing();
+    timing_accumulator.reset();
 }
 
-core::Status set_visibility_mode(const gameengine::rhi::Renderer& renderer,
-                                 gpu_culling::VisibilityMode mode) noexcept
+void VulkanBackend::print_metrics() noexcept
 {
-    if (renderer.impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    if (renderer.impl_->device == VK_NULL_HANDLE ||
-        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
-        return core::Status{core::ErrorCode::vulkan_device_failed};
-    }
-    renderer.impl_->resolve_all_timing();
-    return renderer.impl_->set_visibility_mode(mode);
-}
-
-core::Status set_renderer_quality(
-    const gameengine::rhi::Renderer& renderer,
-    quality::RendererQuality quality) noexcept
-{
-    if (renderer.impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    if (renderer.impl_->device == VK_NULL_HANDLE ||
-        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
-        return core::Status{core::ErrorCode::vulkan_device_failed};
-    }
-    renderer.impl_->resolve_all_timing();
-    return renderer.impl_->set_renderer_quality(quality);
-}
-
-core::Status set_vram_budget(const gameengine::rhi::Renderer& renderer,
-                             core::u64 budget_bytes) noexcept
-{
-    if (renderer.impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return renderer.impl_->set_vram_budget(budget_bytes);
-}
-
-core::Status set_procedural_workload(const gameengine::rhi::Renderer& renderer,
-                                     core::u32 instance_count) noexcept
-{
-    if (renderer.impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    if (renderer.impl_->device == VK_NULL_HANDLE ||
-        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
-        return core::Status{core::ErrorCode::vulkan_device_failed};
-    }
-    renderer.impl_->resolve_all_timing();
-    const core::Status status = renderer.impl_->set_procedural_workload(instance_count);
-    if (status) {
-        renderer.impl_->timing_accumulator.reset();
-    }
-    return status;
-}
-
-void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
-{
-    if (renderer.impl_ == nullptr) {
-        std::fprintf(stderr, "[gameengine] [info] renderer metrics unavailable\n");
-        return;
-    }
-    if (renderer.impl_->device != VK_NULL_HANDLE &&
-        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+    if (device != VK_NULL_HANDLE && vkDeviceWaitIdle(device) != VK_SUCCESS) {
         std::fprintf(stderr, "[gameengine] [warning] renderer metrics synchronization failed\n");
         return;
     }
-    renderer.impl_->resolve_all_timing();
-    const auto& accumulator = renderer.impl_->timing_accumulator;
-    const char* mode = accumulator.visibility_mode == gpu_culling::VisibilityMode::gpu
-                           ? "gpu"
-                           : "cpu";
+    resolve_all_timing();
+    const auto& accumulator = timing_accumulator;
+    const char* mode =
+        accumulator.visibility_mode == renderer::gpu_culling::VisibilityMode::gpu ? "gpu" : "cpu";
     const char* gpu_state = accumulator.gpu_culling_fallback
                                 ? "fallback"
                                 : !accumulator.gpu_culling_available
                                       ? "unavailable"
                                       : accumulator.gpu_culling_active ? "active" : "available";
-    const char* requested_quality = quality::name(accumulator.requested_quality).data();
-    const char* effective_quality = quality::name(accumulator.effective_quality).data();
+    const char* requested_quality_name =
+        renderer::quality::name(accumulator.requested_quality).data();
+    const char* effective_quality_name =
+        renderer::quality::name(accumulator.effective_quality).data();
     std::fprintf(stderr,
-                 "[gameengine] [info] renderer metrics: mode=%s gpu_culling=%s quality=%s->%s "
-                 "instances=%u frames=%llu "
+                 "[gameengine] [info] renderer metrics: backend=vulkan mode=%s gpu_culling=%s "
+                 "quality=%s->%s instances=%u frames=%llu "
                  "draw_calls=%llu visible_avg=%llu culled_avg=%llu "
                  "instance_buffer_bytes=%llu gpu_source_bytes=%llu gpu_visible_bytes=%llu "
                  "gpu_indirect_bytes=%llu light_bytes=%llu tile_headers=%llu tile_indices=%llu "
@@ -7997,9 +7748,9 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
                  "gpu_timestamps=%s fallbacks(compute/shadow/environment)=%s/%s/%s\n",
                  mode,
                  gpu_state,
-                 requested_quality,
-                 effective_quality,
-                 renderer.impl_->active_instance_count,
+                 requested_quality_name,
+                 effective_quality_name,
+                 active_instance_count,
                  static_cast<unsigned long long>(accumulator.frame_count),
                  static_cast<unsigned long long>(accumulator.total_draw_calls),
                  static_cast<unsigned long long>(accumulator.frame_count == 0U
@@ -8032,7 +7783,7 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
                  accumulator.quality_shadow_fallback ? "yes" : "no",
                  accumulator.quality_environment_fallback ? "yes" : "no");
     if (accumulator.frame_count > 0U) {
-        if (accumulator.visibility_mode == gpu_culling::VisibilityMode::gpu) {
+        if (accumulator.visibility_mode == renderer::gpu_culling::VisibilityMode::gpu) {
             std::fprintf(stderr,
                          "[gameengine] [info] gpu_culling_cpu_ns(avg/min/max)=%llu/%llu/%llu\n",
                          static_cast<unsigned long long>(
@@ -8045,10 +7796,12 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
         } else {
             std::fprintf(stderr,
                          "[gameengine] [info] visibility_cpu_ns(avg/min/max)=%llu/%llu/%llu\n",
-                         static_cast<unsigned long long>(accumulator.visibility_cpu_total_nanoseconds /
-                                                         accumulator.frame_count),
+                         static_cast<unsigned long long>(
+                             accumulator.visibility_cpu_total_nanoseconds /
+                             accumulator.frame_count),
                          static_cast<unsigned long long>(accumulator.visibility_cpu_min_nanoseconds),
-                         static_cast<unsigned long long>(accumulator.visibility_cpu_max_nanoseconds));
+                         static_cast<unsigned long long>(
+                             accumulator.visibility_cpu_max_nanoseconds));
         }
     }
     for (const auto& pass : accumulator.passes) {
@@ -8077,13 +7830,9 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
     }
 }
 
-core::Status run_renderer_benchmark(const gameengine::rhi::Renderer& renderer,
-                                    bool use_gpu_culling) noexcept
+RendererBackend* create_vulkan_backend() noexcept
 {
-    if (renderer.impl_ == nullptr) {
-        return core::Status{core::ErrorCode::not_initialized};
-    }
-    return renderer.impl_->run_renderer_benchmark(use_gpu_culling);
+    return new (std::nothrow) VulkanBackend();
 }
 
-} // namespace gameengine::renderer::diagnostics
+} // namespace gameengine::rhi

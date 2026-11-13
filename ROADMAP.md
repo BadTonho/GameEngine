@@ -463,13 +463,13 @@ Goal: expand the engine without weakening the initial Vulkan backend.
 
 ### Tasks
 
-- [ ] Stabilize the RHI contract from real Vulkan use.
-- [ ] Define a capabilities matrix for each backend.
-- [ ] Implement D3D12 after the common renderer is stable.
-- [ ] Validate Slang shaders and layouts in DXIL.
-- [ ] Implement Metal support when its toolchain and capabilities path is mature.
-- [ ] Validate the Metal target and keep platform-specific exceptions isolated.
-- [ ] Add each platform to CI and its corresponding benchmarks.
+- [x] Stabilize the RHI contract from real Vulkan use.
+- [x] Define a capabilities matrix for each backend.
+- [x] Implement D3D12 after the common renderer is stable.
+- [x] Validate Slang shaders and layouts in DXIL.
+- [x] Implement Metal support when its toolchain and capabilities path is mature.
+- [x] Validate the Metal target and keep platform-specific exceptions isolated.
+- [x] Add each platform to CI and its corresponding benchmarks.
 
 ### Completion criteria
 

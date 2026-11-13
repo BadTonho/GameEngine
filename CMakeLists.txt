@@ -4,6 +4,16 @@ project(GameEngine VERSION 0.0.1 LANGUAGES CXX C)
 
 option(GAMEENGINE_BUILD_TESTS "Build the GameEngine tests" ON)
 option(GAMEENGINE_BUILD_VULKAN "Build the Vulkan renderer" ON)
+if(WIN32)
+    option(GAMEENGINE_BUILD_D3D12 "Build the Direct3D 12 renderer" ON)
+else()
+    option(GAMEENGINE_BUILD_D3D12 "Build the Direct3D 12 renderer" OFF)
+endif()
+if(APPLE)
+    option(GAMEENGINE_BUILD_METAL "Build the Metal renderer" ON)
+else()
+    option(GAMEENGINE_BUILD_METAL "Build the Metal renderer" OFF)
+endif()
 option(GAMEENGINE_BUILD_BENCHMARKS "Build optional scene benchmarks" OFF)
 option(GAMEENGINE_BUILD_EDITOR "Build the separate GameEngine editor" ON)
 option(GAMEENGINE_BUILD_ANIMATION "Build the optional transform animation module" ON)
@@ -362,6 +372,10 @@ target_include_directories(gameengine_rhi
 
 add_library(gameengine_renderer STATIC
     src/engine/rhi/rhi.hpp
+    src/engine/rhi/rhi.cpp
+    src/engine/rhi/rhi_backend.hpp
+    src/engine/rhi/rhi_capabilities.hpp
+    src/engine/rhi/rhi_capabilities.cpp
     src/engine/renderer/gpu_culling.cpp
     src/engine/renderer/gpu_culling.hpp
     src/engine/renderer/renderer_benchmark.cpp
@@ -399,6 +413,34 @@ if(GAMEENGINE_BUILD_VULKAN AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYST
 else()
     target_sources(gameengine_renderer PRIVATE src/engine/renderer/vulkan/renderer_stub.cpp)
     target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_RENDERER_HAS_VULKAN=0)
+endif()
+
+if(GAMEENGINE_BUILD_D3D12 AND WIN32)
+    target_sources(gameengine_renderer PRIVATE
+        src/engine/renderer/d3d12/renderer_d3d12.cpp
+        src/engine/renderer/d3d12/d3d12_shaders.hpp
+    )
+    target_link_libraries(gameengine_renderer PRIVATE d3d12 dxgi)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_RENDERER_HAS_D3D12=1)
+else()
+    target_sources(gameengine_renderer PRIVATE src/engine/renderer/d3d12/renderer_d3d12_stub.cpp)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_RENDERER_HAS_D3D12=0)
+endif()
+
+if(GAMEENGINE_BUILD_METAL AND APPLE)
+    target_sources(gameengine_renderer PRIVATE
+        src/engine/renderer/metal/renderer_metal.mm
+        src/engine/renderer/metal/metal_shaders.hpp
+    )
+    target_link_libraries(gameengine_renderer PRIVATE
+        "-framework Metal"
+        "-framework QuartzCore"
+        "-framework Foundation"
+    )
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_RENDERER_HAS_METAL=1)
+else()
+    target_sources(gameengine_renderer PRIVATE src/engine/renderer/metal/renderer_metal_stub.cpp)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_RENDERER_HAS_METAL=0)
 endif()
 
 gameengine_configure_target(gameengine_renderer)

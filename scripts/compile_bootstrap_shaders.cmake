@@ -550,3 +550,5 @@ message(STATUS "Generated ${_shader_header}")
 message(STATUS "Shader configuration: ${_configuration}")
 message(STATUS "Shader cache: ${_cache_dir}/${_configuration}")
 message(STATUS "Reflection artifacts: ${_reflection_dir}")
+
+include("${CMAKE_CURRENT_LIST_DIR}/compile_multi_backend_shaders.cmake")

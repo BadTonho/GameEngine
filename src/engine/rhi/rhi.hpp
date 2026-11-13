@@ -5,6 +5,7 @@
 
 #include "engine/core/status.hpp"
 #include "engine/platform/platform.hpp"
+#include "engine/rhi/rhi_capabilities.hpp"
 
 namespace gameengine::rhi {
 class Renderer;
@@ -161,6 +162,8 @@ struct GraphicsPipelineDescription final {
 struct RendererConfiguration final {
     const char* pipeline_cache_path = "gameengine.pipeline.cache";
     bool enable_shader_hot_reload = false;
+    BackendKind backend = BackendKind::auto_select;
+    bool enable_validation = false;
 };
 
 class Renderer final {
@@ -201,6 +204,8 @@ public:
     void shutdown() noexcept;
 
     [[nodiscard]] bool is_initialized() const noexcept { return initialized_; }
+    [[nodiscard]] BackendKind backend_kind() const noexcept;
+    [[nodiscard]] BackendCapabilities capabilities() const noexcept;
 
     struct Impl;
 

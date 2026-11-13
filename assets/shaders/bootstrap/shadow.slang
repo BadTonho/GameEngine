@@ -1,10 +1,10 @@
 struct ShadowVertexInput
 {
-    [[vk::location(0)]] float3 position;
-    [[vk::location(3)]] float4 model_column0;
-    [[vk::location(4)]] float4 model_column1;
-    [[vk::location(5)]] float4 model_column2;
-    [[vk::location(6)]] float4 model_column3;
+    [[vk::location(0)]] float3 position : POSITION;
+    [[vk::location(3)]] float4 model_column0 : TEXCOORD1;
+    [[vk::location(4)]] float4 model_column1 : TEXCOORD2;
+    [[vk::location(5)]] float4 model_column2 : TEXCOORD3;
+    [[vk::location(6)]] float4 model_column3 : TEXCOORD4;
 };
 
 struct ShadowPushConstants

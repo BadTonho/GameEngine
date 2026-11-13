@@ -16,6 +16,10 @@
     {
       "name": "renderer_medium_gpu",
       "args": ["--metrics", "--gpu-culling"]
+    },
+    {
+      "name": "d3d12_medium_cpu",
+      "args": ["--renderer-backend", "d3d12", "--metrics", "--renderer-quality", "medium"]
     }
   ],
   "renderer_benchmark": {

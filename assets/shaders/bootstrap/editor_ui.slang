@@ -1,15 +1,15 @@
 struct EditorUiVertexInput
 {
-    [[vk::location(0)]] float2 position;
-    [[vk::location(1)]] float2 uv;
-    [[vk::location(2)]] float4 color;
+    [[vk::location(0)]] float2 position : POSITION;
+    [[vk::location(1)]] float2 uv : TEXCOORD0;
+    [[vk::location(2)]] float4 color : COLOR0;
 };
 
 struct EditorUiVertexOutput
 {
     float4 position : SV_Position;
-    [[vk::location(0)]] float2 uv;
-    [[vk::location(1)]] float4 color;
+    [[vk::location(0)]] float2 uv : TEXCOORD0;
+    [[vk::location(1)]] float4 color : COLOR0;
 };
 
 [shader("vertex")]
@@ -25,8 +25,8 @@ EditorUiVertexOutput editor_ui_vertex_main(EditorUiVertexInput input)
 struct EditorUiFragmentInput
 {
     float4 position : SV_Position;
-    [[vk::location(0)]] float2 uv;
-    [[vk::location(1)]] float4 color;
+    [[vk::location(0)]] float2 uv : TEXCOORD0;
+    [[vk::location(1)]] float4 color : COLOR0;
 };
 
 [shader("fragment")]
