@@ -15,4 +15,6 @@ namespace gameengine::scene {
 [[nodiscard]] core::Status deserialize_scene(
     std::span<const std::byte> bytes, Scene& output) noexcept;
 
+[[nodiscard]] core::Status ensure_default_camera_and_light(Scene& scene) noexcept;
+
 } // namespace gameengine::scene

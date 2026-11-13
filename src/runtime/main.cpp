@@ -1,3 +1,4 @@
+#include "engine/assets/prepared_assets.hpp"
 #include "engine/core/core.hpp"
 #include "engine/core/clock.hpp"
 #include "engine/core/diagnostics.hpp"
@@ -5,10 +6,9 @@
 #include "engine/audio/audio.hpp"
 #endif
 #include "engine/platform/platform.hpp"
-#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS || GAMEENGINE_BUILD_LUA
 #include "engine/renderer/scene_bridge.hpp"
 #include "engine/scene/scene.hpp"
-#endif
+#include "engine/scene/scene_serialization.hpp"
 #if GAMEENGINE_BUILD_ANIMATION
 #include "engine/animation/animation.hpp"
 #endif
@@ -27,7 +27,9 @@
 #include <cstring>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <thread>
+#include <vector>
 
 #if GAMEENGINE_BUILD_AUDIO
 namespace {
@@ -184,6 +186,8 @@ int main(int argc, char** argv)
     bool physics_demo = false;
     bool lua_smoke_test = false;
     bool lua_demo = false;
+    std::filesystem::path scene_path{};
+    std::filesystem::path assets_dir{};
     gameengine::renderer::quality::RendererQuality renderer_quality =
         gameengine::renderer::quality::RendererQuality::medium;
     for (int index = 1; index < argc; ++index) {
@@ -203,6 +207,22 @@ int main(int argc, char** argv)
             lua_smoke_test = true;
         } else if (std::strcmp(argv[index], "--lua-demo") == 0) {
             lua_demo = true;
+        } else if (std::strcmp(argv[index], "--scene") == 0) {
+            if (index + 1 >= argc || argv[index + 1][0] == '\0') {
+                gameengine::core::log(gameengine::core::LogLevel::error,
+                                      "--scene expects a .gescene file path");
+                core.shutdown();
+                return 2;
+            }
+            scene_path = argv[++index];
+        } else if (std::strcmp(argv[index], "--assets-dir") == 0) {
+            if (index + 1 >= argc || argv[index + 1][0] == '\0') {
+                gameengine::core::log(gameengine::core::LogLevel::error,
+                                      "--assets-dir expects a directory path");
+                core.shutdown();
+                return 2;
+            }
+            assets_dir = argv[++index];
         } else if (std::strcmp(argv[index], "--renderer-quality") == 0) {
             if (index + 1 >= argc ||
                 !gameengine::renderer::quality::parse(argv[++index], renderer_quality)) {
@@ -216,11 +236,18 @@ int main(int argc, char** argv)
                               "unknown argument; use --smoke-test, --metrics, "
                                   "--renderer-benchmark, --gpu-culling, "
                                   "--audio-smoke-test, --physics-demo, "
-                                  "--lua-smoke-test, --lua-demo or "
+                                  "--lua-smoke-test, --lua-demo, "
+                                  "--scene <path>, --assets-dir <dir> or "
                                   "--renderer-quality low|medium|high");
             core.shutdown();
             return 2;
         }
+    }
+    if (!assets_dir.empty() && scene_path.empty()) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              "--assets-dir requires --scene");
+        core.shutdown();
+        return 2;
     }
     if ((smoke_test && metrics_test) || (smoke_test && renderer_benchmark) ||
         (metrics_test && renderer_benchmark)) {
@@ -229,9 +256,15 @@ int main(int argc, char** argv)
         core.shutdown();
         return 2;
     }
+    if (!scene_path.empty() && (metrics_test || renderer_benchmark)) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              "--scene is exclusive with --metrics and --renderer-benchmark");
+        core.shutdown();
+        return 2;
+    }
     if (audio_smoke_test &&
         (smoke_test || metrics_test || renderer_benchmark || gpu_culling ||
-         physics_demo || lua_smoke_test || lua_demo)) {
+         physics_demo || lua_smoke_test || lua_demo || !scene_path.empty())) {
         gameengine::core::log(gameengine::core::LogLevel::error,
                               "--audio-smoke-test is exclusive with other modes");
         core.shutdown();
@@ -239,7 +272,7 @@ int main(int argc, char** argv)
     }
     if (lua_smoke_test &&
         (smoke_test || metrics_test || renderer_benchmark || gpu_culling ||
-         physics_demo || lua_demo)) {
+         physics_demo || lua_demo || !scene_path.empty())) {
         gameengine::core::log(gameengine::core::LogLevel::error,
                               "--lua-smoke-test is exclusive with other modes");
         core.shutdown();
@@ -356,8 +389,8 @@ int main(int argc, char** argv)
             return 6;
         }
     }
-#if (GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS || GAMEENGINE_BUILD_LUA)
     gameengine::scene::Scene runtime_scene;
+    gameengine::assets::PreparedAssetBundle prepared_assets;
 #if GAMEENGINE_BUILD_ANIMATION
     gameengine::animation::AnimationSystem animation_system;
 #endif
@@ -367,8 +400,41 @@ int main(int argc, char** argv)
 #if GAMEENGINE_BUILD_LUA
     gameengine::scripting::ScriptRuntime script_runtime;
 #endif
-    if (!gameengine::scene::create_bootstrap_scene(runtime_scene) ||
-        runtime_scene.entities().empty()) {
+    if (!scene_path.empty()) {
+        const std::filesystem::path resolved_assets_dir =
+            !assets_dir.empty()
+                ? assets_dir
+                : (scene_path.has_parent_path() ? scene_path.parent_path()
+                                                : std::filesystem::path{"."});
+        std::vector<std::byte> scene_bytes;
+        gameengine::assets::SceneView scene_view{};
+        const std::array<gameengine::core::u64, 1> builtin_meshes = {
+            gameengine::scene::bootstrap_mesh_id,
+        };
+        const std::array<gameengine::core::u64, 1> builtin_materials = {
+            gameengine::scene::bootstrap_material_id,
+        };
+        const gameengine::core::Status load_status = prepared_assets.load_directory(resolved_assets_dir);
+        if (!load_status ||
+            !gameengine::assets::read_binary_asset_file(scene_path, scene_bytes) ||
+            !gameengine::assets::read_scene(scene_bytes, scene_view) ||
+            !prepared_assets.validate_scene_dependencies(
+                scene_view, builtin_meshes, builtin_materials) ||
+            !gameengine::scene::deserialize_scene(scene_bytes, runtime_scene) ||
+            !gameengine::scene::ensure_default_camera_and_light(runtime_scene) ||
+            !gameengine::renderer::scene_bridge::set_prepared_assets(
+                renderer,
+                gameengine::renderer::scene_bridge::make_prepared_render_assets(prepared_assets))) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  "prepared scene or asset loading failed");
+            static_cast<void>(gameengine::renderer::scene_bridge::clear_prepared_assets(renderer));
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+    } else if (!gameengine::scene::create_bootstrap_scene(runtime_scene) ||
+               runtime_scene.entities().empty()) {
         gameengine::core::log(gameengine::core::LogLevel::error,
                               "runtime scene creation failed");
         renderer.shutdown();
@@ -376,12 +442,25 @@ int main(int argc, char** argv)
         core.shutdown();
         return 6;
     }
-    const gameengine::scene::Entity bootstrap_entity = runtime_scene.entities().front();
+
+    gameengine::scene::Entity primary_entity{};
+    for (const gameengine::scene::Entity entity : runtime_scene.entities()) {
+        if (runtime_scene.mesh_renderer(entity) != nullptr &&
+            runtime_scene.transform(entity) != nullptr) {
+            primary_entity = entity;
+            break;
+        }
+    }
+    if (!primary_entity.valid() && !runtime_scene.entities().empty()) {
+        primary_entity = runtime_scene.entities().front();
+    }
+    const gameengine::scene::Entity bootstrap_entity = primary_entity;
     const gameengine::scene::TransformComponent* bootstrap_transform =
         runtime_scene.transform(bootstrap_entity);
     if (bootstrap_transform == nullptr) {
         gameengine::core::log(gameengine::core::LogLevel::error,
                               "bootstrap transform missing");
+        static_cast<void>(gameengine::renderer::scene_bridge::clear_prepared_assets(renderer));
         renderer.shutdown();
         platform.shutdown();
         core.shutdown();
@@ -520,7 +599,6 @@ int main(int argc, char** argv)
         }
     }
 #endif
-#endif
     if (renderer_benchmark) {
         const gameengine::core::Status benchmark_status =
             gameengine::renderer::diagnostics::run_renderer_benchmark(renderer, gpu_culling);
@@ -528,28 +606,26 @@ int main(int argc, char** argv)
             benchmark_status.code != gameengine::core::ErrorCode::unsupported_platform) {
             gameengine::core::log(gameengine::core::LogLevel::error,
                                   gameengine::core::to_string(benchmark_status.code));
-#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS || GAMEENGINE_BUILD_LUA
             static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+            static_cast<void>(gameengine::renderer::scene_bridge::clear_prepared_assets(renderer));
 #if GAMEENGINE_BUILD_LUA
             script_runtime.shutdown();
 #endif
 #if GAMEENGINE_BUILD_PHYSICS
             physics_world.shutdown();
 #endif
-#endif
             renderer.shutdown();
             platform.shutdown();
             core.shutdown();
             return 6;
         }
-#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS || GAMEENGINE_BUILD_LUA
         static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+        static_cast<void>(gameengine::renderer::scene_bridge::clear_prepared_assets(renderer));
 #if GAMEENGINE_BUILD_LUA
         script_runtime.shutdown();
 #endif
 #if GAMEENGINE_BUILD_PHYSICS
         physics_world.shutdown();
-#endif
 #endif
         renderer.shutdown();
         platform.shutdown();
@@ -575,6 +651,8 @@ int main(int argc, char** argv)
     (void)metrics_measured_frames;
     (void)metrics_frames_per_workload;
     (void)renderer_quality;
+    (void)scene_path;
+    (void)assets_dir;
 
     if (renderer_benchmark) {
         gameengine::core::log(gameengine::core::LogLevel::info,
@@ -736,14 +814,13 @@ int main(int argc, char** argv)
     } while (!platform.should_close());
 
 #if GAMEENGINE_RENDERER_HAS_VULKAN
-#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS || GAMEENGINE_BUILD_LUA
     static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+    static_cast<void>(gameengine::renderer::scene_bridge::clear_prepared_assets(renderer));
 #if GAMEENGINE_BUILD_LUA
     script_runtime.shutdown();
 #endif
 #if GAMEENGINE_BUILD_PHYSICS
     physics_world.shutdown();
-#endif
 #endif
     renderer.shutdown();
 #endif

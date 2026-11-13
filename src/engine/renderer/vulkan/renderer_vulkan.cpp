@@ -31,6 +31,7 @@
 #include "engine/renderer/renderer_quality.hpp"
 #include "engine/renderer/procedural_instances.hpp"
 #include "engine/renderer/renderer_benchmark.hpp"
+#include "engine/renderer/scene_bridge.hpp"
 #include "engine/renderer/vulkan/shader_pipeline.hpp"
 #include "engine/renderer/vulkan/triangle_shaders.hpp"
 #include "engine/renderer/vulkan/vulkan_pipeline_cache.hpp"
@@ -169,6 +170,46 @@ struct Renderer::Impl final {
         rhi::GraphicsPipelineDescription description{};
         ResourceState state = ResourceState::free;
         core::u32 generation = 1;
+    };
+
+    struct UploadedPreparedMesh final {
+        core::u64 asset_id = 0;
+        rhi::BufferHandle vertex_buffer{};
+        rhi::BufferHandle index_buffer{};
+        core::u32 vertex_count = 0;
+        core::u32 index_count = 0;
+        VkIndexType index_type = VK_INDEX_TYPE_UINT16;
+        std::vector<assets::MeshSubmeshView> submeshes{};
+        math::Vec3 bounds_center{};
+        core::f32 bounds_radius = 1.0F;
+    };
+
+    struct UploadedPreparedTexture final {
+        core::u64 asset_id = 0;
+        rhi::ImageHandle image{};
+    };
+
+    struct UploadedPreparedMaterial final {
+        core::u64 asset_id = 0;
+        std::array<core::f32, 4> base_color_factor = {1.0F, 1.0F, 1.0F, 1.0F};
+        core::f32 metallic = 0.05F;
+        core::f32 roughness = 0.42F;
+        core::u64 albedo_texture = 0;
+        std::array<VkBuffer, frames_in_flight> uniform_buffers{};
+        std::array<VkDeviceMemory, frames_in_flight> uniform_memories{};
+        std::array<void*, frames_in_flight> uniform_mapped{};
+        std::array<VkDescriptorSet, frames_in_flight> descriptor_sets{};
+    };
+
+    struct SceneDrawCommand final {
+        const BufferSlot* vertex_buffer = nullptr;
+        const BufferSlot* index_buffer = nullptr;
+        core::u32 first_index = 0;
+        core::u32 index_count = 0;
+        std::int32_t vertex_offset = 0;
+        VkIndexType index_type = VK_INDEX_TYPE_UINT16;
+        VkDescriptorSet material_descriptor_set = VK_NULL_HANDLE;
+        core::u32 first_instance = 0;
     };
 
     enum class DeferredResource : core::u8 {
@@ -403,7 +444,12 @@ struct Renderer::Impl final {
     rhi::BufferHandle cube_index_buffer{};
     rhi::PipelineHandle cube_pipeline{};
     rhi::ImageHandle bootstrap_albedo_image{};
+    rhi::ImageHandle default_white_albedo_image{};
     rhi::SamplerHandle bootstrap_albedo_sampler{};
+    std::vector<UploadedPreparedMesh> uploaded_meshes;
+    std::vector<UploadedPreparedTexture> uploaded_textures;
+    std::vector<UploadedPreparedMaterial> uploaded_materials;
+    std::vector<SceneDrawCommand> scene_draw_commands;
     PFN_vkSetDebugUtilsObjectNameEXT set_debug_utils_object_name = nullptr;
     PFN_vkCmdBeginDebugUtilsLabelEXT cmd_begin_debug_utils_label = nullptr;
     PFN_vkCmdEndDebugUtilsLabelEXT cmd_end_debug_utils_label = nullptr;
@@ -471,6 +517,16 @@ struct Renderer::Impl final {
         renderer::gpu_culling::VisibilityMode mode) noexcept;
     [[nodiscard]] core::Status set_renderer_quality(
         renderer::quality::RendererQuality quality) noexcept;
+    [[nodiscard]] core::Status set_prepared_assets(
+        const renderer::scene_bridge::PreparedRenderAssets& assets) noexcept;
+    [[nodiscard]] core::Status clear_prepared_assets() noexcept;
+    void destroy_prepared_assets_gpu() noexcept;
+    [[nodiscard]] core::Status ensure_default_white_albedo_image() noexcept;
+    [[nodiscard]] const UploadedPreparedMesh* find_uploaded_mesh(core::u64 asset_id) const noexcept;
+    [[nodiscard]] const UploadedPreparedTexture* find_uploaded_texture(
+        core::u64 asset_id) const noexcept;
+    [[nodiscard]] const UploadedPreparedMaterial* find_uploaded_material(
+        core::u64 asset_id) const noexcept;
     [[nodiscard]] core::Status attach_editor_scene(scene::Scene& scene) noexcept;
     [[nodiscard]] core::Status detach_editor_scene() noexcept;
     [[nodiscard]] core::Status select_editor_scene_entities(scene::Scene& scene) noexcept;
@@ -508,6 +564,12 @@ struct Renderer::Impl final {
         const renderer::benchmark::BenchmarkCase& benchmark_case) noexcept;
     [[nodiscard]] core::Status run_renderer_benchmark(bool use_gpu_culling) noexcept;
     [[nodiscard]] core::Status create_bootstrap_material_resources() noexcept;
+    void write_material_descriptor_set(VkDescriptorSet target_set,
+                                       VkBuffer uniform_buffer,
+                                       VkImageView albedo_view,
+                                       VkSampler albedo_sampler,
+                                       bool use_forward_plus,
+                                       bool use_high) noexcept;
     [[nodiscard]] core::Status create_material_descriptors() noexcept;
     [[nodiscard]] core::Status refresh_material_pipeline_resources() noexcept;
     void destroy_material_resources() noexcept;
@@ -789,6 +851,7 @@ void Renderer::Impl::shutdown() noexcept
     destroy_editor_ui_resources();
     // Descriptor sets must be released before the buffers and images they reference.
     destroy_material_resources();
+    destroy_prepared_assets_gpu();
     destroy_forward_plus_buffers();
     destroy_high_resources();
     destroy_benchmark_resources();
@@ -4253,6 +4316,370 @@ core::Status Renderer::Impl::set_renderer_quality(
     return graph_status;
 }
 
+const Renderer::Impl::UploadedPreparedMesh* Renderer::Impl::find_uploaded_mesh(
+    core::u64 asset_id) const noexcept
+{
+    for (const UploadedPreparedMesh& mesh : uploaded_meshes) {
+        if (mesh.asset_id == asset_id) {
+            return &mesh;
+        }
+    }
+    return nullptr;
+}
+
+const Renderer::Impl::UploadedPreparedTexture* Renderer::Impl::find_uploaded_texture(
+    core::u64 asset_id) const noexcept
+{
+    for (const UploadedPreparedTexture& texture : uploaded_textures) {
+        if (texture.asset_id == asset_id) {
+            return &texture;
+        }
+    }
+    return nullptr;
+}
+
+const Renderer::Impl::UploadedPreparedMaterial* Renderer::Impl::find_uploaded_material(
+    core::u64 asset_id) const noexcept
+{
+    for (const UploadedPreparedMaterial& material : uploaded_materials) {
+        if (material.asset_id == asset_id) {
+            return &material;
+        }
+    }
+    return nullptr;
+}
+
+void Renderer::Impl::destroy_prepared_assets_gpu() noexcept
+{
+    if (device != VK_NULL_HANDLE) {
+        for (UploadedPreparedMaterial& material : uploaded_materials) {
+            for (core::u32 frame = 0; frame < frames_in_flight; ++frame) {
+                if (material.uniform_mapped[frame] != nullptr &&
+                    material.uniform_memories[frame] != VK_NULL_HANDLE) {
+                    vkUnmapMemory(device, material.uniform_memories[frame]);
+                }
+                material.uniform_mapped[frame] = nullptr;
+                destroy_buffer_resource(material.uniform_buffers[frame],
+                                        material.uniform_memories[frame]);
+                material.uniform_buffers[frame] = VK_NULL_HANDLE;
+                material.uniform_memories[frame] = VK_NULL_HANDLE;
+                material.descriptor_sets[frame] = VK_NULL_HANDLE;
+            }
+        }
+        for (const UploadedPreparedMesh& mesh : uploaded_meshes) {
+            BufferSlot* vertex_slot = nullptr;
+            if (validate_buffer(mesh.vertex_buffer, vertex_slot)) {
+                destroy_buffer_resource(vertex_slot->buffer, vertex_slot->memory);
+                vertex_slot->buffer = VK_NULL_HANDLE;
+                vertex_slot->memory = VK_NULL_HANDLE;
+                vertex_slot->size = 0;
+                vertex_slot->state = ResourceState::free;
+                vertex_slot->generation = next_generation(vertex_slot->generation);
+            }
+            BufferSlot* index_slot = nullptr;
+            if (validate_buffer(mesh.index_buffer, index_slot)) {
+                destroy_buffer_resource(index_slot->buffer, index_slot->memory);
+                index_slot->buffer = VK_NULL_HANDLE;
+                index_slot->memory = VK_NULL_HANDLE;
+                index_slot->size = 0;
+                index_slot->state = ResourceState::free;
+                index_slot->generation = next_generation(index_slot->generation);
+            }
+        }
+        for (const UploadedPreparedTexture& texture : uploaded_textures) {
+            ImageSlot* image_slot = nullptr;
+            if (validate_image(texture.image, image_slot)) {
+                destroy_image_resource(*image_slot);
+                image_slot->width = 0;
+                image_slot->height = 0;
+                image_slot->state = ResourceState::free;
+                image_slot->generation = next_generation(image_slot->generation);
+            }
+        }
+        if (default_white_albedo_image.valid()) {
+            ImageSlot* white_slot = nullptr;
+            if (validate_image(default_white_albedo_image, white_slot)) {
+                destroy_image_resource(*white_slot);
+                white_slot->width = 0;
+                white_slot->height = 0;
+                white_slot->state = ResourceState::free;
+                white_slot->generation = next_generation(white_slot->generation);
+            }
+            default_white_albedo_image = {};
+        }
+    }
+    uploaded_materials.clear();
+    uploaded_meshes.clear();
+    uploaded_textures.clear();
+    scene_draw_commands.clear();
+}
+
+core::Status Renderer::Impl::ensure_default_white_albedo_image() noexcept
+{
+    if (default_white_albedo_image.valid()) {
+        return core::Status{};
+    }
+    core::Status status = create_image(
+        {.width = 1U, .height = 1U, .format = rhi::ImageFormat::rgba8_unorm},
+        default_white_albedo_image);
+    if (!status) {
+        return status;
+    }
+    const std::array<std::byte, 4> white_pixel = {
+        std::byte{0xff},
+        std::byte{0xff},
+        std::byte{0xff},
+        std::byte{0xff},
+    };
+    status = upload_image(default_white_albedo_image, white_pixel);
+    if (!status) {
+        ImageSlot* slot = nullptr;
+        if (validate_image(default_white_albedo_image, slot)) {
+            destroy_image_resource(*slot);
+            slot->state = ResourceState::free;
+            slot->generation = next_generation(slot->generation);
+        }
+        default_white_albedo_image = {};
+    }
+    return status;
+}
+
+core::Status Renderer::Impl::set_prepared_assets(
+    const renderer::scene_bridge::PreparedRenderAssets& assets) noexcept
+{
+    if (device == VK_NULL_HANDLE) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    if (assets.meshes.size() + assets.textures.size() + assets.materials.size() >
+        assets::max_prepared_asset_count) {
+        return core::Status{core::ErrorCode::invalid_argument};
+    }
+
+    auto rollback_and_restore = [this]() noexcept {
+        destroy_material_resources();
+        destroy_prepared_assets_gpu();
+        if (editor_scene != nullptr && !select_editor_scene_entities(*editor_scene)) {
+            editor_scene = nullptr;
+            render_cube_entity = bootstrap_cube_entity;
+            render_camera_entity = bootstrap_camera_entity;
+            render_light_entity = bootstrap_light_entity;
+        }
+        static_cast<void>(create_bootstrap_material_resources());
+        static_cast<void>(create_material_descriptors());
+    };
+
+    destroy_material_resources();
+    destroy_prepared_assets_gpu();
+
+    uploaded_textures.reserve(assets.textures.size());
+    for (const assets::PreparedTexture& texture : assets.textures) {
+        if (texture.asset_id == 0U || texture.width == 0U || texture.height == 0U ||
+            texture.format != 1U ||
+            texture.pixels.size() !=
+                static_cast<core::usize>(texture.width) * texture.height * 4U ||
+            find_uploaded_texture(texture.asset_id) != nullptr) {
+            rollback_and_restore();
+            return core::Status{core::ErrorCode::invalid_argument};
+        }
+        rhi::ImageHandle handle{};
+        core::Status status = create_image(
+            {.width = texture.width, .height = texture.height, .format = rhi::ImageFormat::rgba8_unorm},
+            handle);
+        if (!status) {
+            rollback_and_restore();
+            return status;
+        }
+        uploaded_textures.push_back(UploadedPreparedTexture{
+            .asset_id = texture.asset_id,
+            .image = handle,
+        });
+        status = upload_image(handle, texture.pixels);
+        if (!status) {
+            rollback_and_restore();
+            return status;
+        }
+    }
+
+    uploaded_meshes.reserve(assets.meshes.size());
+    for (const assets::PreparedMesh& mesh : assets.meshes) {
+        if (mesh.asset_id == 0U || mesh.vertex_count == 0U || mesh.vertex_stride != 32U ||
+            mesh.index_count == 0U || mesh.vertices.empty() || mesh.indices.empty() ||
+            find_uploaded_mesh(mesh.asset_id) != nullptr) {
+            rollback_and_restore();
+            return core::Status{core::ErrorCode::invalid_argument};
+        }
+        UploadedPreparedMesh uploaded{};
+        uploaded.asset_id = mesh.asset_id;
+        uploaded.vertex_count = mesh.vertex_count;
+        uploaded.index_count = mesh.index_count;
+        uploaded.index_type = mesh.index_format == assets::MeshIndexFormat::u32
+                                  ? VK_INDEX_TYPE_UINT32
+                                  : VK_INDEX_TYPE_UINT16;
+        uploaded.submeshes = mesh.submeshes;
+
+        math::Vec3 bounds_min{std::numeric_limits<core::f32>::max(),
+                              std::numeric_limits<core::f32>::max(),
+                              std::numeric_limits<core::f32>::max()};
+        math::Vec3 bounds_max{std::numeric_limits<core::f32>::lowest(),
+                              std::numeric_limits<core::f32>::lowest(),
+                              std::numeric_limits<core::f32>::lowest()};
+        for (core::u32 v = 0; v < mesh.vertex_count; ++v) {
+            const core::usize base = static_cast<core::usize>(v) * 32U;
+            core::f32 px = 0.0F;
+            core::f32 py = 0.0F;
+            core::f32 pz = 0.0F;
+            std::memcpy(&px, mesh.vertices.data() + base, sizeof(core::f32));
+            std::memcpy(&py, mesh.vertices.data() + base + 4U, sizeof(core::f32));
+            std::memcpy(&pz, mesh.vertices.data() + base + 8U, sizeof(core::f32));
+            if (!std::isfinite(px) || !std::isfinite(py) || !std::isfinite(pz)) {
+                rollback_and_restore();
+                return core::Status{core::ErrorCode::invalid_argument};
+            }
+            bounds_min.x = std::min(bounds_min.x, px);
+            bounds_min.y = std::min(bounds_min.y, py);
+            bounds_min.z = std::min(bounds_min.z, pz);
+            bounds_max.x = std::max(bounds_max.x, px);
+            bounds_max.y = std::max(bounds_max.y, py);
+            bounds_max.z = std::max(bounds_max.z, pz);
+        }
+        uploaded.bounds_center = {
+            (bounds_min.x + bounds_max.x) * 0.5F,
+            (bounds_min.y + bounds_max.y) * 0.5F,
+            (bounds_min.z + bounds_max.z) * 0.5F,
+        };
+        const math::Vec3 half_extent{
+            (bounds_max.x - bounds_min.x) * 0.5F,
+            (bounds_max.y - bounds_min.y) * 0.5F,
+            (bounds_max.z - bounds_min.z) * 0.5F,
+        };
+        uploaded.bounds_radius =
+            std::max(std::sqrt(math::dot(half_extent, half_extent)), 0.01F);
+
+        core::Status status = create_buffer(
+            {.size = mesh.vertices.size(), .usage = rhi::BufferUsage::vertex},
+            uploaded.vertex_buffer);
+        if (!status) {
+            rollback_and_restore();
+            return status;
+        }
+        status = create_buffer(
+            {.size = mesh.indices.size(), .usage = rhi::BufferUsage::index},
+            uploaded.index_buffer);
+        if (!status) {
+            uploaded_meshes.push_back(std::move(uploaded));
+            rollback_and_restore();
+            return status;
+        }
+        uploaded_meshes.push_back(std::move(uploaded));
+        const UploadedPreparedMesh& stored_mesh = uploaded_meshes.back();
+        status = upload_buffer(stored_mesh.vertex_buffer, mesh.vertices);
+        if (!status) {
+            rollback_and_restore();
+            return status;
+        }
+        status = upload_buffer(stored_mesh.index_buffer, mesh.indices);
+        if (!status) {
+            rollback_and_restore();
+            return status;
+        }
+    }
+
+    uploaded_materials.reserve(assets.materials.size());
+    bool needs_default_white = false;
+    for (const assets::PreparedMaterial& material : assets.materials) {
+        if (material.asset_id == 0U || find_uploaded_material(material.asset_id) != nullptr) {
+            rollback_and_restore();
+            return core::Status{core::ErrorCode::invalid_argument};
+        }
+        if (material.albedo_texture != 0U && find_uploaded_texture(material.albedo_texture) == nullptr) {
+            rollback_and_restore();
+            return core::Status{core::ErrorCode::invalid_argument};
+        }
+        if (material.albedo_texture == 0U) {
+            needs_default_white = true;
+        }
+        UploadedPreparedMaterial uploaded{};
+        uploaded.asset_id = material.asset_id;
+        uploaded.base_color_factor = material.base_color_factor;
+        uploaded.metallic = material.metallic;
+        uploaded.roughness = material.roughness;
+        uploaded.albedo_texture = material.albedo_texture;
+        for (core::u32 frame = 0; frame < frames_in_flight; ++frame) {
+            const core::Status buf_status = create_buffer_resource(
+                sizeof(scene::BootstrapMaterialConstants),
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                uploaded.uniform_buffers[frame],
+                uploaded.uniform_memories[frame]);
+            if (!buf_status ||
+                vkMapMemory(device,
+                            uploaded.uniform_memories[frame],
+                            0,
+                            sizeof(scene::BootstrapMaterialConstants),
+                            0,
+                            &uploaded.uniform_mapped[frame]) != VK_SUCCESS) {
+                uploaded_materials.push_back(std::move(uploaded));
+                rollback_and_restore();
+                return buf_status ? core::Status{core::ErrorCode::vulkan_device_failed}
+                                  : buf_status;
+            }
+            scene::BootstrapMaterialConstants constants{};
+            constants.base_color_factor = uploaded.base_color_factor;
+            constants.material_parameters[0] = uploaded.metallic;
+            constants.material_parameters[1] = uploaded.roughness;
+            std::memcpy(uploaded.uniform_mapped[frame], &constants, sizeof(constants));
+        }
+        uploaded_materials.push_back(std::move(uploaded));
+    }
+
+    if (needs_default_white) {
+        const core::Status white_status = ensure_default_white_albedo_image();
+        if (!white_status) {
+            rollback_and_restore();
+            return white_status;
+        }
+    }
+
+    if (editor_scene != nullptr && !select_editor_scene_entities(*editor_scene)) {
+        editor_scene = nullptr;
+        render_cube_entity = bootstrap_cube_entity;
+        render_camera_entity = bootstrap_camera_entity;
+        render_light_entity = bootstrap_light_entity;
+    }
+
+    core::Status status = create_bootstrap_material_resources();
+    if (!status) {
+        rollback_and_restore();
+        return status;
+    }
+    status = create_material_descriptors();
+    if (!status) {
+        rollback_and_restore();
+        return status;
+    }
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::clear_prepared_assets() noexcept
+{
+    if (device == VK_NULL_HANDLE) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    destroy_material_resources();
+    destroy_prepared_assets_gpu();
+    if (editor_scene != nullptr && !select_editor_scene_entities(*editor_scene)) {
+        editor_scene = nullptr;
+        render_cube_entity = bootstrap_cube_entity;
+        render_camera_entity = bootstrap_camera_entity;
+        render_light_entity = bootstrap_light_entity;
+    }
+    core::Status status = create_bootstrap_material_resources();
+    if (!status) {
+        return status;
+    }
+    return create_material_descriptors();
+}
+
 core::Status Renderer::Impl::select_editor_scene_entities(scene::Scene& scene) noexcept
 {
     if (!scene.validate() || !scene.active_camera().valid()) {
@@ -4262,9 +4689,19 @@ core::Status Renderer::Impl::select_editor_scene_entities(scene::Scene& scene) n
     scene::Entity light{};
     for (const scene::Entity entity : scene.entities()) {
         const scene::MeshRendererComponent* mesh = scene.mesh_renderer(entity);
-        if (mesh != nullptr && mesh->mesh_id == scene::bootstrap_mesh_id &&
-            mesh->material_id == scene::bootstrap_material_id && !cube.valid()) {
-            cube = entity;
+        if (mesh != nullptr) {
+            const bool valid_mesh =
+                mesh->mesh_id == scene::bootstrap_mesh_id ||
+                find_uploaded_mesh(mesh->mesh_id) != nullptr;
+            const bool valid_material =
+                mesh->material_id == scene::bootstrap_material_id ||
+                find_uploaded_material(mesh->material_id) != nullptr;
+            if (!valid_mesh || !valid_material || scene.transform(entity) == nullptr) {
+                return core::Status{core::ErrorCode::invalid_argument};
+            }
+            if (!cube.valid()) {
+                cube = entity;
+            }
         }
         if (scene.directional_light(entity) != nullptr && !light.valid()) {
             light = entity;
@@ -4586,6 +5023,137 @@ core::Status Renderer::Impl::create_bootstrap_material_resources() noexcept
     return core::Status{};
 }
 
+void Renderer::Impl::write_material_descriptor_set(VkDescriptorSet target_set,
+                                                 VkBuffer uniform_buffer,
+                                                 VkImageView albedo_view,
+                                                 VkSampler albedo_sampler,
+                                                 bool use_forward_plus,
+                                                 bool use_high) noexcept
+{
+    VkDescriptorBufferInfo buffer_info{};
+    buffer_info.buffer = uniform_buffer;
+    buffer_info.offset = 0;
+    buffer_info.range = sizeof(scene::BootstrapMaterialConstants);
+    VkDescriptorImageInfo image_info{};
+    image_info.imageView = albedo_view;
+    image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkDescriptorImageInfo sampler_info{};
+    sampler_info.sampler = albedo_sampler;
+    VkDescriptorBufferInfo point_lights_info{
+        .buffer = benchmark_light_buffer,
+        .offset = 0,
+        .range = benchmark_light_size,
+    };
+    VkDescriptorBufferInfo tile_headers_info{
+        .buffer = tile_header_buffer,
+        .offset = 0,
+        .range = tile_header_size,
+    };
+    VkDescriptorBufferInfo tile_indices_info{
+        .buffer = tile_index_buffer,
+        .offset = 0,
+        .range = tile_index_size,
+    };
+    const VkDescriptorImageInfo shadow_image_info{
+        .sampler = VK_NULL_HANDLE,
+        .imageView = shadow_image_view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    };
+    const VkDescriptorImageInfo environment_image_info{
+        .sampler = VK_NULL_HANDLE,
+        .imageView = environment_image_view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    };
+    std::array<VkWriteDescriptorSet, 8> writes = {
+        VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             nullptr,
+                             target_set,
+                             0,
+                             0,
+                             1,
+                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                             nullptr,
+                             &buffer_info,
+                             nullptr},
+        VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             nullptr,
+                             target_set,
+                             1,
+                             0,
+                             1,
+                             VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                             &image_info,
+                             nullptr,
+                             nullptr},
+        VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             nullptr,
+                             target_set,
+                             2,
+                             0,
+                             1,
+                             VK_DESCRIPTOR_TYPE_SAMPLER,
+                             &sampler_info,
+                             nullptr,
+                             nullptr},
+    };
+    if (use_forward_plus) {
+        writes[3] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         nullptr,
+                                         target_set,
+                                         3,
+                                         0,
+                                         1,
+                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                         nullptr,
+                                         &point_lights_info,
+                                         nullptr};
+        writes[4] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         nullptr,
+                                         target_set,
+                                         4,
+                                         0,
+                                         1,
+                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                         nullptr,
+                                         &tile_headers_info,
+                                         nullptr};
+        writes[5] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         nullptr,
+                                         target_set,
+                                         5,
+                                         0,
+                                         1,
+                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                         nullptr,
+                                         &tile_indices_info,
+                                         nullptr};
+    }
+    if (use_high) {
+        writes[6] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         nullptr,
+                                         target_set,
+                                         6,
+                                         0,
+                                         1,
+                                         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                         &shadow_image_info,
+                                         nullptr,
+                                         nullptr};
+        writes[7] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         nullptr,
+                                         target_set,
+                                         7,
+                                         0,
+                                         1,
+                                         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                         &environment_image_info,
+                                         nullptr,
+                                         nullptr};
+    }
+    const std::uint32_t write_count = use_high ? 8U : (use_forward_plus ? 6U : 3U);
+    vkUpdateDescriptorSets(device, write_count, writes.data(), 0, nullptr);
+}
+
 core::Status Renderer::Impl::create_material_descriptors() noexcept
 {
     ImageSlot* image = nullptr;
@@ -4660,15 +5228,19 @@ core::Status Renderer::Impl::create_material_descriptors() noexcept
         return core::Status{core::ErrorCode::vulkan_device_failed};
     }
 
+    const std::uint32_t total_sets =
+        1U + static_cast<std::uint32_t>(uploaded_materials.size()) * frames_in_flight;
     const std::array<VkDescriptorPoolSize, 4> pool_sizes = {
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, use_high ? 3U : 1U},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, 1U},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, use_forward_plus ? 3U : 0U},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, total_sets},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                             (use_high ? 3U : 1U) * total_sets},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, total_sets},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                             use_forward_plus ? 3U * total_sets : 0U},
     };
     VkDescriptorPoolCreateInfo pool_info{};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool_info.maxSets = 1;
+    pool_info.maxSets = total_sets;
     pool_info.poolSizeCount = use_forward_plus ? static_cast<std::uint32_t>(pool_sizes.size()) : 3U;
     pool_info.pPoolSizes = pool_sizes.data();
     if (vkCreateDescriptorPool(device,
@@ -4686,146 +5258,38 @@ core::Status Renderer::Impl::create_material_descriptors() noexcept
     if (vkAllocateDescriptorSets(device, &allocate_info, &material_descriptor_set) != VK_SUCCESS) {
         return core::Status{core::ErrorCode::vulkan_device_failed};
     }
+    write_material_descriptor_set(material_descriptor_set,
+                                  material_uniform_buffer,
+                                  image->view,
+                                  sampler->sampler,
+                                  use_forward_plus,
+                                  use_high);
 
-    VkDescriptorBufferInfo buffer_info{};
-    buffer_info.buffer = material_uniform_buffer;
-    buffer_info.offset = 0;
-    buffer_info.range = sizeof(scene::BootstrapMaterialConstants);
-    VkDescriptorImageInfo image_info{};
-    image_info.imageView = image->view;
-    image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkDescriptorImageInfo sampler_info{};
-    sampler_info.sampler = sampler->sampler;
-    std::array<VkWriteDescriptorSet, 8> writes = {
-        VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                             nullptr,
-                             material_descriptor_set,
-                             0,
-                             0,
-                             1,
-                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                             nullptr,
-                             &buffer_info,
-                             nullptr},
-        VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                             nullptr,
-                             material_descriptor_set,
-                             1,
-                             0,
-                             1,
-                             VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                             &image_info,
-                             nullptr,
-                             nullptr},
-        VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                             nullptr,
-                             material_descriptor_set,
-                             2,
-                             0,
-                             1,
-                             VK_DESCRIPTOR_TYPE_SAMPLER,
-                             &sampler_info,
-                             nullptr,
-                             nullptr},
-    };
-    VkDescriptorBufferInfo point_lights_info{
-        .buffer = benchmark_light_buffer,
-        .offset = 0,
-        .range = benchmark_light_size,
-    };
-    VkDescriptorBufferInfo tile_headers_info{
-        .buffer = tile_header_buffer,
-        .offset = 0,
-        .range = tile_header_size,
-    };
-    VkDescriptorBufferInfo tile_indices_info{
-        .buffer = tile_index_buffer,
-        .offset = 0,
-        .range = tile_index_size,
-    };
-    if (use_forward_plus) {
-        writes[3] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                         nullptr,
-                                         material_descriptor_set,
-                                         3,
-                                         0,
-                                         1,
-                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                         nullptr,
-                                         &point_lights_info,
-                                         nullptr};
-        writes[4] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                         nullptr,
-                                         material_descriptor_set,
-                                         4,
-                                         0,
-                                         1,
-                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                         nullptr,
-                                         &tile_headers_info,
-                                         nullptr};
-        writes[5] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                         nullptr,
-                                         material_descriptor_set,
-                                         5,
-                                         0,
-                                         1,
-                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                         nullptr,
-                                         &tile_indices_info,
-                                         nullptr};
-    }
-    if (use_high) {
-        const VkDescriptorImageInfo shadow_image_info{
-            .sampler = VK_NULL_HANDLE,
-            .imageView = shadow_image_view,
-            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
-        const VkDescriptorImageInfo environment_image_info{
-            .sampler = VK_NULL_HANDLE,
-            .imageView = environment_image_view,
-            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
-        writes[6] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                         nullptr,
-                                         material_descriptor_set,
-                                         6,
-                                         0,
-                                         1,
-                                         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                                         &shadow_image_info,
-                                         nullptr,
-                                         nullptr};
-        writes[6] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                         nullptr,
-                                         material_descriptor_set,
-                                         6,
-                                         0,
-                                         1,
-                                         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                                         &shadow_image_info,
-                                         nullptr,
-                                         nullptr};
-        writes[7] = VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                         nullptr,
-                                         material_descriptor_set,
-                                         7,
-                                         0,
-                                         1,
-                                         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                                         &environment_image_info,
-                                         nullptr,
-                                         nullptr};
-    }
-    const std::uint32_t base_write_count = use_forward_plus ? 6U : 3U;
-    vkUpdateDescriptorSets(device, base_write_count, writes.data(), 0, nullptr);
-    if (use_high) {
-        for (std::uint32_t index = 0; index < 2U; ++index) {
-            vkUpdateDescriptorSets(device,
-                                   1U,
-                                   writes.data() + base_write_count + index,
-                                   0,
-                                   nullptr);
+    for (UploadedPreparedMaterial& material : uploaded_materials) {
+        VkImageView albedo_view = image->view;
+        if (material.albedo_texture != 0U) {
+            const UploadedPreparedTexture* texture = find_uploaded_texture(material.albedo_texture);
+            ImageSlot* uploaded_slot = nullptr;
+            if (texture != nullptr && validate_image(texture->image, uploaded_slot)) {
+                albedo_view = uploaded_slot->view;
+            }
+        } else if (default_white_albedo_image.valid()) {
+            ImageSlot* white_slot = nullptr;
+            if (validate_image(default_white_albedo_image, white_slot)) {
+                albedo_view = white_slot->view;
+            }
+        }
+        for (core::u32 frame = 0; frame < frames_in_flight; ++frame) {
+            if (vkAllocateDescriptorSets(
+                    device, &allocate_info, &material.descriptor_sets[frame]) != VK_SUCCESS) {
+                return core::Status{core::ErrorCode::vulkan_device_failed};
+            }
+            write_material_descriptor_set(material.descriptor_sets[frame],
+                                          material.uniform_buffers[frame],
+                                          albedo_view,
+                                          sampler->sampler,
+                                          use_forward_plus,
+                                          use_high);
         }
     }
     set_debug_name(VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT,
@@ -4872,6 +5336,9 @@ void Renderer::Impl::destroy_material_resources() noexcept
         return;
     }
     material_descriptor_set = VK_NULL_HANDLE;
+    for (UploadedPreparedMaterial& material : uploaded_materials) {
+        material.descriptor_sets.fill(VK_NULL_HANDLE);
+    }
     if (material_descriptor_pool != VK_NULL_HANDLE) {
         vkDestroyDescriptorPool(device, material_descriptor_pool, nullptr);
         material_descriptor_pool = VK_NULL_HANDLE;
@@ -5883,6 +6350,18 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
     std::memcpy(material_mapped, &material_constants, sizeof(material_constants));
     vkUnmapMemory(device, material_uniform_memory);
 
+    for (const UploadedPreparedMaterial& prepared_material : uploaded_materials) {
+        if (prepared_material.uniform_mapped[frame_index] != nullptr) {
+            scene::BootstrapMaterialConstants prepared_constants = material_constants;
+            prepared_constants.base_color_factor = prepared_material.base_color_factor;
+            prepared_constants.material_parameters[0] = prepared_material.metallic;
+            prepared_constants.material_parameters[1] = prepared_material.roughness;
+            std::memcpy(prepared_material.uniform_mapped[frame_index],
+                        &prepared_constants,
+                        sizeof(prepared_constants));
+        }
+    }
+
     const core::f32 aspect_ratio = static_cast<core::f32>(swapchain_extent.width) /
                                     static_cast<core::f32>(swapchain_extent.height);
     const math::Mat4 view = math::look_at_rh(
@@ -5894,8 +6373,98 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         camera_component->far_plane);
     const math::Mat4 view_projection = math::multiply(projection, view);
 
-    const bool use_gpu_culling = visibility_mode == renderer::gpu_culling::VisibilityMode::gpu &&
-                                 gpu_culling_available;
+    auto resolve_mesh_buffers = [&](core::u64 mesh_id,
+                                    const BufferSlot*& out_vb,
+                                    const BufferSlot*& out_ib,
+                                    core::u32& out_index_count,
+                                    VkIndexType& out_index_type,
+                                    std::span<const assets::MeshSubmeshView>& out_submeshes,
+                                    math::Vec3& out_center,
+                                    core::f32& out_radius) noexcept -> bool {
+        if (mesh_id == scene::bootstrap_mesh_id) {
+            out_vb = vertex_buffer;
+            out_ib = index_buffer;
+            out_index_count = static_cast<core::u32>(scene::bootstrap_cube_indices.size());
+            out_index_type = VK_INDEX_TYPE_UINT16;
+            out_submeshes = {};
+            out_center = {};
+            out_radius = renderer::procedural::bootstrap_cube_bounding_radius();
+            return true;
+        }
+        const UploadedPreparedMesh* mesh = find_uploaded_mesh(mesh_id);
+        if (mesh == nullptr) {
+            return false;
+        }
+        BufferSlot* mesh_vb = nullptr;
+        BufferSlot* mesh_ib = nullptr;
+        if (!validate_buffer(mesh->vertex_buffer, mesh_vb) ||
+            !validate_buffer(mesh->index_buffer, mesh_ib)) {
+            return false;
+        }
+        out_vb = mesh_vb;
+        out_ib = mesh_ib;
+        out_index_count = mesh->index_count;
+        out_index_type = mesh->index_type;
+        out_submeshes = mesh->submeshes;
+        out_center = mesh->bounds_center;
+        out_radius = mesh->bounds_radius;
+        return true;
+    };
+
+    auto resolve_material_descriptor = [&](core::u64 material_id) noexcept -> VkDescriptorSet {
+        if (material_id == scene::bootstrap_material_id) {
+            return material_descriptor_set;
+        }
+        const UploadedPreparedMaterial* material = find_uploaded_material(material_id);
+        return material != nullptr ? material->descriptor_sets[frame_index] : VK_NULL_HANDLE;
+    };
+
+    core::u32 scene_mesh_count = 0U;
+    if (editor_scene != nullptr && active_instance_count == 1U) {
+        for (const scene::Entity entity : active_scene_data.entities()) {
+            if (active_scene_data.mesh_renderer(entity) != nullptr &&
+                active_scene_data.transform(entity) != nullptr) {
+                ++scene_mesh_count;
+            }
+        }
+    }
+
+    const BufferSlot* primary_vertex_buffer = vertex_buffer;
+    const BufferSlot* primary_index_buffer = index_buffer;
+    core::u32 primary_index_count = static_cast<core::u32>(scene::bootstrap_cube_indices.size());
+    VkIndexType primary_index_type = VK_INDEX_TYPE_UINT16;
+    VkDescriptorSet primary_descriptor_set = material_descriptor_set;
+    if (const scene::MeshRendererComponent* primary_mesh =
+            active_scene_data.mesh_renderer(render_cube_entity);
+        primary_mesh != nullptr) {
+        std::span<const assets::MeshSubmeshView> unused_submeshes;
+        math::Vec3 unused_center{};
+        core::f32 unused_radius = 1.0F;
+        if (!resolve_mesh_buffers(primary_mesh->mesh_id,
+                                  primary_vertex_buffer,
+                                  primary_index_buffer,
+                                  primary_index_count,
+                                  primary_index_type,
+                                  unused_submeshes,
+                                  unused_center,
+                                  unused_radius)) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        primary_descriptor_set = resolve_material_descriptor(primary_mesh->material_id);
+        if (primary_descriptor_set == VK_NULL_HANDLE) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+    }
+
+    const bool use_scene_draw_list =
+        editor_scene != nullptr && active_instance_count == 1U &&
+        (scene_mesh_count > 1U ||
+         visibility_mode != renderer::gpu_culling::VisibilityMode::gpu ||
+         !gpu_culling_available);
+    const bool use_gpu_culling =
+        visibility_mode == renderer::gpu_culling::VisibilityMode::gpu &&
+        gpu_culling_available && !use_scene_draw_list;
+    scene_draw_commands.clear();
     auto& timing = frame_timing[frame_index];
     timing.reset(gpu_timestamps_enabled,
                  visibility_mode,
@@ -5907,7 +6476,7 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                  quality_compute_fallback,
                  quality_shadow_fallback,
                  quality_environment_fallback);
-    timing.total_instances = active_instance_count;
+    timing.total_instances = use_scene_draw_list ? scene_mesh_count : active_instance_count;
     timing.benchmark_active = benchmark_active;
     timing.benchmark_path = benchmark_path;
     timing.benchmark_light_count = benchmark_light_count;
@@ -5946,6 +6515,7 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
             static_cast<std::byte*>(gpu_indirect_mapped) +
             gpu_indirect_slice_stride * frame_index);
         *command = renderer::gpu_culling::initial_indirect_command();
+        command->index_count = primary_index_count;
         if ((gpu_indirect_memory_properties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
             const VkMappedMemoryRange range{
                 .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
@@ -5958,6 +6528,101 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
             }
         }
         timing.culled_instances = active_instance_count;
+    } else if (use_scene_draw_list) {
+        const core::u32 required_capacity =
+            std::min(scene_mesh_count, renderer::procedural::maximum_instance_count);
+        if (instance_mapped == nullptr || instance_buffer == VK_NULL_HANDLE ||
+            instance_offset + sizeof(renderer::procedural::InstanceData) * required_capacity >
+                instance_buffer_size) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        auto* visible_data = reinterpret_cast<renderer::procedural::InstanceData*>(
+            static_cast<std::byte*>(instance_mapped) + instance_offset);
+        core::u32 total_draw_entities = 0U;
+        for (const scene::Entity entity : active_scene_data.entities()) {
+            const scene::MeshRendererComponent* mesh_component =
+                active_scene_data.mesh_renderer(entity);
+            const scene::TransformComponent* transform_component =
+                active_scene_data.transform(entity);
+            if (mesh_component == nullptr || transform_component == nullptr) {
+                continue;
+            }
+            if (total_draw_entities >= renderer::procedural::maximum_instance_count) {
+                break;
+            }
+            ++total_draw_entities;
+
+            const BufferSlot* entity_vb = nullptr;
+            const BufferSlot* entity_ib = nullptr;
+            core::u32 entity_index_count = 0U;
+            VkIndexType entity_index_type = VK_INDEX_TYPE_UINT16;
+            std::span<const assets::MeshSubmeshView> entity_submeshes{};
+            math::Vec3 local_center{};
+            core::f32 local_radius = 1.0F;
+            if (!resolve_mesh_buffers(mesh_component->mesh_id,
+                                      entity_vb,
+                                      entity_ib,
+                                      entity_index_count,
+                                      entity_index_type,
+                                      entity_submeshes,
+                                      local_center,
+                                      local_radius)) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            const VkDescriptorSet entity_descriptor_set =
+                resolve_material_descriptor(mesh_component->material_id);
+            if (entity_descriptor_set == VK_NULL_HANDLE) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+
+            core::f32 max_scale = 0.0F;
+            for (core::u32 column = 0; column < 3U; ++column) {
+                const core::f32 x = transform_component->world_matrix.at(0, column);
+                const core::f32 y = transform_component->world_matrix.at(1, column);
+                const core::f32 z = transform_component->world_matrix.at(2, column);
+                max_scale = std::max(max_scale, std::sqrt(x * x + y * y + z * z));
+            }
+            const math::Vec3 world_center =
+                math::transform_point(transform_component->world_matrix, local_center);
+            const core::f32 world_radius = std::max(local_radius * max_scale, 0.01F);
+            if (!math::sphere_visible(frustum, world_center, world_radius)) {
+                continue;
+            }
+
+            const core::u32 instance_slot = visible_count++;
+            visible_data[instance_slot] = {.model = transform_component->world_matrix};
+            if (entity_submeshes.empty()) {
+                scene_draw_commands.push_back(SceneDrawCommand{
+                    .vertex_buffer = entity_vb,
+                    .index_buffer = entity_ib,
+                    .first_index = 0U,
+                    .index_count = entity_index_count,
+                    .vertex_offset = 0,
+                    .index_type = entity_index_type,
+                    .material_descriptor_set = entity_descriptor_set,
+                    .first_instance = instance_slot,
+                });
+            } else {
+                for (const assets::MeshSubmeshView& submesh : entity_submeshes) {
+                    if (submesh.index_count == 0U) {
+                        continue;
+                    }
+                    scene_draw_commands.push_back(SceneDrawCommand{
+                        .vertex_buffer = entity_vb,
+                        .index_buffer = entity_ib,
+                        .first_index = submesh.first_index,
+                        .index_count = submesh.index_count,
+                        .vertex_offset = static_cast<std::int32_t>(submesh.vertex_offset),
+                        .index_type = entity_index_type,
+                        .material_descriptor_set = entity_descriptor_set,
+                        .first_instance = instance_slot,
+                    });
+                }
+            }
+        }
+        timing.total_instances = total_draw_entities;
+        timing.visible_instances = visible_count;
+        timing.culled_instances = total_draw_entities - visible_count;
     } else {
         if (instance_mapped == nullptr || instance_buffer == VK_NULL_HANDLE ||
             instance_offset + sizeof(renderer::procedural::InstanceData) * active_instance_count >
@@ -6132,23 +6797,6 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
             const VkRect2D shadow_scissor{{0, 0}, {1024U, 1024U}};
             vkCmdSetViewport(command_buffer, 0, 1, &shadow_viewport);
             vkCmdSetScissor(command_buffer, 0, 1, &shadow_scissor);
-            const std::array<VkBuffer, 2> shadow_vertex_buffers = {
-                vertex_buffer->buffer,
-                use_gpu_culling ? gpu_visible_buffer : instance_buffer,
-            };
-            const std::array<VkDeviceSize, 2> shadow_offsets = {
-                0,
-                use_gpu_culling ? gpu_visible_slice_stride * frame_index : instance_offset,
-            };
-            vkCmdBindVertexBuffers(command_buffer,
-                                   0,
-                                   static_cast<std::uint32_t>(shadow_vertex_buffers.size()),
-                                   shadow_vertex_buffers.data(),
-                                   shadow_offsets.data());
-            vkCmdBindIndexBuffer(command_buffer,
-                                 index_buffer->buffer,
-                                 0,
-                                 VK_INDEX_TYPE_UINT16);
             vkCmdBindPipeline(command_buffer,
                               VK_PIPELINE_BIND_POINT_GRAPHICS,
                               shadow_pipeline);
@@ -6159,19 +6807,66 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                                0,
                                sizeof(shadow_constants),
                                &shadow_constants);
-            if (use_gpu_culling) {
-                vkCmdDrawIndexedIndirect(command_buffer,
-                                         gpu_indirect_buffer,
-                                         gpu_indirect_slice_stride * frame_index,
-                                         1,
-                                         sizeof(renderer::gpu_culling::IndirectCommand));
-            } else if (visible_count > 0U) {
-                vkCmdDrawIndexed(command_buffer,
-                                 static_cast<std::uint32_t>(scene::bootstrap_cube_indices.size()),
-                                 visible_count,
-                                 0,
-                                 0,
-                                 0);
+            core::u32 shadow_draw_calls = 0U;
+            if (use_scene_draw_list) {
+                const VkBuffer instance_stream = instance_buffer;
+                vkCmdBindVertexBuffers(command_buffer, 1U, 1U, &instance_stream, &instance_offset);
+                VkBuffer bound_vb = VK_NULL_HANDLE;
+                VkBuffer bound_ib = VK_NULL_HANDLE;
+                VkIndexType bound_index_type = VK_INDEX_TYPE_MAX_ENUM;
+                for (const SceneDrawCommand& cmd : scene_draw_commands) {
+                    if (cmd.vertex_buffer->buffer != bound_vb) {
+                        bound_vb = cmd.vertex_buffer->buffer;
+                        const VkDeviceSize vb_offset = 0U;
+                        vkCmdBindVertexBuffers(command_buffer, 0U, 1U, &bound_vb, &vb_offset);
+                    }
+                    if (cmd.index_buffer->buffer != bound_ib || cmd.index_type != bound_index_type) {
+                        bound_ib = cmd.index_buffer->buffer;
+                        bound_index_type = cmd.index_type;
+                        vkCmdBindIndexBuffer(command_buffer, bound_ib, 0U, bound_index_type);
+                    }
+                    vkCmdDrawIndexed(command_buffer,
+                                     cmd.index_count,
+                                     1U,
+                                     cmd.first_index,
+                                     cmd.vertex_offset,
+                                     cmd.first_instance);
+                    ++shadow_draw_calls;
+                }
+            } else {
+                const std::array<VkBuffer, 2> shadow_vertex_buffers = {
+                    primary_vertex_buffer->buffer,
+                    use_gpu_culling ? gpu_visible_buffer : instance_buffer,
+                };
+                const std::array<VkDeviceSize, 2> shadow_offsets = {
+                    0,
+                    use_gpu_culling ? gpu_visible_slice_stride * frame_index : instance_offset,
+                };
+                vkCmdBindVertexBuffers(command_buffer,
+                                       0,
+                                       static_cast<std::uint32_t>(shadow_vertex_buffers.size()),
+                                       shadow_vertex_buffers.data(),
+                                       shadow_offsets.data());
+                vkCmdBindIndexBuffer(command_buffer,
+                                     primary_index_buffer->buffer,
+                                     0,
+                                     primary_index_type);
+                if (use_gpu_culling) {
+                    vkCmdDrawIndexedIndirect(command_buffer,
+                                             gpu_indirect_buffer,
+                                             gpu_indirect_slice_stride * frame_index,
+                                             1,
+                                             sizeof(renderer::gpu_culling::IndirectCommand));
+                    shadow_draw_calls = 1U;
+                } else if (visible_count > 0U) {
+                    vkCmdDrawIndexed(command_buffer,
+                                     primary_index_count,
+                                     visible_count,
+                                     0,
+                                     0,
+                                     0);
+                    shadow_draw_calls = 1U;
+                }
             }
             vkCmdEndRenderPass(command_buffer);
             if (gpu_timestamps_enabled) {
@@ -6186,7 +6881,7 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                 static_cast<core::u64>(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(pass_end - pass_start)
                         .count()),
-                use_gpu_culling || visible_count > 0U ? 1U : 0U,
+                shadow_draw_calls,
                 gpu_timestamps_enabled);
             continue;
         }
@@ -6408,20 +7103,6 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         scissor.extent = swapchain_extent;
         vkCmdSetViewport(command_buffer, 0, 1, &viewport);
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
-        const std::array<VkBuffer, 2> vertex_buffers = {
-            vertex_buffer->buffer,
-            use_gpu_culling ? gpu_visible_buffer : instance_buffer,
-        };
-        const std::array<VkDeviceSize, 2> vertex_offsets = {
-            0,
-            use_gpu_culling ? gpu_visible_slice_stride * frame_index : instance_offset,
-        };
-        vkCmdBindVertexBuffers(command_buffer,
-                               0,
-                               static_cast<std::uint32_t>(vertex_buffers.size()),
-                               vertex_buffers.data(),
-                               vertex_offsets.data());
-        vkCmdBindIndexBuffer(command_buffer, index_buffer->buffer, 0, VK_INDEX_TYPE_UINT16);
         const ForwardPlusPushConstants forward_plus_push_constants{
             .view_projection = view_projection,
             .tile_columns = std::max((swapchain_extent.width + renderer::forward_plus::tile_width -
@@ -6435,14 +7116,6 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         };
         begin_debug_label(command_buffer, "GameEngine.ForwardOpaque");
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
-        vkCmdBindDescriptorSets(command_buffer,
-                                VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                pipeline_layout,
-                                0,
-                                1,
-                                &material_descriptor_set,
-                                0,
-                                nullptr);
         if (effective_quality == renderer::quality::RendererQuality::low &&
             !pipeline_layout_uses_forward_plus) {
             const ViewProjectionPushConstants push_constants{.view_projection = view_projection};
@@ -6460,19 +7133,86 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
                                sizeof(forward_plus_push_constants),
                                &forward_plus_push_constants);
         }
-        if (use_gpu_culling) {
-            vkCmdDrawIndexedIndirect(command_buffer,
-                                     gpu_indirect_buffer,
-                                     gpu_indirect_slice_stride * frame_index,
-                                     1,
-                                     sizeof(renderer::gpu_culling::IndirectCommand));
-        } else if (visible_count > 0U) {
-            vkCmdDrawIndexed(command_buffer,
-                             static_cast<std::uint32_t>(scene::bootstrap_cube_indices.size()),
-                             visible_count,
-                             0,
-                             0,
-                             0);
+        core::u32 opaque_draw_calls = 0U;
+        if (use_scene_draw_list) {
+            const VkBuffer instance_stream = instance_buffer;
+            vkCmdBindVertexBuffers(command_buffer, 1U, 1U, &instance_stream, &instance_offset);
+            VkBuffer bound_vb = VK_NULL_HANDLE;
+            VkBuffer bound_ib = VK_NULL_HANDLE;
+            VkIndexType bound_index_type = VK_INDEX_TYPE_MAX_ENUM;
+            VkDescriptorSet bound_descriptor = VK_NULL_HANDLE;
+            for (const SceneDrawCommand& cmd : scene_draw_commands) {
+                if (cmd.vertex_buffer->buffer != bound_vb) {
+                    bound_vb = cmd.vertex_buffer->buffer;
+                    const VkDeviceSize vb_offset = 0U;
+                    vkCmdBindVertexBuffers(command_buffer, 0U, 1U, &bound_vb, &vb_offset);
+                }
+                if (cmd.index_buffer->buffer != bound_ib || cmd.index_type != bound_index_type) {
+                    bound_ib = cmd.index_buffer->buffer;
+                    bound_index_type = cmd.index_type;
+                    vkCmdBindIndexBuffer(command_buffer, bound_ib, 0U, bound_index_type);
+                }
+                if (cmd.material_descriptor_set != bound_descriptor) {
+                    bound_descriptor = cmd.material_descriptor_set;
+                    vkCmdBindDescriptorSets(command_buffer,
+                                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                            pipeline_layout,
+                                            0,
+                                            1,
+                                            &bound_descriptor,
+                                            0,
+                                            nullptr);
+                }
+                vkCmdDrawIndexed(command_buffer,
+                                 cmd.index_count,
+                                 1U,
+                                 cmd.first_index,
+                                 cmd.vertex_offset,
+                                 cmd.first_instance);
+                ++opaque_draw_calls;
+            }
+        } else {
+            const std::array<VkBuffer, 2> vertex_buffers = {
+                primary_vertex_buffer->buffer,
+                use_gpu_culling ? gpu_visible_buffer : instance_buffer,
+            };
+            const std::array<VkDeviceSize, 2> vertex_offsets = {
+                0,
+                use_gpu_culling ? gpu_visible_slice_stride * frame_index : instance_offset,
+            };
+            vkCmdBindVertexBuffers(command_buffer,
+                                   0,
+                                   static_cast<std::uint32_t>(vertex_buffers.size()),
+                                   vertex_buffers.data(),
+                                   vertex_offsets.data());
+            vkCmdBindIndexBuffer(command_buffer,
+                                 primary_index_buffer->buffer,
+                                 0,
+                                 primary_index_type);
+            vkCmdBindDescriptorSets(command_buffer,
+                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipeline_layout,
+                                    0,
+                                    1,
+                                    &primary_descriptor_set,
+                                    0,
+                                    nullptr);
+            if (use_gpu_culling) {
+                vkCmdDrawIndexedIndirect(command_buffer,
+                                         gpu_indirect_buffer,
+                                         gpu_indirect_slice_stride * frame_index,
+                                         1,
+                                         sizeof(renderer::gpu_culling::IndirectCommand));
+                opaque_draw_calls = 1U;
+            } else if (visible_count > 0U) {
+                vkCmdDrawIndexed(command_buffer,
+                                 primary_index_count,
+                                 visible_count,
+                                 0,
+                                 0,
+                                 0);
+                opaque_draw_calls = 1U;
+            }
         }
         end_debug_label(command_buffer);
         if (editor_ui_pipeline != VK_NULL_HANDLE && !editor_ui_vertices.empty()) {
@@ -6504,7 +7244,7 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
         frame_timing[frame_index].add_pass(
             pass_name,
             static_cast<core::u64>(cpu_nanoseconds),
-            use_gpu_culling || visible_count > 0U ? 1U : 0U,
+            opaque_draw_calls,
             gpu_timestamps_enabled);
     }
 
@@ -6818,6 +7558,33 @@ void Renderer::shutdown() noexcept
 
 namespace gameengine::renderer::scene_bridge {
 
+core::Status set_prepared_assets(const gameengine::rhi::Renderer& renderer,
+                                 const PreparedRenderAssets& assets) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    if (renderer.impl_->device == VK_NULL_HANDLE ||
+        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    renderer.impl_->resolve_all_timing();
+    return renderer.impl_->set_prepared_assets(assets);
+}
+
+core::Status clear_prepared_assets(const gameengine::rhi::Renderer& renderer) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    if (renderer.impl_->device == VK_NULL_HANDLE ||
+        vkDeviceWaitIdle(renderer.impl_->device) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    renderer.impl_->resolve_all_timing();
+    return renderer.impl_->clear_prepared_assets();
+}
+
 core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
                           gameengine::scene::Scene& scene) noexcept
 {
@@ -6848,6 +7615,18 @@ core::Status detach_scene(const gameengine::rhi::Renderer& renderer) noexcept
 } // namespace gameengine::renderer::scene_bridge
 
 namespace gameengine::editor::renderer_bridge {
+
+core::Status set_prepared_assets(
+    const gameengine::rhi::Renderer& renderer,
+    const gameengine::renderer::scene_bridge::PreparedRenderAssets& assets) noexcept
+{
+    return gameengine::renderer::scene_bridge::set_prepared_assets(renderer, assets);
+}
+
+core::Status clear_prepared_assets(const gameengine::rhi::Renderer& renderer) noexcept
+{
+    return gameengine::renderer::scene_bridge::clear_prepared_assets(renderer);
+}
 
 core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
                           gameengine::scene::Scene& scene) noexcept

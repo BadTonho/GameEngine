@@ -1,5 +1,6 @@
 #include "engine/rhi/rhi.hpp"
 #include "engine/renderer/renderer_metrics.hpp"
+#include "engine/renderer/scene_bridge.hpp"
 
 #include <cstdio>
 
@@ -127,6 +128,17 @@ core::Status run_renderer_benchmark(const gameengine::rhi::Renderer&, bool) noex
 
 namespace gameengine::renderer::scene_bridge {
 
+core::Status set_prepared_assets(const gameengine::rhi::Renderer&,
+                                 const PreparedRenderAssets&) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
+core::Status clear_prepared_assets(const gameengine::rhi::Renderer&) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
 core::Status attach_scene(const gameengine::rhi::Renderer&,
                           gameengine::scene::Scene&) noexcept
 {
@@ -141,6 +153,18 @@ core::Status detach_scene(const gameengine::rhi::Renderer&) noexcept
 } // namespace gameengine::renderer::scene_bridge
 
 namespace gameengine::editor::renderer_bridge {
+
+core::Status set_prepared_assets(
+    const gameengine::rhi::Renderer& renderer,
+    const gameengine::renderer::scene_bridge::PreparedRenderAssets& assets) noexcept
+{
+    return gameengine::renderer::scene_bridge::set_prepared_assets(renderer, assets);
+}
+
+core::Status clear_prepared_assets(const gameengine::rhi::Renderer& renderer) noexcept
+{
+    return gameengine::renderer::scene_bridge::clear_prepared_assets(renderer);
+}
 
 core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
                           gameengine::scene::Scene& scene) noexcept

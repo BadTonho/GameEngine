@@ -23,6 +23,10 @@ class Scene;
 }
 
 namespace gameengine::renderer::scene_bridge {
+struct PreparedRenderAssets;
+[[nodiscard]] core::Status set_prepared_assets(const gameengine::rhi::Renderer& renderer,
+                                                const PreparedRenderAssets& assets) noexcept;
+[[nodiscard]] core::Status clear_prepared_assets(const gameengine::rhi::Renderer& renderer) noexcept;
 [[nodiscard]] core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
                                          gameengine::scene::Scene& scene) noexcept;
 [[nodiscard]] core::Status detach_scene(const gameengine::rhi::Renderer& renderer) noexcept;
@@ -37,6 +41,10 @@ struct FrameTimingReport;
 }
 
 namespace gameengine::editor::renderer_bridge {
+[[nodiscard]] core::Status set_prepared_assets(
+    const gameengine::rhi::Renderer& renderer,
+    const gameengine::renderer::scene_bridge::PreparedRenderAssets& assets) noexcept;
+[[nodiscard]] core::Status clear_prepared_assets(const gameengine::rhi::Renderer& renderer) noexcept;
 [[nodiscard]] core::Status attach_scene(const gameengine::rhi::Renderer& renderer,
                                          gameengine::scene::Scene& scene) noexcept;
 [[nodiscard]] core::Status detach_scene(const gameengine::rhi::Renderer& renderer) noexcept;
@@ -195,6 +203,11 @@ public:
     struct Impl;
 
 private:
+    friend core::Status editor::renderer_bridge::set_prepared_assets(
+        const Renderer& renderer,
+        const renderer::scene_bridge::PreparedRenderAssets& assets) noexcept;
+    friend core::Status editor::renderer_bridge::clear_prepared_assets(
+        const Renderer& renderer) noexcept;
     friend core::Status editor::renderer_bridge::attach_scene(const Renderer& renderer,
                                                               scene::Scene& scene) noexcept;
     friend core::Status editor::renderer_bridge::detach_scene(const Renderer& renderer) noexcept;
@@ -204,6 +217,11 @@ private:
     friend core::Status editor::renderer_bridge::read_metrics(
         const Renderer& renderer,
         renderer::metrics::FrameTimingReport& report) noexcept;
+    friend core::Status renderer::scene_bridge::set_prepared_assets(
+        const Renderer& renderer,
+        const renderer::scene_bridge::PreparedRenderAssets& assets) noexcept;
+    friend core::Status renderer::scene_bridge::clear_prepared_assets(
+        const Renderer& renderer) noexcept;
     friend core::Status renderer::scene_bridge::attach_scene(const Renderer& renderer,
                                                              scene::Scene& scene) noexcept;
     friend core::Status renderer::scene_bridge::detach_scene(const Renderer& renderer) noexcept;

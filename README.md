@@ -42,6 +42,8 @@ Phase 0 through Phase 6, the Phase 7 renderer foundation and the Phase 8 editor 
 - internal `Vec3`/`Mat4` math with right-handed Vulkan-compatible perspective and look-at transforms;
 - deterministic procedural instancing with a persistent per-frame host-visible instance buffer and CPU frustum culling;
 - opt-in Vulkan compute culling with atomic compaction, persistent GPU buffers and indexed indirect drawing, with CPU fallback;
+- `gameengine_assets` zero-copy C++ binary readers plus explicit `PreparedAssetBundle` loading and scene dependency validation (`.gemesh`, `.getex`, `.gemat`, `.gescene`);
+- runtime `--scene <file.gescene>` and optional `--assets-dir <dir>` integration uploading prepared meshes (`u16`/`u32` indices with submeshes), RGBA8 textures and PBR materials to Vulkan across Low/Medium/High quality profiles;
 - an internal `--renderer-benchmark` mode comparing procedural Forward, Forward+, Clustered and Deferred prototypes over deterministic 1k/10k/100k instance and 1/32/256 light workloads;
 - internal quality selection through `--renderer-quality low|medium|high`, with Low fallback when compute/storage support is unavailable;
 - separate `gameengine_editor` target with strict `.geproject` v1 manifests, procedural `.gescene` creation/loading and deterministic save/load;
@@ -68,10 +70,9 @@ Phase 0 through Phase 6, the Phase 7 renderer foundation and the Phase 8 editor 
 
 The following are intentionally outside the current procedural renderer scope:
 
-- prepared mesh/assets loading;
-- asset-file texture/material loading;
+- raw source decoding in runtime (`glTF`, `PNG`, `JPG`) and runtime asset streaming;
 - runtime shader file loading and automatic polling;
-- prepared asset runtime integration, asset editing/import, undo/redo and a final ECS storage choice;
+- asset editing/import UI, undo/redo and a final ECS storage choice;
 - VRAM policy and the hardware baseline for the final lighting decision;
 - networking or full gameplay frameworks;
 - skeleton/skinning animation, animation assets, timelines and keyframe authoring;
@@ -290,6 +291,7 @@ gameengine_runtime --smoke-test --renderer-quality low
 gameengine_runtime --smoke-test --renderer-quality medium
 gameengine_runtime --smoke-test --renderer-quality high
 gameengine_runtime --metrics --renderer-quality medium
+gameengine_runtime --smoke-test --scene <directory>/scene.gescene --assets-dir <directory>
 ```
 
 ### Editor projects

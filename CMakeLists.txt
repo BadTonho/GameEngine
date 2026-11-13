@@ -116,6 +116,8 @@ endif()
 add_library(gameengine_assets STATIC
     src/engine/assets/asset_reader.cpp
     src/engine/assets/asset_reader.hpp
+    src/engine/assets/prepared_assets.cpp
+    src/engine/assets/prepared_assets.hpp
 )
 target_link_libraries(gameengine_assets PUBLIC gameengine_core)
 target_include_directories(gameengine_assets
@@ -514,6 +516,18 @@ if(GAMEENGINE_BUILD_TESTS)
     gameengine_configure_target(gameengine_asset_tests)
     add_test(NAME gameengine_assets COMMAND gameengine_asset_tests)
 
+    add_executable(gameengine_prepared_assets_tests
+        tests/prepared_assets_tests.cpp
+    )
+    target_link_libraries(gameengine_prepared_assets_tests PRIVATE
+        gameengine_renderer
+        gameengine_scene
+        gameengine_assets
+        gameengine_core
+    )
+    gameengine_configure_target(gameengine_prepared_assets_tests)
+    add_test(NAME gameengine_prepared_assets COMMAND gameengine_prepared_assets_tests)
+
     if(GAMEENGINE_BUILD_EDITOR)
         add_executable(gameengine_editor_tests
             tests/editor_tests.cpp
@@ -902,6 +916,7 @@ if(GAMEENGINE_BUILD_TESTS)
 
     set_tests_properties(gameengine_core PROPERTIES LABELS "unit")
     set_tests_properties(gameengine_assets PROPERTIES LABELS "unit")
+    set_tests_properties(gameengine_prepared_assets PROPERTIES LABELS "unit")
     set_tests_properties(gameengine_rhi PROPERTIES LABELS "rhi")
     set_tests_properties(gameengine_shaders PROPERTIES LABELS "shader")
     set_tests_properties(gameengine_math PROPERTIES LABELS "unit")

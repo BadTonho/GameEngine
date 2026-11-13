@@ -290,24 +290,6 @@ private:
     return file.good() || file.eof();
 }
 
-[[nodiscard]] bool read_binary_file(const std::filesystem::path& path,
-                                    std::vector<std::byte>& output) noexcept
-{
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        return false;
-    }
-    file.seekg(0, std::ios::end);
-    const std::streamoff size = file.tellg();
-    if (size <= 0) {
-        return false;
-    }
-    file.seekg(0, std::ios::beg);
-    output.resize(static_cast<std::size_t>(size));
-    file.read(reinterpret_cast<char*>(output.data()), size);
-    return file.good() || file.eof();
-}
-
 [[nodiscard]] bool valid_scene_path(std::string_view value) noexcept
 {
     if (value.empty() || value.front() == '/' || value.front() == '\\' ||
@@ -469,6 +451,7 @@ core::Status ProjectSession::create_new(const std::filesystem::path& directory) 
         }
     }
     dirty_ = false;
+    prepared_assets_.clear();
     set_message("created procedural project");
     return core::Status{};
 }
@@ -481,11 +464,24 @@ core::Status ProjectSession::load(const std::filesystem::path& project_path) noe
         return invalid();
     }
     const std::filesystem::path scene_path = normalize_scene_path(project_path, manifest.scene);
+    const std::filesystem::path project_dir =
+        project_path.has_parent_path() ? project_path.parent_path() : std::filesystem::path{"."};
+    assets::PreparedAssetBundle candidate_bundle;
+    std::vector<std::byte> scene_bytes;
+    assets::SceneView scene_view{};
+    const std::array<core::u64, 1> builtin_meshes = {scene::bootstrap_mesh_id};
+    const std::array<core::u64, 1> builtin_materials = {scene::bootstrap_material_id};
     scene::Scene loaded;
-    if (!load_scene_file(scene_path, loaded)) {
+    if (!candidate_bundle.load_directory(project_dir) ||
+        !assets::read_binary_asset_file(scene_path, scene_bytes) ||
+        !assets::read_scene(scene_bytes, scene_view) ||
+        !candidate_bundle.validate_scene_dependencies(
+            scene_view, builtin_meshes, builtin_materials) ||
+        !load_scene_file(scene_path, loaded)) {
         return invalid();
     }
     scene_.swap(loaded);
+    prepared_assets_ = std::move(candidate_bundle);
     manifest_ = std::move(manifest);
     project_path_ = project_path;
     scene_path_ = scene_path;
@@ -577,17 +573,10 @@ core::Status ProjectSession::load_scene_file(const std::filesystem::path& scene_
                                              scene::Scene& output) const noexcept
 {
     std::vector<std::byte> bytes;
-    if (!read_binary_file(scene_path, bytes) || !scene::deserialize_scene(bytes, output) ||
-        !output.validate()) {
+    if (!assets::read_binary_asset_file(scene_path, bytes) ||
+        !scene::deserialize_scene(bytes, output) ||
+        !scene::ensure_default_camera_and_light(output) || !output.validate()) {
         return invalid();
-    }
-    for (const scene::Entity entity : output.entities()) {
-        const scene::MeshRendererComponent* mesh = output.mesh_renderer(entity);
-        if (mesh != nullptr &&
-            (mesh->mesh_id != scene::bootstrap_mesh_id ||
-             mesh->material_id != scene::bootstrap_material_id)) {
-            return core::Status{core::ErrorCode::unsupported_platform};
-        }
     }
     return output.active_camera().valid() ? core::Status{} : invalid();
 }

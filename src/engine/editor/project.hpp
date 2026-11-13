@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "engine/assets/prepared_assets.hpp"
 #include "engine/core/status.hpp"
 #include "engine/core/types.hpp"
 #include "engine/renderer/renderer_quality.hpp"
@@ -44,6 +45,10 @@ public:
     [[nodiscard]] const std::filesystem::path& scene_path() const noexcept { return scene_path_; }
     [[nodiscard]] scene::Scene& scene() noexcept { return scene_; }
     [[nodiscard]] const scene::Scene& scene() const noexcept { return scene_; }
+    [[nodiscard]] const assets::PreparedAssetBundle& prepared_assets() const noexcept
+    {
+        return prepared_assets_;
+    }
     [[nodiscard]] scene::Entity selected_entity() const noexcept { return selected_entity_; }
     [[nodiscard]] bool dirty() const noexcept { return dirty_; }
     [[nodiscard]] std::string_view message() const noexcept { return message_; }
@@ -63,6 +68,7 @@ private:
     std::filesystem::path project_path_{};
     std::filesystem::path scene_path_{};
     scene::Scene scene_{};
+    assets::PreparedAssetBundle prepared_assets_{};
     scene::Entity selected_entity_{};
     scene::TransformComponent selected_initial_transform_{};
     bool has_selected_initial_transform_ = false;

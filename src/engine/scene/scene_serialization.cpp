@@ -370,4 +370,55 @@ core::Status deserialize_scene(std::span<const std::byte> bytes, Scene& output) 
     return core::Status{};
 }
 
+core::Status ensure_default_camera_and_light(Scene& scene) noexcept
+{
+    if (!scene.validate()) {
+        return invalid();
+    }
+
+    if (!scene.active_camera().valid()) {
+        bool activated_existing = false;
+        for (const Entity entity : scene.entities()) {
+            CameraComponent* camera = scene.camera(entity);
+            if (camera != nullptr && scene.transform(entity) != nullptr) {
+                camera->active = true;
+                activated_existing = true;
+                break;
+            }
+        }
+        if (!activated_existing) {
+            const Entity camera = scene.create_entity();
+            if (!camera.valid()) {
+                return core::Status{core::ErrorCode::allocation_failed};
+            }
+            if (!scene.add_transform(camera, {.local_position = {2.5F, 2.0F, 4.0F}}) ||
+                !scene.add_camera(camera, {.active = true})) {
+                return invalid();
+            }
+        }
+    }
+
+    bool has_light = false;
+    for (const Entity entity : scene.entities()) {
+        if (scene.directional_light(entity) != nullptr && scene.transform(entity) != nullptr) {
+            has_light = true;
+            break;
+        }
+    }
+    if (!has_light) {
+        const Entity light = scene.create_entity();
+        if (!light.valid()) {
+            return core::Status{core::ErrorCode::allocation_failed};
+        }
+        if (!scene.add_transform(light) || !scene.add_directional_light(light)) {
+            return invalid();
+        }
+    }
+
+    if (!scene.update_transforms() || !scene.validate() || !scene.active_camera().valid()) {
+        return invalid();
+    }
+    return core::Status{};
+}
+
 } // namespace gameengine::scene

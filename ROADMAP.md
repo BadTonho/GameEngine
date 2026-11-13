@@ -161,7 +161,7 @@ Goal: move beyond the triangle and render a small scene with correct visual foun
 
 - [x] Create a camera and transformations.
 - [x] Create vertex and index buffers.
-- [ ] Load a prepared mesh.
+- [x] Load a prepared mesh.
 - [x] Generate a procedural texture and sampler.
 - [x] Create a procedural material.
 - [x] Create a depth buffer and depth testing.
@@ -180,7 +180,7 @@ Goal: move beyond the triangle and render a small scene with correct visual foun
 - [x] Bind a procedural checkerboard texture and internal PBR material through Vulkan descriptors.
 - [x] Apply directional lighting and deterministic HDR tone mapping in Slang.
 - [x] Validate Debug and Release builds, shader regeneration and CTest locally.
-- [ ] Add prepared mesh loading, performance metrics and reference capture systems.
+- [ ] Complete performance metrics policy and reference capture systems (prepared mesh, texture, material and scene integration is implemented).
 
 ### Completion criteria
 
@@ -208,7 +208,7 @@ Goal: make the runtime consume prepared, compact and validated data.
 
 ### Completion criteria
 
-The version-1 formats, validators, Rust workspace, synthetic fixtures and C++ zero-copy reader are complete. The renderer still uses its procedural bootstrap scene; replacing it with prepared assets, image decoding, broader glTF coverage and runtime asset streaming remain later work.
+The version-1 formats, validators, Rust workspace, synthetic fixtures, C++ zero-copy reader and prepared-asset integration in the runtime, Vulkan renderer and editor (`PreparedAssetBundle`, `--scene`, `--assets-dir` and `ProjectSession`) are complete. Raw image decoding, broader glTF coverage and runtime asset streaming remain later work.
 
 ## Phase 6 — Scenes, entities and data
 
@@ -229,7 +229,7 @@ Goal: create the scene data foundation without committing to an unmeasured desig
 
 ### Completion criteria
 
-A scene can be created, saved, loaded and updated with organized data, valid handles and optional synthetic benchmarks for the initial sparse-set model. Real asset loading and a final ECS storage choice remain future work.
+A scene can be created, saved, loaded and updated with organized data, valid handles, prepared-asset scene integration and optional synthetic benchmarks for the initial sparse-set model. A final ECS storage choice remains future work.
 
 ## Phase 7 — Scalable renderer
 

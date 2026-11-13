@@ -215,6 +215,24 @@ int main(int argc, char** argv)
         core.shutdown();
         return 6;
     }
+    if (project.prepared_assets().total_count() > 0U) {
+        const gameengine::core::Status prepared_status =
+            gameengine::editor::renderer_bridge::set_prepared_assets(
+                renderer,
+                gameengine::renderer::scene_bridge::make_prepared_render_assets(
+                    project.prepared_assets()));
+        gameengine::editor::record_console_status(
+            console,
+            prepared_status ? gameengine::core::LogLevel::info : gameengine::core::LogLevel::error,
+            prepared_status ? "PREPARED ASSETS READY" : "PREPARED ASSETS FAILED",
+            prepared_status);
+        if (!prepared_status) {
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+    }
     const gameengine::core::Status scene_status =
         gameengine::editor::renderer_bridge::attach_scene(renderer, project.scene());
     if (!scene_status) {
@@ -304,6 +322,7 @@ int main(int argc, char** argv)
     };
     if (!update_ui()) {
         static_cast<void>(gameengine::editor::renderer_bridge::detach_scene(renderer));
+        static_cast<void>(gameengine::editor::renderer_bridge::clear_prepared_assets(renderer));
         renderer.shutdown();
         platform.shutdown();
         core.shutdown();
@@ -323,6 +342,7 @@ int main(int argc, char** argv)
                 console, gameengine::core::LogLevel::error, "EDITOR FRAME FAILED", frame_status);
         }
         static_cast<void>(gameengine::editor::renderer_bridge::detach_scene(renderer));
+        static_cast<void>(gameengine::editor::renderer_bridge::clear_prepared_assets(renderer));
         renderer.shutdown();
         platform.shutdown();
         core.shutdown();
@@ -441,6 +461,7 @@ int main(int argc, char** argv)
         }
     }
     static_cast<void>(gameengine::editor::renderer_bridge::detach_scene(renderer));
+    static_cast<void>(gameengine::editor::renderer_bridge::clear_prepared_assets(renderer));
     renderer.shutdown();
 #else
     gameengine::core::log(gameengine::core::LogLevel::info,

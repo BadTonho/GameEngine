@@ -14,7 +14,12 @@ C++ asset reader
 renderer or scene systems
 ```
 
-The renderer still uses the procedural Phase 4 bootstrap scene. The C++ reader is an internal validation and view layer for the next integration step; it does not load files, allocate per-asset copies or interpret glTF, PNG or JPG.
+The procedural Phase 4 bootstrap scene remains the default when no scene path is passed. Prepared
+assets are loaded into an explicit `PreparedAssetBundle` (`PreparedMesh`, `PreparedTexture` and
+`PreparedMaterial`), validated alongside scene dependencies before GPU upload and bound through
+`scene_bridge::set_prepared_assets` in `gameengine_runtime --scene <file.gescene>` (`[--assets-dir <dir>]`)
+and in `ProjectSession` for `gameengine_editor`. The C++ readers still reject glTF, PNG or JPG
+directly at runtime; heavy source conversion remains confined to `tools/asset_pipeline`.
 
 ## Version 1 container
 

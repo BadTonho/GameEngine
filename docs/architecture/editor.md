@@ -21,9 +21,11 @@ gameengine_editor --project <diretorio>/gameengine.geproject --smoke-test
 ```
 
 O parser JSON é pequeno e estrito: a versão deve ser `1`, a cena deve ser um caminho relativo
-sem componentes `.` ou `..`, e apenas mesh/material procedurais são aceitos nesta etapa. A
-serialização é estável e o salvamento usa arquivos temporários antes da substituição final.
-Uma falha de leitura mantém a cena carregada anterior intacta.
+sem componentes `.` ou `..`, e o carregamento valida o `PreparedAssetBundle` do diretório do
+projeto (`.gemesh`, `.getex`, `.gemat`) antes de enviar os recursos preparados e a `Scene` ao
+renderer do viewport (mantendo os IDs procedurais de bootstrap quando usados). A serialização é
+estável e o salvamento usa arquivos temporários antes da substituição final. Uma falha de leitura
+ou de dependência mantém a cena carregada anterior intacta.
 
 ## Viewport e edição
 
