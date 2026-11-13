@@ -7,9 +7,9 @@ The roadmap does not define deadlines. Each phase is a technical milestone. A ph
 ## Current status
 
 The repository completed Phase 2 through Phase 6, the Phase 7 renderer foundation and the Phase 8
-editor foundation. Phase 9A transform animation, Phase 9B procedural audio and Phase 9C
-physics integration are now implemented as optional modules. Forward+ is the selected production direction, with the
-procedural cube, generated lights, generated audio tone and physics demo remaining reference fixtures. The
+editor foundation. Phase 9A transform animation, Phase 9B procedural audio, Phase 9C
+physics integration and Phase 9D optional Lua scripting are now implemented as optional modules. Forward+ is the selected production direction, with the
+procedural cube, generated lights, generated audio tone, physics demo and Lua demo remaining reference fixtures. The
 final hardware baseline, VRAM policy and later optional runtime modules remain open.
 
 ## Evolution rules
@@ -366,7 +366,7 @@ Each module must have an API, build target, tests, documentation, measured cost 
   clip, runtime/editor integration, fixed-step tests and measured synthetic workloads.
 - [x] Procedural audio foundation with fixed PCM mixing, native backends, stub fallback and diagnostics.
 - [x] Physics integration backed by an encapsulated Jolt Physics foundation with fixed-step updates, box and sphere shapes, deterministic simulation and transform synchronization.
-- [ ] Optional Lua gameplay scripting.
+- [x] Optional Lua gameplay scripting.
 - [ ] Navigation.
 - [ ] Networking.
 - [ ] Video and other specific modules when there is a real need.
@@ -417,6 +417,23 @@ assets remain future work.
   with third-party license notice.
 
 Constraints, joints, raycasting, character controllers, and mesh colliders remain later work.
+
+### Phase 9D validation status
+
+- [x] Add `gameengine_scripting` behind `GAMEENGINE_BUILD_LUA` without changing the RHI, C ABI or
+  asset formats.
+- [x] Integrate PUC-Rio Lua 5.4.8 via `FetchContent` (`gameengine_lua_vm` C99 target) behind a strict
+  PIMPL boundary with zero third-party Lua headers or symbols exposed publicly.
+- [x] Enforce bounded `lua_Alloc` memory budgets, re-armed `LUA_MASKCOUNT` instruction timeouts across
+  `pcall`, text-only `"t"` chunk loading and default standard-library sandboxing (`os`, `io`, `debug`,
+  `package`, `dofile`, `loadfile`, `load` stripped).
+- [x] Bind generation-checked `GameEngine.Entity` transforms, `Engine` helpers and read-only
+  `Input.keyDown` without holding live C++ exceptions across Lua longjmp frames.
+- [x] Add headless `--lua-smoke-test`, Vulkan `--lua-demo`, comprehensive unit tests, an optional
+  1k/10k update benchmark, `GAMEENGINE_BUILD_LUA=OFF` removal verification, third-party notice and
+  architecture documentation.
+
+Hot-reload, script component serialization and async coroutines remain future work.
 
 ## Phase 10 — Continuous quality, security and performance
 

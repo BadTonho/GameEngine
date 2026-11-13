@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(GameEngine VERSION 0.0.1 LANGUAGES CXX)
+project(GameEngine VERSION 0.0.1 LANGUAGES CXX C)
 
 option(GAMEENGINE_BUILD_TESTS "Build the GameEngine tests" ON)
 option(GAMEENGINE_BUILD_VULKAN "Build the Vulkan renderer" ON)
@@ -11,6 +11,7 @@ option(GAMEENGINE_BUILD_AUDIO "Build the optional procedural audio module" ON)
 # Off by default so a clean clone configures without downloading third-party code; the
 # development presets enable it.
 option(GAMEENGINE_BUILD_PHYSICS "Build the optional Jolt-backed physics module" OFF)
+option(GAMEENGINE_BUILD_LUA "Build the optional Lua gameplay scripting module" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -238,6 +239,94 @@ if(GAMEENGINE_BUILD_PHYSICS)
     endif()
 endif()
 
+if(GAMEENGINE_BUILD_LUA)
+    include(FetchContent)
+
+    # Lua 5.4.8 is pinned by release tarball and verified by SHA-256. Set
+    # FETCHCONTENT_SOURCE_DIR_LUA to a local extracted copy to configure offline.
+    set(LUA_VERSION 5.4.8)
+    FetchContent_Declare(lua
+        URL https://www.lua.org/ftp/lua-${LUA_VERSION}.tar.gz
+        URL_HASH SHA256=4F18DDAE154E793E46EEAB727C59EF1C0C0C2B744E7B94219710D76F530629AE
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(lua)
+
+    add_library(gameengine_lua_vm STATIC
+        ${lua_SOURCE_DIR}/src/lapi.c
+        ${lua_SOURCE_DIR}/src/lauxlib.c
+        ${lua_SOURCE_DIR}/src/lbaselib.c
+        ${lua_SOURCE_DIR}/src/lcode.c
+        ${lua_SOURCE_DIR}/src/lcorolib.c
+        ${lua_SOURCE_DIR}/src/lctype.c
+        ${lua_SOURCE_DIR}/src/ldblib.c
+        ${lua_SOURCE_DIR}/src/ldebug.c
+        ${lua_SOURCE_DIR}/src/ldo.c
+        ${lua_SOURCE_DIR}/src/ldump.c
+        ${lua_SOURCE_DIR}/src/lfunc.c
+        ${lua_SOURCE_DIR}/src/lgc.c
+        ${lua_SOURCE_DIR}/src/linit.c
+        ${lua_SOURCE_DIR}/src/liolib.c
+        ${lua_SOURCE_DIR}/src/llex.c
+        ${lua_SOURCE_DIR}/src/lmathlib.c
+        ${lua_SOURCE_DIR}/src/lmem.c
+        ${lua_SOURCE_DIR}/src/loadlib.c
+        ${lua_SOURCE_DIR}/src/lobject.c
+        ${lua_SOURCE_DIR}/src/lopcodes.c
+        ${lua_SOURCE_DIR}/src/loslib.c
+        ${lua_SOURCE_DIR}/src/lparser.c
+        ${lua_SOURCE_DIR}/src/lstate.c
+        ${lua_SOURCE_DIR}/src/lstring.c
+        ${lua_SOURCE_DIR}/src/lstrlib.c
+        ${lua_SOURCE_DIR}/src/ltable.c
+        ${lua_SOURCE_DIR}/src/ltablib.c
+        ${lua_SOURCE_DIR}/src/ltm.c
+        ${lua_SOURCE_DIR}/src/lundump.c
+        ${lua_SOURCE_DIR}/src/lutf8lib.c
+        ${lua_SOURCE_DIR}/src/lvm.c
+        ${lua_SOURCE_DIR}/src/lzio.c
+    )
+    set_target_properties(gameengine_lua_vm PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+    )
+    target_include_directories(gameengine_lua_vm SYSTEM PUBLIC ${lua_SOURCE_DIR}/src)
+    if(MSVC)
+        target_compile_definitions(gameengine_lua_vm PRIVATE _CRT_SECURE_NO_WARNINGS)
+        target_compile_options(gameengine_lua_vm PRIVATE /W3)
+    elseif(UNIX)
+        target_compile_definitions(gameengine_lua_vm PRIVATE LUA_USE_POSIX)
+        target_link_libraries(gameengine_lua_vm PRIVATE m)
+    endif()
+
+    add_library(gameengine_scripting STATIC
+        src/engine/scripting/scripting.cpp
+        src/engine/scripting/scripting.hpp
+    )
+    target_link_libraries(gameengine_scripting
+        PUBLIC gameengine_scene
+        PRIVATE gameengine_lua_vm
+    )
+    target_include_directories(gameengine_scripting
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    )
+    target_compile_definitions(gameengine_scripting PUBLIC GAMEENGINE_BUILD_LUA=1)
+    gameengine_configure_target(gameengine_scripting)
+
+    if(GAMEENGINE_BUILD_BENCHMARKS)
+        add_executable(gameengine_scripting_benchmark
+            benchmarks/scripting_benchmark.cpp
+        )
+        target_link_libraries(gameengine_scripting_benchmark PRIVATE
+            gameengine_scripting
+            gameengine_scene
+        )
+        gameengine_configure_target(gameengine_scripting_benchmark)
+    endif()
+endif()
+
 add_library(gameengine_platform STATIC
     src/engine/platform/platform.hpp
 )
@@ -355,6 +444,10 @@ endif()
 if(GAMEENGINE_BUILD_PHYSICS)
     target_link_libraries(gameengine_runtime PRIVATE gameengine_physics)
     target_compile_definitions(gameengine_runtime PRIVATE GAMEENGINE_BUILD_PHYSICS=1)
+endif()
+if(GAMEENGINE_BUILD_LUA)
+    target_link_libraries(gameengine_runtime PRIVATE gameengine_scripting)
+    target_compile_definitions(gameengine_runtime PRIVATE GAMEENGINE_BUILD_LUA=1)
 endif()
 gameengine_configure_target(gameengine_runtime)
 
@@ -543,6 +636,23 @@ if(GAMEENGINE_BUILD_TESTS)
         add_test(NAME gameengine_physics COMMAND gameengine_physics_tests)
     endif()
 
+    if(GAMEENGINE_BUILD_LUA)
+        add_executable(gameengine_scripting_tests
+            tests/scripting_tests.cpp
+        )
+        target_link_libraries(gameengine_scripting_tests PRIVATE
+            gameengine_scripting
+            gameengine_scene
+            gameengine_core
+        )
+        target_include_directories(gameengine_scripting_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        gameengine_configure_target(gameengine_scripting_tests)
+        add_test(NAME gameengine_scripting COMMAND gameengine_scripting_tests)
+        add_test(NAME gameengine_runtime_lua_smoke COMMAND gameengine_runtime --lua-smoke-test)
+    endif()
+
     add_executable(gameengine_render_graph_tests
         tests/render_graph_tests.cpp
     )
@@ -696,6 +806,12 @@ if(GAMEENGINE_BUILD_TESTS)
                     COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_runtime> --smoke-test --physics-demo
                 )
             endif()
+            if(GAMEENGINE_BUILD_LUA)
+                add_test(
+                    NAME gameengine_runtime_lua_demo
+                    COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_runtime> --smoke-test --lua-demo
+                )
+            endif()
             add_test(
                 NAME gameengine_platform_x11
                 COMMAND ${GAMEENGINE_XVFB_RUN} --auto-servernum $<TARGET_FILE:gameengine_platform_tests>
@@ -716,6 +832,9 @@ if(GAMEENGINE_BUILD_TESTS)
             add_test(NAME gameengine_runtime_quality_high COMMAND gameengine_runtime --smoke-test --renderer-quality high)
             if(GAMEENGINE_BUILD_PHYSICS)
                 add_test(NAME gameengine_runtime_physics_demo COMMAND gameengine_runtime --smoke-test --physics-demo)
+            endif()
+            if(GAMEENGINE_BUILD_LUA)
+                add_test(NAME gameengine_runtime_lua_demo COMMAND gameengine_runtime --smoke-test --lua-demo)
             endif()
             add_test(NAME gameengine_platform_x11 COMMAND gameengine_platform_tests)
             if(GAMEENGINE_BUILD_VULKAN)
@@ -774,6 +893,9 @@ if(GAMEENGINE_BUILD_TESTS)
         if(GAMEENGINE_BUILD_PHYSICS)
             add_test(NAME gameengine_runtime_physics_demo COMMAND gameengine_runtime --smoke-test --physics-demo)
         endif()
+        if(GAMEENGINE_BUILD_LUA)
+            add_test(NAME gameengine_runtime_lua_demo COMMAND gameengine_runtime --smoke-test --lua-demo)
+        endif()
     else()
         add_test(NAME gameengine_runtime_smoke COMMAND gameengine_runtime --smoke-test)
     endif()
@@ -815,5 +937,14 @@ if(GAMEENGINE_BUILD_TESTS)
     endif()
     if(TEST gameengine_runtime_physics_demo)
         set_tests_properties(gameengine_runtime_physics_demo PROPERTIES LABELS "smoke")
+    endif()
+    if(TEST gameengine_scripting)
+        set_tests_properties(gameengine_scripting PROPERTIES LABELS "unit")
+    endif()
+    if(TEST gameengine_runtime_lua_smoke)
+        set_tests_properties(gameengine_runtime_lua_smoke PROPERTIES LABELS "smoke")
+    endif()
+    if(TEST gameengine_runtime_lua_demo)
+        set_tests_properties(gameengine_runtime_lua_demo PROPERTIES LABELS "smoke")
     endif()
 endif()

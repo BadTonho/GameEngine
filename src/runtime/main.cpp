@@ -5,7 +5,7 @@
 #include "engine/audio/audio.hpp"
 #endif
 #include "engine/platform/platform.hpp"
-#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS
+#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS || GAMEENGINE_BUILD_LUA
 #include "engine/renderer/scene_bridge.hpp"
 #include "engine/scene/scene.hpp"
 #endif
@@ -14,6 +14,9 @@
 #endif
 #if GAMEENGINE_BUILD_PHYSICS
 #include "engine/physics/physics.hpp"
+#endif
+#if GAMEENGINE_BUILD_LUA
+#include "engine/scripting/scripting.hpp"
 #endif
 #include "engine/renderer/renderer_metrics.hpp"
 #include "engine/renderer/renderer_quality.hpp"
@@ -77,6 +80,90 @@ int run_audio_smoke_test() noexcept
 } // namespace
 #endif
 
+#if GAMEENGINE_BUILD_LUA
+namespace {
+
+int run_lua_smoke_test() noexcept
+{
+    gameengine::scene::Scene scene;
+    const gameengine::scene::Entity cube = scene.create_entity();
+    if (!cube.valid() ||
+        !scene.add_transform(cube, {.local_position = {0.0F, 0.0F, 0.0F}}) ||
+        !scene.update_transforms()) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              "lua smoke scene creation failed");
+        return 1;
+    }
+
+    gameengine::scripting::ScriptRuntime script_runtime;
+    const gameengine::core::Status init_status = script_runtime.initialize();
+    if (!init_status) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              gameengine::core::to_string(init_status.code));
+        return 1;
+    }
+
+    const gameengine::core::Status reg_status =
+        script_runtime.register_entity("BootstrapCube", cube);
+    if (!reg_status) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              gameengine::core::to_string(reg_status.code));
+        script_runtime.shutdown();
+        return 1;
+    }
+
+    constexpr const char* smoke_script =
+        "local cube = nil\n"
+        "function start()\n"
+        "    cube = Engine.findEntity(\"BootstrapCube\")\n"
+        "end\n"
+        "function update(dt)\n"
+        "    if cube ~= nil and cube:isAlive() then\n"
+        "        cube:rotateY(dt * 1.5)\n"
+        "        cube:move(dt, 0.0, 0.0)\n"
+        "    end\n"
+        "end\n";
+    const gameengine::core::Status load_status =
+        script_runtime.load_script(smoke_script, "lua_smoke_test.lua");
+    if (!load_status) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              gameengine::core::to_string(load_status.code));
+        script_runtime.shutdown();
+        return 1;
+    }
+
+    const gameengine::core::Status start_status = script_runtime.call_start(scene);
+    const gameengine::core::Status update_status =
+        start_status ? script_runtime.call_update(scene, 0.016F) : start_status;
+    if (!update_status) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              gameengine::core::to_string(update_status.code));
+        script_runtime.shutdown();
+        return 1;
+    }
+
+    const gameengine::scene::TransformComponent* updated = scene.transform(cube);
+    if (updated == nullptr || updated->local_position.x <= 0.0F) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              "lua smoke script did not update scene transform");
+        script_runtime.shutdown();
+        return 1;
+    }
+
+    const gameengine::scripting::ScriptMetrics metrics = script_runtime.metrics();
+    std::fprintf(stdout,
+                 "lua smoke metrics memory_bytes=%zu peak_bytes=%zu allocations=%llu updates=%llu\n",
+                 metrics.memory_bytes,
+                 metrics.peak_memory_bytes,
+                 static_cast<unsigned long long>(metrics.allocation_count),
+                 static_cast<unsigned long long>(metrics.update_calls));
+    script_runtime.shutdown();
+    return 0;
+}
+
+} // namespace
+#endif
+
 int main(int argc, char** argv)
 {
     gameengine::core::Core core;
@@ -95,6 +182,8 @@ int main(int argc, char** argv)
     bool gpu_culling = false;
     bool audio_smoke_test = false;
     bool physics_demo = false;
+    bool lua_smoke_test = false;
+    bool lua_demo = false;
     gameengine::renderer::quality::RendererQuality renderer_quality =
         gameengine::renderer::quality::RendererQuality::medium;
     for (int index = 1; index < argc; ++index) {
@@ -110,6 +199,10 @@ int main(int argc, char** argv)
             audio_smoke_test = true;
         } else if (std::strcmp(argv[index], "--physics-demo") == 0) {
             physics_demo = true;
+        } else if (std::strcmp(argv[index], "--lua-smoke-test") == 0) {
+            lua_smoke_test = true;
+        } else if (std::strcmp(argv[index], "--lua-demo") == 0) {
+            lua_demo = true;
         } else if (std::strcmp(argv[index], "--renderer-quality") == 0) {
             if (index + 1 >= argc ||
                 !gameengine::renderer::quality::parse(argv[++index], renderer_quality)) {
@@ -122,7 +215,8 @@ int main(int argc, char** argv)
             gameengine::core::log(gameengine::core::LogLevel::error,
                               "unknown argument; use --smoke-test, --metrics, "
                                   "--renderer-benchmark, --gpu-culling, "
-                                  "--audio-smoke-test, --physics-demo or "
+                                  "--audio-smoke-test, --physics-demo, "
+                                  "--lua-smoke-test, --lua-demo or "
                                   "--renderer-quality low|medium|high");
             core.shutdown();
             return 2;
@@ -136,15 +230,30 @@ int main(int argc, char** argv)
         return 2;
     }
     if (audio_smoke_test &&
-        (smoke_test || metrics_test || renderer_benchmark || gpu_culling)) {
+        (smoke_test || metrics_test || renderer_benchmark || gpu_culling ||
+         physics_demo || lua_smoke_test || lua_demo)) {
         gameengine::core::log(gameengine::core::LogLevel::error,
-                              "--audio-smoke-test is exclusive with renderer modes");
+                              "--audio-smoke-test is exclusive with other modes");
         core.shutdown();
         return 2;
     }
-    if (physics_demo && (metrics_test || renderer_benchmark || gpu_culling || audio_smoke_test)) {
+    if (lua_smoke_test &&
+        (smoke_test || metrics_test || renderer_benchmark || gpu_culling ||
+         physics_demo || lua_demo)) {
         gameengine::core::log(gameengine::core::LogLevel::error,
-                              "--physics-demo is exclusive with metrics, audio and benchmark modes");
+                              "--lua-smoke-test is exclusive with other modes");
+        core.shutdown();
+        return 2;
+    }
+    if (physics_demo && (metrics_test || renderer_benchmark || gpu_culling || lua_demo)) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              "--physics-demo is exclusive with metrics, lua-demo and benchmark modes");
+        core.shutdown();
+        return 2;
+    }
+    if (lua_demo && (metrics_test || renderer_benchmark || gpu_culling)) {
+        gameengine::core::log(gameengine::core::LogLevel::error,
+                              "--lua-demo is exclusive with metrics and benchmark modes");
         core.shutdown();
         return 2;
     }
@@ -153,6 +262,17 @@ int main(int argc, char** argv)
     if (physics_demo) {
         gameengine::core::log(gameengine::core::LogLevel::info,
                               "physics: unavailable (physics module disabled)");
+        if (smoke_test) {
+            core.shutdown();
+            return 0;
+        }
+    }
+#endif
+
+#if !GAMEENGINE_BUILD_LUA
+    if (lua_demo) {
+        gameengine::core::log(gameengine::core::LogLevel::info,
+                              "lua: unavailable (lua module disabled)");
         if (smoke_test) {
             core.shutdown();
             return 0;
@@ -170,6 +290,18 @@ int main(int argc, char** argv)
 #endif
         core.shutdown();
         return audio_result;
+    }
+
+    if (lua_smoke_test) {
+#if GAMEENGINE_BUILD_LUA
+        const int lua_result = run_lua_smoke_test();
+#else
+        gameengine::core::log(gameengine::core::LogLevel::info,
+                              "lua: unavailable (lua module disabled)");
+        const int lua_result = 0;
+#endif
+        core.shutdown();
+        return lua_result;
     }
 
     gameengine::platform::Platform platform;
@@ -224,13 +356,16 @@ int main(int argc, char** argv)
             return 6;
         }
     }
-#if (GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS)
+#if (GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS || GAMEENGINE_BUILD_LUA)
     gameengine::scene::Scene runtime_scene;
 #if GAMEENGINE_BUILD_ANIMATION
     gameengine::animation::AnimationSystem animation_system;
 #endif
 #if GAMEENGINE_BUILD_PHYSICS
     gameengine::physics::PhysicsWorld physics_world;
+#endif
+#if GAMEENGINE_BUILD_LUA
+    gameengine::scripting::ScriptRuntime script_runtime;
 #endif
     if (!gameengine::scene::create_bootstrap_scene(runtime_scene) ||
         runtime_scene.entities().empty()) {
@@ -254,7 +389,7 @@ int main(int argc, char** argv)
     }
 
 #if GAMEENGINE_BUILD_ANIMATION
-    if (!physics_demo) {
+    if (!physics_demo && !lua_demo) {
         if (!animation_system.reserve_players(1U) ||
             !animation_system.add_procedural_player(bootstrap_entity, *bootstrap_transform)) {
             gameengine::core::log(gameengine::core::LogLevel::error,
@@ -335,6 +470,56 @@ int main(int argc, char** argv)
         core.shutdown();
         return 6;
     }
+
+#if GAMEENGINE_BUILD_LUA
+    if (lua_demo) {
+        const gameengine::core::Status lua_init_status = script_runtime.initialize();
+        if (!lua_init_status) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  gameengine::core::to_string(lua_init_status.code));
+            static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_PHYSICS
+            physics_world.shutdown();
+#endif
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+
+        const gameengine::core::Status lua_reg_status =
+            script_runtime.register_entity("BootstrapCube", bootstrap_entity);
+        constexpr const char* demo_script =
+            "local cube = nil\n"
+            "function start()\n"
+            "    cube = Engine.findEntity(\"BootstrapCube\")\n"
+            "end\n"
+            "function update(dt)\n"
+            "    if cube ~= nil and cube:isAlive() then\n"
+            "        cube:rotateY(dt * 1.5)\n"
+            "    end\n"
+            "end\n";
+        const gameengine::core::Status lua_load_status =
+            lua_reg_status ? script_runtime.load_script(demo_script, "lua_demo.lua")
+                           : lua_reg_status;
+        const gameengine::core::Status lua_start_status =
+            lua_load_status ? script_runtime.call_start(runtime_scene, &platform.input())
+                            : lua_load_status;
+        if (!lua_start_status) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  gameengine::core::to_string(lua_start_status.code));
+            script_runtime.shutdown();
+            static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_PHYSICS
+            physics_world.shutdown();
+#endif
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+    }
+#endif
 #endif
     if (renderer_benchmark) {
         const gameengine::core::Status benchmark_status =
@@ -343,8 +528,11 @@ int main(int argc, char** argv)
             benchmark_status.code != gameengine::core::ErrorCode::unsupported_platform) {
             gameengine::core::log(gameengine::core::LogLevel::error,
                                   gameengine::core::to_string(benchmark_status.code));
-#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS
+#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS || GAMEENGINE_BUILD_LUA
             static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_LUA
+            script_runtime.shutdown();
+#endif
 #if GAMEENGINE_BUILD_PHYSICS
             physics_world.shutdown();
 #endif
@@ -354,8 +542,11 @@ int main(int argc, char** argv)
             core.shutdown();
             return 6;
         }
-#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS
+#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS || GAMEENGINE_BUILD_LUA
         static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_LUA
+        script_runtime.shutdown();
+#endif
 #if GAMEENGINE_BUILD_PHYSICS
         physics_world.shutdown();
 #endif
@@ -420,6 +611,9 @@ int main(int argc, char** argv)
                 gameengine::core::log(gameengine::core::LogLevel::error,
                                       gameengine::core::to_string(physics_status.code));
                 static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_LUA
+                script_runtime.shutdown();
+#endif
                 physics_world.shutdown();
                 renderer.shutdown();
                 platform.shutdown();
@@ -432,6 +626,9 @@ int main(int argc, char** argv)
                 gameengine::core::log(gameengine::core::LogLevel::error,
                                       gameengine::core::to_string(write_status.code));
                 static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_LUA
+                script_runtime.shutdown();
+#endif
                 physics_world.shutdown();
                 renderer.shutdown();
                 platform.shutdown();
@@ -440,14 +637,18 @@ int main(int argc, char** argv)
             }
         }
 #endif
-#if GAMEENGINE_BUILD_ANIMATION
-        if (!physics_demo) {
-            const gameengine::core::Status animation_status = animation_system.update(
-                runtime_scene, static_cast<gameengine::core::f32>(delta_seconds));
-            if (!animation_status) {
+#if GAMEENGINE_BUILD_LUA
+        if (lua_demo) {
+            const gameengine::core::Status lua_update_status = script_runtime.call_update(
+                runtime_scene, static_cast<gameengine::core::f32>(delta_seconds), &platform.input());
+            if (!lua_update_status) {
                 gameengine::core::log(gameengine::core::LogLevel::error,
-                                      gameengine::core::to_string(animation_status.code));
+                                      gameengine::core::to_string(lua_update_status.code));
                 static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+                script_runtime.shutdown();
+#if GAMEENGINE_BUILD_PHYSICS
+                physics_world.shutdown();
+#endif
                 renderer.shutdown();
                 platform.shutdown();
                 core.shutdown();
@@ -455,7 +656,28 @@ int main(int argc, char** argv)
             }
         }
 #endif
-#if !GAMEENGINE_BUILD_ANIMATION && !GAMEENGINE_BUILD_PHYSICS
+#if GAMEENGINE_BUILD_ANIMATION
+        if (!physics_demo && !lua_demo) {
+            const gameengine::core::Status animation_status = animation_system.update(
+                runtime_scene, static_cast<gameengine::core::f32>(delta_seconds));
+            if (!animation_status) {
+                gameengine::core::log(gameengine::core::LogLevel::error,
+                                      gameengine::core::to_string(animation_status.code));
+                static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_LUA
+                script_runtime.shutdown();
+#endif
+#if GAMEENGINE_BUILD_PHYSICS
+                physics_world.shutdown();
+#endif
+                renderer.shutdown();
+                platform.shutdown();
+                core.shutdown();
+                return 6;
+            }
+        }
+#endif
+#if !GAMEENGINE_BUILD_ANIMATION && !GAMEENGINE_BUILD_PHYSICS && !GAMEENGINE_BUILD_LUA
         (void)delta_seconds;
 #endif
 #else
@@ -514,8 +736,11 @@ int main(int argc, char** argv)
     } while (!platform.should_close());
 
 #if GAMEENGINE_RENDERER_HAS_VULKAN
-#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS
+#if GAMEENGINE_BUILD_ANIMATION || GAMEENGINE_BUILD_PHYSICS || GAMEENGINE_BUILD_LUA
     static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_LUA
+    script_runtime.shutdown();
+#endif
 #if GAMEENGINE_BUILD_PHYSICS
     physics_world.shutdown();
 #endif

@@ -4,7 +4,7 @@
 
 A public, modular C++ game engine focused on high visual quality, efficient hardware usage and long-term maintainability.
 
-> **Status: early development — Phase 9C optional physics implemented.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a procedural instanced cube, CPU frustum culling, opt-in GPU culling/indirect drawing, production Low/Medium/High Forward+ profiles, measured render passes, a separate minimal editor, an optional procedural audio module and an optional Jolt-backed physics module. It is not ready to create a complete game yet.
+> **Status: early development — Phase 9D optional Lua scripting implemented.** The repository provides a Vulkan rendering foundation with an offline Slang shader pipeline, a procedural instanced cube, CPU frustum culling, opt-in GPU culling/indirect drawing, production Low/Medium/High Forward+ profiles, measured render passes, a separate minimal editor, an optional procedural audio module, an optional Jolt-backed physics module and an optional sandboxed Lua gameplay scripting module. It is not ready to create a complete game yet.
 
 ## Why this project exists
 
@@ -23,7 +23,7 @@ The complete direction is documented in [Idea.md](Idea.md). The implementation s
 
 ## Current status
 
-Phase 0 through Phase 6, the Phase 7 renderer foundation and the Phase 8 editor foundation are implemented in the current procedural scope. Phase 9A transform animation is complete and Phase 9B adds optional procedural audio. Phase 7E promotes the Low/Medium/High Forward+ profiles while keeping Clustered and Deferred benchmark-only:
+Phase 0 through Phase 6, the Phase 7 renderer foundation and the Phase 8 editor foundation are implemented in the current procedural scope. Phase 9A transform animation, Phase 9B procedural audio, Phase 9C physics integration and Phase 9D optional Lua scripting are complete. Phase 7E promotes the Low/Medium/High Forward+ profiles while keeping Clustered and Deferred benchmark-only:
 
 - CMake 3.25+ project using C++20 without compiler extensions;
 - `gameengine_core` with fixed-width types, status values, diagnostics, clock and input state;
@@ -54,6 +54,8 @@ Phase 0 through Phase 6, the Phase 7 renderer foundation and the Phase 8 editor 
   generation-checked voice handles, WASAPI/ALSA backends and a stub fallback;
 - optional `gameengine_physics` module backed by an encapsulated Jolt Physics foundation with fixed-step updates,
   box/sphere shapes, static/dynamic bodies and transform synchronization;
+- optional `gameengine_scripting` module backed by encapsulated PUC-Rio Lua 5.4.8 behind a strict PIMPL
+  boundary with memory limits, instruction budgets, text-only chunk loading and standard-library sandboxing;
 - deterministic 16x16 Forward+ tile-list preparation, procedural point-light data, a 1024² directional shadow map, a mipmapped 64² procedural cubemap and versioned Forward+/shadow/environment Slang artifacts;
 - versioned benchmark reports in `build/renderer-benchmarks/lighting_benchmark_v1.txt`, with explicit unavailable markers for unsupported RAM/VRAM metrics;
 - generation-checked handles and fence-based deferred resource destruction;
@@ -69,9 +71,9 @@ The following are intentionally outside the current procedural renderer scope:
 - prepared mesh/assets loading;
 - asset-file texture/material loading;
 - runtime shader file loading and automatic polling;
-- prepared asset runtime integration, asset editing/import, undo/redo, Lua and a final ECS storage choice;
+- prepared asset runtime integration, asset editing/import, undo/redo and a final ECS storage choice;
 - VRAM policy and the hardware baseline for the final lighting decision;
-- networking or gameplay APIs;
+- networking or full gameplay frameworks;
 - skeleton/skinning animation, animation assets, timelines and keyframe authoring;
 - a functional C ABI.
 
@@ -85,11 +87,11 @@ The following are intentionally outside the current procedural renderer scope:
 | Linux platform | Xlib/X11 | In use |
 | Binary interoperability | Versioned C ABI | Planned |
 | Offline tooling | Rust | Phase 5 foundation in use |
-| Gameplay scripting | Optional Lua | Planned |
+| Gameplay scripting | Optional Lua | Phase 9D in use |
 | Shader source | Slang, compiled offline | Phase 4 in use |
 | First graphics backend | Vulkan | In use |
 
-Vulkan, X11 and Mesa are system dependencies for the Linux rendering build. ALSA development headers are optional; when unavailable, the audio module builds with its stub backend. Jolt Physics is an optional third-party library acquired via CMake FetchContent when GAMEENGINE_BUILD_PHYSICS=ON. Slang is required only to regenerate offline shader artifacts; it is never a runtime dependency. Rust is optional and is required only for the offline asset tools; Lua is not required.
+Vulkan, X11 and Mesa are system dependencies for the Linux rendering build. ALSA development headers are optional; when unavailable, the audio module builds with its stub backend. Jolt Physics (`GAMEENGINE_BUILD_PHYSICS=ON`) and Lua 5.4.8 (`GAMEENGINE_BUILD_LUA=ON`) are optional third-party libraries acquired via CMake FetchContent when enabled. Slang is required only to regenerate offline shader artifacts; it is never a runtime dependency. Rust is optional and is required only for the offline asset tools; Lua is completely optional and can be compiled out with `-DGAMEENGINE_BUILD_LUA=OFF`.
 
 ## Quick start
 
@@ -215,6 +217,8 @@ CTest covers the core, asset, RHI, math, scene, animation, audio, render graph, 
 12. `gameengine_runtime_gpu_metrics`: verifies the opt-in GPU culling metrics workloads and fallback lifecycle;
 13. `gameengine_shader_pipeline`: verifies variant selection and pipeline-cache identity validation;
 14. `gameengine_audio`: verifies deterministic PCM mixing, voice generations, capacity limits, stop behavior and stub metrics;
+15. `gameengine_physics` & `gameengine_runtime_physics_demo`: verifies encapsulated Jolt Physics simulation and runtime transform synchronization;
+16. `gameengine_scripting`, `gameengine_runtime_lua_smoke` & `gameengine_runtime_lua_demo`: verifies sandboxed Lua VM lifecycle, memory/instruction limits, entity bindings and Vulkan scene updates;
 
 The Windows-only unit checks additionally cover the native Win32 platform path. The 3D integration test verifies depth resources, indexed drawing, swapchain recreation and validation-clean shutdown.
 
@@ -267,6 +271,19 @@ WASAPI shared mode; Linux uses ALSA when its development package is present. No 
 audio asset or Rust tool is required. The optional benchmark can be built with
 `-DGAMEENGINE_BUILD_BENCHMARKS=ON` and runs fixed 1/16/64 voice mixer workloads. See
 [the audio architecture](docs/architecture/audio.md) for ownership and callback details.
+
+Gameplay scripting is optional and enabled in development presets (`GAMEENGINE_BUILD_LUA=ON`).
+Disable it cleanly with `-DGAMEENGINE_BUILD_LUA=OFF` so exported games carry zero Lua code or VM
+overhead. Run the headless VM check or the scripted Vulkan cube demo with:
+
+```text
+gameengine_runtime --lua-smoke-test
+gameengine_runtime --smoke-test --lua-demo
+```
+
+The optional benchmark (`gameengine_scripting_benchmark` when `-DGAMEENGINE_BUILD_BENCHMARKS=ON`)
+measures 1,000 and 10,000 Lua `update(dt)` calls along with steady-state VM memory. See
+[the scripting architecture](docs/architecture/scripting.md) for sandboxing, budgets and measured footprint.
 
 ```text
 gameengine_runtime --smoke-test --renderer-quality low

@@ -19,7 +19,8 @@
         "GAMEENGINE_BUILD_TESTS": "ON",
         "GAMEENGINE_BUILD_VULKAN": "ON",
         "GAMEENGINE_BUILD_EDITOR": "ON",
-        "GAMEENGINE_BUILD_PHYSICS": "ON"
+        "GAMEENGINE_BUILD_PHYSICS": "ON",
+        "GAMEENGINE_BUILD_LUA": "ON"
       },
       "condition": {
         "type": "equals",
@@ -40,7 +41,8 @@
         "GAMEENGINE_BUILD_TESTS": "ON",
         "GAMEENGINE_BUILD_VULKAN": "ON",
         "GAMEENGINE_BUILD_EDITOR": "ON",
-        "GAMEENGINE_BUILD_PHYSICS": "ON"
+        "GAMEENGINE_BUILD_PHYSICS": "ON",
+        "GAMEENGINE_BUILD_LUA": "ON"
       },
       "condition": {
         "type": "equals",
@@ -61,7 +63,8 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "GAMEENGINE_BUILD_TESTS": "ON",
         "GAMEENGINE_BUILD_EDITOR": "ON",
-        "GAMEENGINE_BUILD_PHYSICS": "ON"
+        "GAMEENGINE_BUILD_PHYSICS": "ON",
+        "GAMEENGINE_BUILD_LUA": "ON"
       },
       "condition": {
         "type": "equals",
@@ -82,7 +85,8 @@
         "CMAKE_BUILD_TYPE": "Release",
         "GAMEENGINE_BUILD_TESTS": "ON",
         "GAMEENGINE_BUILD_EDITOR": "ON",
-        "GAMEENGINE_BUILD_PHYSICS": "ON"
+        "GAMEENGINE_BUILD_PHYSICS": "ON",
+        "GAMEENGINE_BUILD_LUA": "ON"
       },
       "condition": {
         "type": "equals",
@@ -103,7 +107,8 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "GAMEENGINE_BUILD_TESTS": "ON",
         "GAMEENGINE_BUILD_EDITOR": "ON",
-        "GAMEENGINE_BUILD_PHYSICS": "ON"
+        "GAMEENGINE_BUILD_PHYSICS": "ON",
+        "GAMEENGINE_BUILD_LUA": "ON"
       },
       "condition": {
         "type": "equals",
@@ -124,7 +129,8 @@
         "CMAKE_BUILD_TYPE": "Release",
         "GAMEENGINE_BUILD_TESTS": "ON",
         "GAMEENGINE_BUILD_EDITOR": "ON",
-        "GAMEENGINE_BUILD_PHYSICS": "ON"
+        "GAMEENGINE_BUILD_PHYSICS": "ON",
+        "GAMEENGINE_BUILD_LUA": "ON"
       },
       "condition": {
         "type": "equals",
@@ -147,7 +153,8 @@
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
         "GAMEENGINE_BUILD_TESTS": "ON",
         "GAMEENGINE_BUILD_EDITOR": "ON",
-        "GAMEENGINE_BUILD_PHYSICS": "ON"
+        "GAMEENGINE_BUILD_PHYSICS": "ON",
+        "GAMEENGINE_BUILD_LUA": "ON"
       },
       "condition": {
         "type": "equals",

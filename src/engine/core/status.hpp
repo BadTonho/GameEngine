@@ -24,6 +24,10 @@ enum class ErrorCode : u8 {
     shader_variant_unavailable,
     shader_reload_disabled,
     physics_capacity_exceeded,
+    script_compile_failed,
+    script_runtime_failed,
+    script_memory_exceeded,
+    script_instruction_limit_exceeded,
 };
 
 struct Status final {
@@ -77,6 +81,14 @@ struct Status final {
         return "shader_reload_disabled";
     case ErrorCode::physics_capacity_exceeded:
         return "physics_capacity_exceeded";
+    case ErrorCode::script_compile_failed:
+        return "script_compile_failed";
+    case ErrorCode::script_runtime_failed:
+        return "script_runtime_failed";
+    case ErrorCode::script_memory_exceeded:
+        return "script_memory_exceeded";
+    case ErrorCode::script_instruction_limit_exceeded:
+        return "script_instruction_limit_exceeded";
     }
 
     return "unknown";
