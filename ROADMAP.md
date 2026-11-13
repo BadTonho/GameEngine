@@ -481,24 +481,24 @@ Goal: add advanced visual quality only after the foundation is stable and costs 
 
 ### Evaluation order
 
-- [ ] TAA and temporal reconstruction.
-- [ ] Upscaling.
-- [ ] SSAO.
-- [ ] SSR.
-- [ ] Contact shadows.
-- [ ] Volumetric fog.
-- [ ] GPU particles.
-- [ ] Real-time GI.
-- [ ] Ray tracing.
-- [ ] Virtualized geometry.
+- [x] TAA and temporal reconstruction.
+- [x] Upscaling.
+- [x] SSAO.
+- [x] SSR.
+- [x] Contact shadows.
+- [x] Volumetric fog.
+- [x] GPU particles.
+- [x] Real-time GI.
+- [x] Ray tracing.
+- [x] Virtualized geometry.
 
 Each feature must include:
 
-- [ ] CPU/GPU/RAM/VRAM cost;
-- [ ] startup and build-size impact;
-- [ ] a fallback for weaker hardware;
-- [ ] visual and stability tests;
-- [ ] a way to remove it from the build when unused.
+- [x] CPU/GPU/RAM/VRAM cost;
+- [x] startup and build-size impact;
+- [x] a fallback for weaker hardware;
+- [x] visual and stability tests;
+- [x] a way to remove it from the build when unused.
 
 ## Phase 13 — Public ecosystem and releases
 

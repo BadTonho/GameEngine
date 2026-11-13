@@ -17,7 +17,7 @@ class Renderer;
 
 namespace gameengine::renderer::metrics {
 
-constexpr core::u32 max_timed_passes = 8U;
+constexpr core::u32 max_timed_passes = 20U;
 
 struct VramBudgetSummary final {
     core::u64 device_local_bytes = 0;
@@ -72,6 +72,10 @@ struct FrameTimingReport final {
     core::u64 tile_index_buffer_bytes = 0;
     core::u64 shadow_map_bytes = 0;
     core::u64 environment_bytes = 0;
+    core::u32 advanced_active_features = 0;
+    core::u32 advanced_fallback_features = 0;
+    core::u64 advanced_vram_bytes = 0;
+    core::u64 advanced_ram_bytes = 0;
     VramBudgetSummary vram{};
 
     void reset(bool gpu_available,
@@ -112,6 +116,10 @@ struct FrameTimingReport final {
         tile_index_buffer_bytes = 0;
         shadow_map_bytes = 0;
         environment_bytes = 0;
+        advanced_active_features = 0;
+        advanced_fallback_features = 0;
+        advanced_vram_bytes = 0;
+        advanced_ram_bytes = 0;
         vram = {};
     }
 
@@ -184,6 +192,10 @@ struct TimingAccumulator final {
     core::u64 tile_index_buffer_bytes = 0;
     core::u64 shadow_map_bytes = 0;
     core::u64 environment_bytes = 0;
+    core::u32 advanced_active_features = 0;
+    core::u32 advanced_fallback_features = 0;
+    core::u64 advanced_vram_bytes = 0;
+    core::u64 advanced_ram_bytes = 0;
     VramBudgetSummary vram{};
 
     void reset() noexcept
@@ -223,6 +235,10 @@ struct TimingAccumulator final {
         tile_index_buffer_bytes = 0;
         shadow_map_bytes = 0;
         environment_bytes = 0;
+        advanced_active_features = 0;
+        advanced_fallback_features = 0;
+        advanced_vram_bytes = 0;
+        advanced_ram_bytes = 0;
         vram = {};
     }
 

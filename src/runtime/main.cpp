@@ -18,6 +18,8 @@
 #if GAMEENGINE_BUILD_LUA
 #include "engine/scripting/scripting.hpp"
 #endif
+#include "engine/renderer/advanced_graphics/advanced_features.hpp"
+#include "engine/renderer/advanced_graphics/advanced_pipeline.hpp"
 #include "engine/renderer/renderer_metrics.hpp"
 #include "engine/renderer/renderer_quality.hpp"
 #include "engine/rhi/rhi.hpp"
@@ -186,6 +188,7 @@ int main(int argc, char** argv)
     bool physics_demo = false;
     bool lua_smoke_test = false;
     bool lua_demo = false;
+    bool advanced_graphics = false;
     std::filesystem::path scene_path{};
     std::filesystem::path assets_dir{};
     gameengine::renderer::quality::RendererQuality renderer_quality =
@@ -209,6 +212,10 @@ int main(int argc, char** argv)
             lua_smoke_test = true;
         } else if (std::strcmp(argv[index], "--lua-demo") == 0) {
             lua_demo = true;
+        } else if (std::strcmp(argv[index], "--advanced-graphics") == 0) {
+            advanced_graphics = true;
+        } else if (std::strcmp(argv[index], "--no-advanced-graphics") == 0) {
+            advanced_graphics = false;
         } else if (std::strcmp(argv[index], "--scene") == 0) {
             if (index + 1 >= argc || argv[index + 1][0] == '\0') {
                 gameengine::core::log(gameengine::core::LogLevel::error,
@@ -576,6 +583,46 @@ int main(int argc, char** argv)
         platform.shutdown();
         core.shutdown();
         return 6;
+    }
+
+    if (advanced_graphics) {
+        const auto adv_config =
+            gameengine::renderer::advanced::AdvancedFeatureConfig::preset_for_quality(
+                renderer_quality);
+        const auto caps = renderer.capabilities();
+        const auto adv_res = gameengine::renderer::advanced::resolve_advanced_features(
+            adv_config,
+            renderer_quality,
+            caps,
+            window_description.width,
+            window_description.height,
+            caps.max_vram_budget_bytes);
+        gameengine::renderer::render_graph::RenderGraph adv_graph;
+        const auto adv_graph_status =
+            gameengine::renderer::advanced::build_advanced_render_graph(adv_res, adv_graph);
+        if (!adv_graph_status) {
+            gameengine::core::log(gameengine::core::LogLevel::error,
+                                  gameengine::core::to_string(adv_graph_status.code));
+            static_cast<void>(gameengine::renderer::scene_bridge::detach_scene(renderer));
+#if GAMEENGINE_BUILD_PHYSICS
+            physics_world.shutdown();
+#endif
+            renderer.shutdown();
+            platform.shutdown();
+            core.shutdown();
+            return 6;
+        }
+        std::fprintf(
+            stderr,
+            "[gameengine] [info] advanced_graphics active=%u fallbacks=%u passes=%zu "
+            "vram_bytes=%llu ram_bytes=%llu est_cpu_ns=%llu est_gpu_ns=%llu\n",
+            adv_res.active_count,
+            adv_res.fallback_count,
+            adv_graph.execution_order().size(),
+            static_cast<unsigned long long>(adv_res.total_vram_bytes),
+            static_cast<unsigned long long>(adv_res.total_ram_bytes),
+            static_cast<unsigned long long>(adv_res.total_estimated_cpu_ns),
+            static_cast<unsigned long long>(adv_res.total_estimated_gpu_ns));
     }
 
 #if GAMEENGINE_BUILD_LUA

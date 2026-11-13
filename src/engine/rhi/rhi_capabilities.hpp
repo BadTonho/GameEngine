@@ -32,6 +32,8 @@ struct BackendCapabilities final {
     bool gpu_timestamps_supported = false;
     bool shadow_map_supported = false;
     bool environment_map_supported = false;
+    bool ray_tracing_supported = false;
+    bool mesh_shaders_supported = false;
     bool validation_supported = false;
     bool validation_enabled = false;
     core::u32 max_frames_in_flight = 2U;

@@ -552,3 +552,4 @@ message(STATUS "Shader cache: ${_cache_dir}/${_configuration}")
 message(STATUS "Reflection artifacts: ${_reflection_dir}")
 
 include("${CMAKE_CURRENT_LIST_DIR}/compile_multi_backend_shaders.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/compile_advanced_shaders.cmake")

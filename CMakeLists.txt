@@ -22,6 +22,17 @@ option(GAMEENGINE_BUILD_AUDIO "Build the optional procedural audio module" ON)
 # development presets enable it.
 option(GAMEENGINE_BUILD_PHYSICS "Build the optional Jolt-backed physics module" OFF)
 option(GAMEENGINE_BUILD_LUA "Build the optional Lua gameplay scripting module" OFF)
+option(GAMEENGINE_MINIMAL_GRAPHICS "Disable all optional Phase 12 advanced graphics features" OFF)
+option(GAMEENGINE_ENABLE_TAA "Compile TAA and temporal reconstruction" ON)
+option(GAMEENGINE_ENABLE_UPSCALING "Compile spatial/temporal upscaling" ON)
+option(GAMEENGINE_ENABLE_SSAO "Compile screen-space ambient occlusion" ON)
+option(GAMEENGINE_ENABLE_SSR "Compile screen-space reflections" ON)
+option(GAMEENGINE_ENABLE_CONTACT_SHADOWS "Compile screen-space contact shadows" ON)
+option(GAMEENGINE_ENABLE_VOLUMETRIC_FOG "Compile volumetric fog froxel pass" ON)
+option(GAMEENGINE_ENABLE_GPU_PARTICLES "Compile GPU particle compute pass" ON)
+option(GAMEENGINE_ENABLE_REALTIME_GI "Compile real-time GI probe pass" ON)
+option(GAMEENGINE_ENABLE_RAY_TRACING "Compile capability-gated ray tracing pass" ON)
+option(GAMEENGINE_ENABLE_VIRTUALIZED_GEOMETRY "Compile capability-gated virtualized geometry pass" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -390,7 +401,88 @@ add_library(gameengine_renderer STATIC
     src/engine/renderer/render_graph/render_graph.cpp
     src/engine/renderer/render_graph/render_graph.hpp
     src/engine/renderer/renderer_metrics.hpp
+    src/engine/renderer/advanced_graphics/advanced_features.hpp
+    src/engine/renderer/advanced_graphics/advanced_features.cpp
+    src/engine/renderer/advanced_graphics/advanced_pipeline.hpp
+    src/engine/renderer/advanced_graphics/advanced_pipeline.cpp
+    src/engine/renderer/advanced_graphics/advanced_shaders.hpp
 )
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND GAMEENGINE_ENABLE_TAA)
+    target_sources(gameengine_renderer PRIVATE
+        src/engine/renderer/advanced_graphics/temporal_aa.hpp
+        src/engine/renderer/advanced_graphics/temporal_aa.cpp
+    )
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_TAA=1)
+else()
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_TAA=0)
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND GAMEENGINE_ENABLE_UPSCALING)
+    target_sources(gameengine_renderer PRIVATE
+        src/engine/renderer/advanced_graphics/upscaling.hpp
+        src/engine/renderer/advanced_graphics/upscaling.cpp
+    )
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_UPSCALING=1)
+else()
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_UPSCALING=0)
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND (GAMEENGINE_ENABLE_SSAO OR GAMEENGINE_ENABLE_SSR OR GAMEENGINE_ENABLE_CONTACT_SHADOWS))
+    target_sources(gameengine_renderer PRIVATE
+        src/engine/renderer/advanced_graphics/screen_space.hpp
+        src/engine/renderer/advanced_graphics/screen_space.cpp
+    )
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND GAMEENGINE_ENABLE_SSAO)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_SSAO=1)
+else()
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_SSAO=0)
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND GAMEENGINE_ENABLE_SSR)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_SSR=1)
+else()
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_SSR=0)
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND GAMEENGINE_ENABLE_CONTACT_SHADOWS)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_CONTACT_SHADOWS=1)
+else()
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_CONTACT_SHADOWS=0)
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND (GAMEENGINE_ENABLE_VOLUMETRIC_FOG OR GAMEENGINE_ENABLE_GPU_PARTICLES))
+    target_sources(gameengine_renderer PRIVATE
+        src/engine/renderer/advanced_graphics/volumetrics_and_particles.hpp
+        src/engine/renderer/advanced_graphics/volumetrics_and_particles.cpp
+    )
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND GAMEENGINE_ENABLE_VOLUMETRIC_FOG)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_VOLUMETRIC_FOG=1)
+else()
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_VOLUMETRIC_FOG=0)
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND GAMEENGINE_ENABLE_GPU_PARTICLES)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_GPU_PARTICLES=1)
+else()
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_GPU_PARTICLES=0)
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND (GAMEENGINE_ENABLE_REALTIME_GI OR GAMEENGINE_ENABLE_RAY_TRACING OR GAMEENGINE_ENABLE_VIRTUALIZED_GEOMETRY))
+    target_sources(gameengine_renderer PRIVATE
+        src/engine/renderer/advanced_graphics/high_end_features.hpp
+        src/engine/renderer/advanced_graphics/high_end_features.cpp
+    )
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND GAMEENGINE_ENABLE_REALTIME_GI)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_REALTIME_GI=1)
+else()
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_REALTIME_GI=0)
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND GAMEENGINE_ENABLE_RAY_TRACING)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_RAY_TRACING=1)
+else()
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_RAY_TRACING=0)
+endif()
+if(NOT GAMEENGINE_MINIMAL_GRAPHICS AND GAMEENGINE_ENABLE_VIRTUALIZED_GEOMETRY)
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_VIRTUALIZED_GEOMETRY=1)
+else()
+    target_compile_definitions(gameengine_renderer PUBLIC GAMEENGINE_HAS_VIRTUALIZED_GEOMETRY=0)
+endif()
 target_link_libraries(gameengine_renderer PUBLIC gameengine_rhi gameengine_platform gameengine_scene)
 target_include_directories(gameengine_renderer
     PUBLIC
@@ -775,6 +867,16 @@ if(GAMEENGINE_BUILD_TESTS)
     )
     gameengine_configure_target(gameengine_render_graph_tests)
     add_test(NAME gameengine_render_graph COMMAND gameengine_render_graph_tests)
+
+    add_executable(gameengine_advanced_graphics_tests
+        tests/advanced_graphics_tests.cpp
+    )
+    target_link_libraries(gameengine_advanced_graphics_tests PRIVATE gameengine_renderer gameengine_core)
+    target_include_directories(gameengine_advanced_graphics_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    gameengine_configure_target(gameengine_advanced_graphics_tests)
+    add_test(NAME gameengine_advanced_graphics COMMAND gameengine_advanced_graphics_tests)
 
     add_executable(gameengine_renderer_metrics_tests
         tests/renderer_metrics_tests.cpp

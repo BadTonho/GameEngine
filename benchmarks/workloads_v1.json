@@ -20,6 +20,10 @@
     {
       "name": "d3d12_medium_cpu",
       "args": ["--renderer-backend", "d3d12", "--metrics", "--renderer-quality", "medium"]
+    },
+    {
+      "name": "advanced_graphics_high",
+      "args": ["--metrics", "--renderer-quality", "high", "--advanced-graphics"]
     }
   ],
   "renderer_benchmark": {
