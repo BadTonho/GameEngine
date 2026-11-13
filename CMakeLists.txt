@@ -497,6 +497,22 @@ if(GAMEENGINE_BUILD_EDITOR)
     gameengine_configure_target(gameengine_editor)
 endif()
 
+add_library(gameengine_c_api STATIC
+    src/api/c/gameengine_c.h
+    src/api/c/gameengine_c.cpp
+)
+target_include_directories(gameengine_c_api PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(gameengine_c_api PRIVATE
+    gameengine_core
+    gameengine_assets
+    gameengine_scene
+    gameengine_platform
+    gameengine_renderer
+)
+gameengine_configure_target(gameengine_c_api)
+
 if(GAMEENGINE_BUILD_TESTS)
     include(CTest)
 
@@ -508,6 +524,25 @@ if(GAMEENGINE_BUILD_TESTS)
     gameengine_configure_target(gameengine_tests)
 
     add_test(NAME gameengine_core COMMAND gameengine_tests)
+
+    add_executable(gameengine_c_api_tests
+        tests/c_api_tests.c
+    )
+    target_compile_features(gameengine_c_api_tests PRIVATE c_std_11)
+    set_target_properties(gameengine_c_api_tests PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+        LINKER_LANGUAGE CXX
+    )
+    if(MSVC)
+        target_compile_options(gameengine_c_api_tests PRIVATE /W4 /WX /permissive-)
+    else()
+        target_compile_options(gameengine_c_api_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    target_link_libraries(gameengine_c_api_tests PRIVATE gameengine_c_api)
+    add_test(NAME gameengine_c_api COMMAND gameengine_c_api_tests)
+    set_tests_properties(gameengine_c_api PROPERTIES LABELS "unit")
 
     add_executable(gameengine_asset_tests
         tests/asset_tests.cpp

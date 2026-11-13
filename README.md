@@ -328,6 +328,10 @@ The `gameengine-asset-tool` binary supports `validate`, `inspect`, `import-gltf`
 
 Build directories, compiler output, IDE files and local configuration are excluded by [.gitignore](.gitignore).
 
+### Public C ABI
+
+`gameengine_c_api` exposes a versioned C11 boundary in [gameengine_c.h](src/api/c/gameengine_c.h) with opaque `GeEngine*` / `GeScene*` handles, `GeEntity` ids, `struct_size` + major-version ABI checks, prepared-asset loading, and `.gescene` serialization. See [the C ABI architecture](docs/architecture/c-abi.md).
+
 ## Contributing
 
 The project is being built deliberately and incrementally. Before opening an issue or pull request:
