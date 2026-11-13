@@ -58,6 +58,16 @@ bool test_empty_and_populated_reports() noexcept
     report.effective_quality = gameengine::renderer::quality::RendererQuality::medium;
     report.quality_shadow_fallback = true;
     report.light_buffer_bytes = 256U;
+    report.vram.device_local_bytes = 4096U;
+    report.vram.host_visible_bytes = 1024U;
+    report.vram.total_allocated_bytes = 5120U;
+    report.vram.peak_allocated_bytes = 8192U;
+    report.vram.budget_bytes = 16384U;
+    report.vram.transient_staging_allocations = 1U;
+    report.vram.transient_staging_bytes = 512U;
+    report.vram.transient_staging_peak_bytes = 2048U;
+    report.vram.active_allocations = 4U;
+    report.vram.over_budget = false;
     report.add_pass("clustered_light_cull", 5U, 0U, true, 1U);
     report.add_pass("forward_opaque", 10U, 1U, true);
     report.passes[0].gpu_nanoseconds = 20U;
@@ -85,6 +95,15 @@ bool test_empty_and_populated_reports() noexcept
            accumulator.requested_quality == gameengine::renderer::quality::RendererQuality::high &&
            accumulator.effective_quality == gameengine::renderer::quality::RendererQuality::medium &&
            accumulator.quality_shadow_fallback && accumulator.light_buffer_bytes == 256U &&
+           accumulator.vram.device_local_bytes == 4096U &&
+           accumulator.vram.host_visible_bytes == 1024U &&
+           accumulator.vram.total_allocated_bytes == 5120U &&
+           accumulator.vram.peak_allocated_bytes == 8192U &&
+           accumulator.vram.budget_bytes == 16384U &&
+           accumulator.vram.transient_staging_allocations == 1U &&
+           accumulator.vram.transient_staging_bytes == 512U &&
+           accumulator.vram.transient_staging_peak_bytes == 2048U &&
+           accumulator.vram.active_allocations == 4U && !accumulator.vram.over_budget &&
            accumulator.gpu_timestamps_available && pass.name == "clustered_light_cull" &&
            pass.sample_count == 1U && pass.cpu_total_nanoseconds == 5U &&
            pass.cpu_min_nanoseconds == 5U && pass.cpu_max_nanoseconds == 5U &&

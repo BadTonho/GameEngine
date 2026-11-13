@@ -19,6 +19,19 @@ namespace gameengine::renderer::metrics {
 
 constexpr core::u32 max_timed_passes = 8U;
 
+struct VramBudgetSummary final {
+    core::u64 device_local_bytes = 0;
+    core::u64 host_visible_bytes = 0;
+    core::u64 total_allocated_bytes = 0;
+    core::u64 peak_allocated_bytes = 0;
+    core::u64 budget_bytes = 0;
+    core::u64 transient_staging_allocations = 0;
+    core::u64 transient_staging_bytes = 0;
+    core::u64 transient_staging_peak_bytes = 0;
+    core::u32 active_allocations = 0;
+    bool over_budget = false;
+};
+
 struct PassTiming final {
     std::string_view name{};
     core::u64 cpu_nanoseconds = 0;
@@ -59,6 +72,7 @@ struct FrameTimingReport final {
     core::u64 tile_index_buffer_bytes = 0;
     core::u64 shadow_map_bytes = 0;
     core::u64 environment_bytes = 0;
+    VramBudgetSummary vram{};
 
     void reset(bool gpu_available,
                gpu_culling::VisibilityMode mode = gpu_culling::VisibilityMode::cpu,
@@ -98,6 +112,7 @@ struct FrameTimingReport final {
         tile_index_buffer_bytes = 0;
         shadow_map_bytes = 0;
         environment_bytes = 0;
+        vram = {};
     }
 
     void add_pass(std::string_view pass_name,
@@ -169,6 +184,7 @@ struct TimingAccumulator final {
     core::u64 tile_index_buffer_bytes = 0;
     core::u64 shadow_map_bytes = 0;
     core::u64 environment_bytes = 0;
+    VramBudgetSummary vram{};
 
     void reset() noexcept
     {
@@ -207,6 +223,7 @@ struct TimingAccumulator final {
         tile_index_buffer_bytes = 0;
         shadow_map_bytes = 0;
         environment_bytes = 0;
+        vram = {};
     }
 
     void record(const FrameTimingReport& report) noexcept
@@ -252,6 +269,7 @@ struct TimingAccumulator final {
         tile_index_buffer_bytes = report.tile_index_buffer_bytes;
         shadow_map_bytes = report.shadow_map_bytes;
         environment_bytes = report.environment_bytes;
+        vram = report.vram;
         for (core::u32 index = 0; index < report.pass_count; ++index) {
             const PassTiming& timing = report.passes[index];
             PassTimingAggregate* aggregate = nullptr;

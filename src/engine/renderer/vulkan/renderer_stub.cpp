@@ -124,6 +124,11 @@ core::Status run_renderer_benchmark(const gameengine::rhi::Renderer&, bool) noex
     return core::Status{};
 }
 
+core::Status set_vram_budget(const gameengine::rhi::Renderer&, core::u64) noexcept
+{
+    return core::Status{core::ErrorCode::unsupported_platform};
+}
+
 } // namespace gameengine::renderer::diagnostics
 
 namespace gameengine::renderer::scene_bridge {

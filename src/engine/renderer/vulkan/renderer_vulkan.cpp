@@ -419,6 +419,20 @@ struct Renderer::Impl final {
     std::array<renderer::metrics::FrameTimingReport, frames_in_flight> frame_timing{};
     std::array<bool, frames_in_flight> timing_pending{};
     renderer::metrics::TimingAccumulator timing_accumulator{};
+    struct TrackedMemoryAllocation final {
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkDeviceSize bytes = 0;
+        VkMemoryPropertyFlags properties = 0;
+        bool transient = false;
+    };
+    std::vector<TrackedMemoryAllocation> tracked_allocations;
+    core::u64 vram_device_local_bytes = 0;
+    core::u64 vram_host_visible_bytes = 0;
+    core::u64 vram_peak_allocated_bytes = 0;
+    core::u64 vram_budget_bytes = 0;
+    core::u64 vram_transient_staging_allocations = 0;
+    core::u64 vram_transient_staging_bytes = 0;
+    core::u64 vram_transient_staging_peak_bytes = 0;
     std::vector<renderer::procedural::ProceduralInstance> procedural_instances;
     core::u32 active_instance_count = renderer::procedural::default_instance_count;
     renderer::gpu_culling::VisibilityMode visibility_mode =
@@ -513,10 +527,12 @@ struct Renderer::Impl final {
     [[nodiscard]] core::Status set_procedural_workload(core::u32 instance_count) noexcept;
     [[nodiscard]] core::Status create_gpu_culling_resources() noexcept;
     void destroy_gpu_culling_resources() noexcept;
+    [[nodiscard]] bool probe_gpu_culling_support() const noexcept;
     [[nodiscard]] core::Status set_visibility_mode(
         renderer::gpu_culling::VisibilityMode mode) noexcept;
     [[nodiscard]] core::Status set_renderer_quality(
         renderer::quality::RendererQuality quality) noexcept;
+    [[nodiscard]] core::Status set_vram_budget(core::u64 budget_bytes) noexcept;
     [[nodiscard]] core::Status set_prepared_assets(
         const renderer::scene_bridge::PreparedRenderAssets& assets) noexcept;
     [[nodiscard]] core::Status clear_prepared_assets() noexcept;
@@ -584,13 +600,22 @@ struct Renderer::Impl final {
     void collect_deferred(core::u32 frame_index) noexcept;
     void destroy_live_resources() noexcept;
     void release_deferred(const DeferredDeletion& deletion) noexcept;
+    void init_default_vram_budget() noexcept;
+    [[nodiscard]] core::Status check_vram_budget(VkDeviceSize additional_bytes) const noexcept;
+    [[nodiscard]] core::Status allocate_tracked_memory(const VkMemoryAllocateInfo& allocation_info,
+                                                       VkMemoryPropertyFlags resolved_properties,
+                                                       VkDeviceMemory& memory,
+                                                       bool transient = false) noexcept;
+    void free_tracked_memory(VkDeviceMemory& memory) noexcept;
+    [[nodiscard]] renderer::metrics::VramBudgetSummary current_vram_summary() const noexcept;
     [[nodiscard]] core::Status create_buffer_resource(VkDeviceSize size,
                                                        VkBufferUsageFlags usage,
                                                        VkMemoryPropertyFlags properties,
                                                        VkBuffer& buffer,
                                                        VkDeviceMemory& memory,
                                                        VkMemoryPropertyFlags* allocated_properties =
-                                                           nullptr) noexcept;
+                                                           nullptr,
+                                                      bool transient = false) noexcept;
     void destroy_buffer_resource(VkBuffer buffer, VkDeviceMemory memory) noexcept;
     void destroy_image_resource(ImageSlot& slot) noexcept;
     [[nodiscard]] core::Status create_image_view(ImageSlot& slot) noexcept;
@@ -757,14 +782,12 @@ core::Status Renderer::Impl::initialize(
     if (!status) {
         return status;
     }
+    init_default_vram_budget();
     status = create_procedural_instance_resources();
     if (!status) {
         return status;
     }
-    status = create_gpu_culling_resources();
-    if (!status) {
-        return status;
-    }
+    gpu_culling_available = probe_gpu_culling_support();
     static_cast<void>(renderer::benchmark::generate_point_lights(
         renderer::benchmark::max_point_lights, benchmark_lights));
     const auto quality_resolution = renderer::quality::resolve(
@@ -876,6 +899,19 @@ void Renderer::Impl::shutdown() noexcept
     }
 
     if (device != VK_NULL_HANDLE) {
+        if (!tracked_allocations.empty() || vram_device_local_bytes != 0U ||
+            vram_host_visible_bytes != 0U || vram_transient_staging_bytes != 0U) {
+            core::log(core::LogLevel::error,
+                      "Vulkan shutdown detected unreleased tracked VRAM allocations");
+        }
+        tracked_allocations.clear();
+        vram_device_local_bytes = 0;
+        vram_host_visible_bytes = 0;
+        vram_peak_allocated_bytes = 0;
+        vram_budget_bytes = 0;
+        vram_transient_staging_allocations = 0;
+        vram_transient_staging_bytes = 0;
+        vram_transient_staging_peak_bytes = 0;
         vkDestroyCommandPool(device, command_pool, nullptr);
         vkDestroyDevice(device, nullptr);
         device = VK_NULL_HANDLE;
@@ -1996,7 +2032,7 @@ core::Status Renderer::Impl::create_depth_resources() noexcept
     allocation_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocation_info.allocationSize = requirements.size;
     allocation_info.memoryTypeIndex = memory_type;
-    if (vkAllocateMemory(device, &allocation_info, nullptr, &depth_memory) != VK_SUCCESS ||
+    if (!allocate_tracked_memory(allocation_info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depth_memory).ok() ||
         vkBindImageMemory(device, depth_image, depth_memory, 0) != VK_SUCCESS) {
         return core::Status{core::ErrorCode::vulkan_swapchain_failed};
     }
@@ -3514,8 +3550,15 @@ core::Status Renderer::Impl::create_shadow_resources() noexcept
         .allocationSize = requirements.size,
         .memoryTypeIndex = memory_type,
     };
-    if (vkAllocateMemory(device, &allocation_info, nullptr, &shadow_memory) != VK_SUCCESS ||
-        vkBindImageMemory(device, shadow_image, shadow_memory, 0) != VK_SUCCESS) {
+    const core::Status shadow_alloc_status = allocate_tracked_memory(
+        allocation_info,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        shadow_memory);
+    if (!shadow_alloc_status.ok()) {
+        destroy_high_resources();
+        return shadow_alloc_status;
+    }
+    if (vkBindImageMemory(device, shadow_image, shadow_memory, 0) != VK_SUCCESS) {
         destroy_high_resources();
         return core::Status{core::ErrorCode::vulkan_device_failed};
     }
@@ -3645,8 +3688,15 @@ core::Status Renderer::Impl::create_environment_resources() noexcept
         .allocationSize = requirements.size,
         .memoryTypeIndex = memory_type,
     };
-    if (vkAllocateMemory(device, &allocation_info, nullptr, &environment_memory) != VK_SUCCESS ||
-        vkBindImageMemory(device, environment_image, environment_memory, 0) != VK_SUCCESS) {
+    const core::Status env_alloc_status = allocate_tracked_memory(
+        allocation_info,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        environment_memory);
+    if (!env_alloc_status.ok()) {
+        destroy_high_resources();
+        return env_alloc_status;
+    }
+    if (vkBindImageMemory(device, environment_image, environment_memory, 0) != VK_SUCCESS) {
         destroy_high_resources();
         return core::Status{core::ErrorCode::vulkan_device_failed};
     }
@@ -3670,7 +3720,9 @@ core::Status Renderer::Impl::create_environment_resources() noexcept
                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                                 staging_buffer,
-                                staging_memory)) {
+                                staging_memory,
+                                nullptr,
+                                true)) {
         destroy_high_resources();
         return core::Status{core::ErrorCode::vulkan_device_failed};
     }
@@ -3941,8 +3993,7 @@ void Renderer::Impl::destroy_high_resources() noexcept
         shadow_image = VK_NULL_HANDLE;
     }
     if (shadow_memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, shadow_memory, nullptr);
-        shadow_memory = VK_NULL_HANDLE;
+        free_tracked_memory(shadow_memory);
     }
     if (environment_sampler != VK_NULL_HANDLE) {
         vkDestroySampler(device, environment_sampler, nullptr);
@@ -3957,8 +4008,7 @@ void Renderer::Impl::destroy_high_resources() noexcept
         environment_image = VK_NULL_HANDLE;
     }
     if (environment_memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, environment_memory, nullptr);
-        environment_memory = VK_NULL_HANDLE;
+        free_tracked_memory(environment_memory);
     }
     shadow_format = VK_FORMAT_UNDEFINED;
     environment_format = VK_FORMAT_UNDEFINED;
@@ -4081,6 +4131,14 @@ core::Status Renderer::Impl::run_renderer_benchmark(bool use_gpu_culling) noexce
     }
     if (vkDeviceWaitIdle(device) != VK_SUCCESS) {
         return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    if (use_gpu_culling && gpu_source_buffer == VK_NULL_HANDLE) {
+        static_cast<void>(create_gpu_culling_resources());
+        if (!gpu_culling_available) {
+            std::fprintf(stderr,
+                         "[gameengine] [info] renderer benchmark: unavailable (GPU culling)\n");
+            return core::Status{core::ErrorCode::unsupported_platform};
+        }
     }
     const core::Status resource_status = create_benchmark_resources();
     if (!resource_status) {
@@ -4247,9 +4305,35 @@ core::Status Renderer::Impl::run_renderer_benchmark(bool use_gpu_culling) noexce
     return create_render_graph();
 }
 
+bool Renderer::Impl::probe_gpu_culling_support() const noexcept
+{
+    if (physical_device == VK_NULL_HANDLE) {
+        return false;
+    }
+    const QueueFamilies families = find_queue_families(physical_device);
+    if (!families.graphics.has_value()) {
+        return false;
+    }
+    std::uint32_t family_count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &family_count, nullptr);
+    std::vector<VkQueueFamilyProperties> family_properties(family_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(
+        physical_device, &family_count, family_properties.data());
+    return families.graphics.value() < family_properties.size() &&
+           (family_properties[families.graphics.value()].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0U;
+}
+
 core::Status Renderer::Impl::set_visibility_mode(
     renderer::gpu_culling::VisibilityMode mode) noexcept
 {
+    if (mode == renderer::gpu_culling::VisibilityMode::gpu && gpu_culling_available &&
+        gpu_source_buffer == VK_NULL_HANDLE) {
+        static_cast<void>(create_gpu_culling_resources());
+    } else if (mode == renderer::gpu_culling::VisibilityMode::cpu &&
+               gpu_source_buffer != VK_NULL_HANDLE) {
+        destroy_gpu_culling_resources();
+        gpu_culling_available = probe_gpu_culling_support();
+    }
     gpu_culling_fallback = mode == renderer::gpu_culling::VisibilityMode::gpu &&
                            !gpu_culling_available;
     visibility_mode = renderer::gpu_culling::resolve_visibility_mode(mode,
@@ -4292,8 +4376,11 @@ core::Status Renderer::Impl::set_renderer_quality(
     } else {
         destroy_high_resources();
     }
-    if (effective_quality != renderer::quality::RendererQuality::low &&
-        (benchmark_input_buffer == VK_NULL_HANDLE || benchmark_compute_pipeline == VK_NULL_HANDLE)) {
+    if (effective_quality == renderer::quality::RendererQuality::low) {
+        destroy_forward_plus_compute_pipeline();
+        destroy_forward_plus_buffers();
+        destroy_benchmark_resources();
+    } else if (benchmark_input_buffer == VK_NULL_HANDLE || benchmark_compute_pipeline == VK_NULL_HANDLE) {
         const core::Status status = create_benchmark_resources();
         if (!status) {
             effective_quality = renderer::quality::RendererQuality::low;
@@ -4959,7 +5046,7 @@ void Renderer::Impl::destroy_editor_ui_resources() noexcept
         vkDestroyBuffer(device, editor_ui_buffer, nullptr);
     }
     if (device != VK_NULL_HANDLE && editor_ui_memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, editor_ui_memory, nullptr);
+        free_tracked_memory(editor_ui_memory);
     }
     editor_ui_buffer = VK_NULL_HANDLE;
     editor_ui_memory = VK_NULL_HANDLE;
@@ -5352,8 +5439,7 @@ void Renderer::Impl::destroy_material_resources() noexcept
         material_uniform_buffer = VK_NULL_HANDLE;
     }
     if (material_uniform_memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, material_uniform_memory, nullptr);
-        material_uniform_memory = VK_NULL_HANDLE;
+        free_tracked_memory(material_uniform_memory);
     }
 }
 
@@ -5373,12 +5459,130 @@ core::Status Renderer::Impl::find_memory_type(std::uint32_t type_filter,
     return core::Status{core::ErrorCode::vulkan_device_failed};
 }
 
+void Renderer::Impl::init_default_vram_budget() noexcept
+{
+    if (physical_device == VK_NULL_HANDLE) {
+        vram_budget_bytes = 256ULL * 1024ULL * 1024ULL;
+        return;
+    }
+    VkPhysicalDeviceMemoryProperties memory_properties{};
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+    core::u64 device_local_heap_bytes = 0;
+    for (core::u32 index = 0; index < memory_properties.memoryHeapCount; ++index) {
+        if ((memory_properties.memoryHeaps[index].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0U) {
+            device_local_heap_bytes += memory_properties.memoryHeaps[index].size;
+        }
+    }
+    constexpr core::u64 default_cap_bytes = 512ULL * 1024ULL * 1024ULL;
+    vram_budget_bytes = device_local_heap_bytes == 0U
+                            ? 256ULL * 1024ULL * 1024ULL
+                            : std::min<core::u64>(device_local_heap_bytes, default_cap_bytes);
+}
+
+core::Status Renderer::Impl::check_vram_budget(VkDeviceSize additional_bytes) const noexcept
+{
+    const core::u64 current_total = vram_device_local_bytes + vram_host_visible_bytes;
+    if (vram_budget_bytes > 0U && current_total + additional_bytes > vram_budget_bytes) {
+        return core::Status{core::ErrorCode::allocation_failed};
+    }
+    return core::Status{};
+}
+
+core::Status Renderer::Impl::allocate_tracked_memory(
+    const VkMemoryAllocateInfo& allocation_info,
+    VkMemoryPropertyFlags resolved_properties,
+    VkDeviceMemory& memory,
+    bool transient) noexcept
+{
+    const core::Status budget_status = check_vram_budget(allocation_info.allocationSize);
+    if (!budget_status) {
+        return budget_status;
+    }
+    if (vkAllocateMemory(device, &allocation_info, nullptr, &memory) != VK_SUCCESS) {
+        return core::Status{core::ErrorCode::vulkan_device_failed};
+    }
+    tracked_allocations.push_back(TrackedMemoryAllocation{
+        .memory = memory,
+        .bytes = allocation_info.allocationSize,
+        .properties = resolved_properties,
+        .transient = transient,
+    });
+    if ((resolved_properties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0U) {
+        vram_device_local_bytes += allocation_info.allocationSize;
+    } else {
+        vram_host_visible_bytes += allocation_info.allocationSize;
+    }
+    const core::u64 current_total = vram_device_local_bytes + vram_host_visible_bytes;
+    vram_peak_allocated_bytes = std::max(vram_peak_allocated_bytes, current_total);
+    if (transient) {
+        ++vram_transient_staging_allocations;
+        vram_transient_staging_bytes += allocation_info.allocationSize;
+        vram_transient_staging_peak_bytes =
+            std::max(vram_transient_staging_peak_bytes, vram_transient_staging_bytes);
+    }
+    return core::Status{};
+}
+
+void Renderer::Impl::free_tracked_memory(VkDeviceMemory& memory) noexcept
+{
+    if (device == VK_NULL_HANDLE || memory == VK_NULL_HANDLE) {
+        return;
+    }
+    for (core::usize index = 0; index < tracked_allocations.size(); ++index) {
+        const TrackedMemoryAllocation& entry = tracked_allocations[index];
+        if (entry.memory == memory) {
+            if ((entry.properties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0U) {
+                vram_device_local_bytes =
+                    vram_device_local_bytes >= entry.bytes ? vram_device_local_bytes - entry.bytes : 0U;
+            } else {
+                vram_host_visible_bytes =
+                    vram_host_visible_bytes >= entry.bytes ? vram_host_visible_bytes - entry.bytes : 0U;
+            }
+            if (entry.transient) {
+                vram_transient_staging_bytes =
+                    vram_transient_staging_bytes >= entry.bytes
+                        ? vram_transient_staging_bytes - entry.bytes
+                        : 0U;
+            }
+            tracked_allocations[index] = tracked_allocations.back();
+            tracked_allocations.pop_back();
+            break;
+        }
+    }
+    vkFreeMemory(device, memory, nullptr);
+    memory = VK_NULL_HANDLE;
+}
+
+renderer::metrics::VramBudgetSummary Renderer::Impl::current_vram_summary() const noexcept
+{
+    const core::u64 total = vram_device_local_bytes + vram_host_visible_bytes;
+    return renderer::metrics::VramBudgetSummary{
+        .device_local_bytes = vram_device_local_bytes,
+        .host_visible_bytes = vram_host_visible_bytes,
+        .total_allocated_bytes = total,
+        .peak_allocated_bytes = vram_peak_allocated_bytes,
+        .budget_bytes = vram_budget_bytes,
+        .transient_staging_allocations = vram_transient_staging_allocations,
+        .transient_staging_bytes = vram_transient_staging_bytes,
+        .transient_staging_peak_bytes = vram_transient_staging_peak_bytes,
+        .active_allocations = static_cast<core::u32>(tracked_allocations.size()),
+        .over_budget = vram_budget_bytes > 0U && total > vram_budget_bytes,
+    };
+}
+
+core::Status Renderer::Impl::set_vram_budget(core::u64 budget_bytes) noexcept
+{
+    vram_budget_bytes = budget_bytes;
+    return core::Status{};
+}
+
 core::Status Renderer::Impl::create_buffer_resource(VkDeviceSize size,
                                                     VkBufferUsageFlags usage,
                                                     VkMemoryPropertyFlags properties,
                                                     VkBuffer& buffer,
                                                     VkDeviceMemory& memory,
-                                                    VkMemoryPropertyFlags* allocated_properties) noexcept
+                                                    VkMemoryPropertyFlags* allocated_properties,
+                                                    bool transient) noexcept
 {
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -5398,22 +5602,27 @@ core::Status Renderer::Impl::create_buffer_resource(VkDeviceSize size,
         return status;
     }
 
+    VkPhysicalDeviceMemoryProperties memory_properties{};
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+    const VkMemoryPropertyFlags resolved_properties =
+        memory_properties.memoryTypes[memory_type].propertyFlags;
     if (allocated_properties != nullptr) {
-        VkPhysicalDeviceMemoryProperties memory_properties{};
-        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
-        *allocated_properties = memory_properties.memoryTypes[memory_type].propertyFlags;
+        *allocated_properties = resolved_properties;
     }
 
     VkMemoryAllocateInfo allocation_info{};
     allocation_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocation_info.allocationSize = requirements.size;
     allocation_info.memoryTypeIndex = memory_type;
-    if (vkAllocateMemory(device, &allocation_info, nullptr, &memory) != VK_SUCCESS) {
+    status = allocate_tracked_memory(allocation_info, resolved_properties, memory, transient);
+    if (!status) {
         destroy_buffer_resource(buffer, memory);
-        return core::Status{core::ErrorCode::vulkan_device_failed};
+        buffer = VK_NULL_HANDLE;
+        return status;
     }
     if (vkBindBufferMemory(device, buffer, memory, 0) != VK_SUCCESS) {
         destroy_buffer_resource(buffer, memory);
+        buffer = VK_NULL_HANDLE;
         return core::Status{core::ErrorCode::vulkan_device_failed};
     }
     return core::Status{};
@@ -5428,7 +5637,7 @@ void Renderer::Impl::destroy_buffer_resource(VkBuffer buffer, VkDeviceMemory mem
         vkDestroyBuffer(device, buffer, nullptr);
     }
     if (memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, memory, nullptr);
+        free_tracked_memory(memory);
     }
 }
 
@@ -5640,7 +5849,9 @@ core::Status Renderer::Impl::upload_buffer(rhi::BufferHandle handle,
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         staging_buffer,
-        staging_memory);
+        staging_memory,
+        nullptr,
+        true);
     if (!status) {
         return status;
     }
@@ -5713,8 +5924,7 @@ void Renderer::Impl::destroy_image_resource(ImageSlot& slot) noexcept
         slot.image = VK_NULL_HANDLE;
     }
     if (slot.memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, slot.memory, nullptr);
-        slot.memory = VK_NULL_HANDLE;
+        free_tracked_memory(slot.memory);
     }
 }
 
@@ -5767,7 +5977,14 @@ core::Status Renderer::Impl::create_image(const rhi::ImageDescription& descripti
     allocation_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocation_info.allocationSize = requirements.size;
     allocation_info.memoryTypeIndex = memory_type;
-    if (vkAllocateMemory(device, &allocation_info, nullptr, &slot.memory) != VK_SUCCESS ||
+    status = allocate_tracked_memory(allocation_info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, slot.memory);
+    if (!status.ok()) {
+        destroy_image_resource(slot);
+        slot.state = ResourceState::free;
+        handle = {};
+        return status;
+    }
+    if (
         vkBindImageMemory(device, slot.image, slot.memory, 0) != VK_SUCCESS) {
         destroy_image_resource(slot);
         slot.state = ResourceState::free;
@@ -5809,7 +6026,9 @@ core::Status Renderer::Impl::upload_image(rhi::ImageHandle handle,
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         staging_buffer,
-        staging_memory);
+        staging_memory,
+        nullptr,
+        true);
     if (!status) {
         return status;
     }
@@ -6198,8 +6417,7 @@ void Renderer::Impl::cleanup_swapchain() noexcept
         depth_image = VK_NULL_HANDLE;
     }
     if (depth_memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, depth_memory, nullptr);
-        depth_memory = VK_NULL_HANDLE;
+        free_tracked_memory(depth_memory);
     }
     depth_format = VK_FORMAT_UNDEFINED;
     if (swapchain != VK_NULL_HANDLE) {
@@ -6500,6 +6718,7 @@ VkResult Renderer::Impl::record_command_buffer(VkCommandBuffer command_buffer,
     timing.environment_bytes = effective_quality == renderer::quality::RendererQuality::high
                                    ? environment_size
                                    : 0U;
+    timing.vram = current_vram_summary();
 
     const auto visibility_start = std::chrono::steady_clock::now();
     math::Frustum frustum{};
@@ -7715,6 +7934,15 @@ core::Status set_renderer_quality(
     return renderer.impl_->set_renderer_quality(quality);
 }
 
+core::Status set_vram_budget(const gameengine::rhi::Renderer& renderer,
+                             core::u64 budget_bytes) noexcept
+{
+    if (renderer.impl_ == nullptr) {
+        return core::Status{core::ErrorCode::not_initialized};
+    }
+    return renderer.impl_->set_vram_budget(budget_bytes);
+}
+
 core::Status set_procedural_workload(const gameengine::rhi::Renderer& renderer,
                                      core::u32 instance_count) noexcept
 {
@@ -7763,6 +7991,9 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
                  "instance_buffer_bytes=%llu gpu_source_bytes=%llu gpu_visible_bytes=%llu "
                  "gpu_indirect_bytes=%llu light_bytes=%llu tile_headers=%llu tile_indices=%llu "
                  "shadow_map_bytes=%llu environment_bytes=%llu "
+                 "vram_device_bytes=%llu vram_host_bytes=%llu vram_total_bytes=%llu "
+                 "vram_peak_bytes=%llu vram_budget_bytes=%llu vram_allocs=%u "
+                 "vram_staging_peak_bytes=%llu vram_over_budget=%s "
                  "gpu_timestamps=%s fallbacks(compute/shadow/environment)=%s/%s/%s\n",
                  mode,
                  gpu_state,
@@ -7788,6 +8019,14 @@ void print_metrics(const gameengine::rhi::Renderer& renderer) noexcept
                  static_cast<unsigned long long>(accumulator.tile_index_buffer_bytes),
                  static_cast<unsigned long long>(accumulator.shadow_map_bytes),
                  static_cast<unsigned long long>(accumulator.environment_bytes),
+                 static_cast<unsigned long long>(accumulator.vram.device_local_bytes),
+                 static_cast<unsigned long long>(accumulator.vram.host_visible_bytes),
+                 static_cast<unsigned long long>(accumulator.vram.total_allocated_bytes),
+                 static_cast<unsigned long long>(accumulator.vram.peak_allocated_bytes),
+                 static_cast<unsigned long long>(accumulator.vram.budget_bytes),
+                 accumulator.vram.active_allocations,
+                 static_cast<unsigned long long>(accumulator.vram.transient_staging_peak_bytes),
+                 accumulator.vram.over_budget ? "yes" : "no",
                  accumulator.gpu_timestamps_available ? "available" : "unavailable",
                  accumulator.quality_compute_fallback ? "yes" : "no",
                  accumulator.quality_shadow_fallback ? "yes" : "no",

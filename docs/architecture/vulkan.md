@@ -149,8 +149,49 @@ Vulkan command buffer
 Forward+ uses 16x16 tiles, Clustered uses 16x16x24 clusters, and Deferred keeps a minimal
 G-buffer-shaped benchmark pass. The normal renderer selects Forward+ through the quality flag;
 the benchmark still measures all four paths in its fixed order. The High profile uses only
-procedural shadow/environment resources; no external model or texture is required. VRAM policy
-and the final hardware baseline remain pending.
+procedural shadow/environment resources; no external model or texture is required.
+
+## VRAM budget & resource lifetime policy
+
+All Vulkan `VkDeviceMemory` allocations route through `allocate_tracked_memory` /
+`free_tracked_memory` in `renderer_vulkan.cpp`, separated into device-local bytes, host-visible
+bytes, active allocation count, peak allocation bytes, and transient staging bytes/peak.
+
+- **Default VRAM budget**: Capped at `min(device_local_heap_bytes, 512 MiB)` (or `256 MiB` when
+  no device-local heap is reported), and configurable via `renderer::diagnostics::set_vram_budget`.
+  Setting budget `0` restores unlimited tracking without rejection; a positive budget rejects
+  allocations that would exceed the cap with `ErrorCode::allocation_failed`.
+- **Zero-overhead basic path**: `Low` quality with `CPU` visibility does not allocate Forward+
+  tile/light buffers (`light_bytes = 0`, `tile_headers = 0`, `tile_indices = 0`), shadow maps
+  (`shadow_map_bytes = 0`), environment cubemaps (`environment_bytes = 0`), or GPU culling
+  buffers (`gpu_source_bytes = 0`, `gpu_visible_bytes = 0`). Switching down to `Low` or `CPU`
+  releases those optional resources.
+- **Transient staging & deferred deletion**: Upload staging buffers are marked transient and
+  freed immediately after the one-time transfer fence completes, returning `transient_staging_bytes`
+  to `0`. Frame-referenced GPU resources are queued in the per-frame deferred deletion list and
+  destroyed after the fence, with `shutdown()` asserting zero remaining tracked allocations.
+
+## Local reference-hardware baseline (Release, NVIDIA GeForce GTX 1660 SUPER)
+
+Measured locally with `gameengine_runtime.exe --metrics` (30 measured frames after warmup):
+
+- **`low` + `cpu`**: `vram_total_bytes=16749520` (`vram_device_bytes=3949392`,
+  `vram_host_bytes=12800128`, `vram_allocs=6`, `light_bytes=0`, `tile_headers=0`, `tile_indices=0`,
+  `shadow_map_bytes=0`, `environment_bytes=0`, `gpu_source_bytes=0`, `gpu_visible_bytes=0`);
+  `forward_opaque` avg GPU `122124 ns` (1k), `189969 ns` (10k), `186091 ns` (100k).
+- **`medium` + `cpu` (default)**: `vram_total_bytes=28872912` (`vram_allocs=11`,
+  `light_bytes=8192`, `tile_headers=28800`, `tile_indices=3686400`); `light_list_build` avg GPU
+  `~480 us`, `forward_opaque` avg GPU `~5.56 ms` (1k).
+- **`high` + `cpu`**: `vram_total_bytes=33214672` (`vram_peak_bytes=33345744`, `vram_allocs=13`,
+  `shadow_map_bytes=4194304`, `environment_bytes=131064`, `vram_staging_peak_bytes=131072`);
+  `shadow_depth` avg GPU `80033 ns`, `light_list_build` avg GPU `536641 ns`, `forward_opaque` avg
+  GPU `6845628 ns` (100k).
+- **`medium` + `--gpu-culling`**: `vram_total_bytes=49673040` (`vram_allocs=14`,
+  `gpu_source_bytes=8000000`, `gpu_visible_bytes=12800000`, `gpu_indirect_bytes=128`);
+  `gpu_culling_cpu_ns` avg `576-660 ns`, `gpu_cull` avg GPU `11257 ns` (1k), `52449 ns` (10k),
+  `534247 ns` (100k).
+- **`--renderer-benchmark`**: Completed all 36 cases (`forward`, `forward_plus`, `clustered`,
+  `deferred` across 1k/10k/100k instances and 1/32/256 lights) on `NVIDIA GeForce GTX 1660 SUPER`.
 
 ## Editor viewport
 

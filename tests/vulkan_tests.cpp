@@ -2,6 +2,8 @@
 #include "engine/rhi/rhi.hpp"
 
 #include "engine/assets/prepared_assets.hpp"
+#include "engine/renderer/gpu_culling.hpp"
+#include "engine/renderer/renderer_metrics.hpp"
 #include "engine/renderer/renderer_quality.hpp"
 #include "engine/renderer/scene_bridge.hpp"
 #include "engine/scene/scene_serialization.hpp"
@@ -463,6 +465,88 @@ int main()
             prepared_renderer.shutdown();
             platform.shutdown();
             return 34;
+        }
+
+        gameengine::renderer::metrics::FrameTimingReport low_report;
+        if (!gameengine::renderer::diagnostics::set_visibility_mode(
+                 prepared_renderer,
+                 gameengine::renderer::gpu_culling::VisibilityMode::cpu)
+                 .ok() ||
+            !gameengine::renderer::diagnostics::set_renderer_quality(
+                 prepared_renderer,
+                 gameengine::renderer::quality::RendererQuality::low)
+                 .ok() ||
+            !prepared_renderer.render_frame(platform).ok() ||
+            !gameengine::editor::renderer_bridge::read_metrics(prepared_renderer, low_report)
+                 .ok()) {
+            prepared_renderer.shutdown();
+            platform.shutdown();
+            return 35;
+        }
+        if (low_report.light_buffer_bytes != 0U || low_report.tile_header_buffer_bytes != 0U ||
+            low_report.tile_index_buffer_bytes != 0U || low_report.shadow_map_bytes != 0U ||
+            low_report.environment_bytes != 0U || low_report.gpu_source_buffer_bytes != 0U ||
+            low_report.gpu_visible_buffer_bytes != 0U ||
+            low_report.vram.transient_staging_bytes != 0U ||
+            low_report.vram.transient_staging_peak_bytes == 0U ||
+            low_report.vram.total_allocated_bytes == 0U) {
+            prepared_renderer.shutdown();
+            platform.shutdown();
+            return 36;
+        }
+
+        gameengine::renderer::metrics::FrameTimingReport high_report;
+        if (!gameengine::renderer::diagnostics::set_renderer_quality(
+                 prepared_renderer,
+                 gameengine::renderer::quality::RendererQuality::high)
+                 .ok() ||
+            !prepared_renderer.render_frame(platform).ok() ||
+            !gameengine::editor::renderer_bridge::read_metrics(prepared_renderer, high_report)
+                 .ok()) {
+            prepared_renderer.shutdown();
+            platform.shutdown();
+            return 37;
+        }
+        if (high_report.vram.total_allocated_bytes <= low_report.vram.total_allocated_bytes) {
+            prepared_renderer.shutdown();
+            platform.shutdown();
+            return 38;
+        }
+
+        if (!gameengine::renderer::diagnostics::set_renderer_quality(
+                 prepared_renderer,
+                 gameengine::renderer::quality::RendererQuality::low)
+                 .ok() ||
+            !prepared_renderer.render_frame(platform).ok() ||
+            !gameengine::editor::renderer_bridge::read_metrics(prepared_renderer, low_report)
+                 .ok() ||
+            low_report.light_buffer_bytes != 0U || low_report.shadow_map_bytes != 0U ||
+            low_report.environment_bytes != 0U) {
+            prepared_renderer.shutdown();
+            platform.shutdown();
+            return 39;
+        }
+
+        if (!gameengine::renderer::diagnostics::set_vram_budget(prepared_renderer, 1U).ok()) {
+            prepared_renderer.shutdown();
+            platform.shutdown();
+            return 40;
+        }
+        gameengine::rhi::BufferHandle budget_buffer{};
+        const auto budget_fail = prepared_renderer.create_buffer(
+            {.size = 256U, .usage = gameengine::rhi::BufferUsage::vertex},
+            budget_buffer);
+        if (budget_fail.code != gameengine::core::ErrorCode::allocation_failed ||
+            budget_buffer.valid()) {
+            prepared_renderer.shutdown();
+            platform.shutdown();
+            return 41;
+        }
+        if (!gameengine::renderer::diagnostics::set_vram_budget(prepared_renderer, 0U).ok() ||
+            !prepared_renderer.render_frame(platform).ok()) {
+            prepared_renderer.shutdown();
+            platform.shutdown();
+            return 42;
         }
 
         prepared_renderer.shutdown();

@@ -246,8 +246,8 @@ Goal: build the rendering architecture that supports high quality without imposi
 - [x] Evaluate Forward+, Clustered and Deferred through the deterministic benchmark protocol.
 - [x] Create Low/Medium/High quality selection with an explicit Low/Medium fallback policy.
 - [x] Add optional GPU timestamps and per-pass reports with a CPU fallback.
-- [ ] Control VRAM use and temporary-resource lifetime.
-- [ ] Verify that advanced resources do not increase the basic-path cost when absent.
+- [x] Control VRAM use and temporary-resource lifetime.
+- [x] Verify that advanced resources do not increase the basic-path cost when absent.
 
 ### Phase 7A validation status
 
@@ -278,8 +278,8 @@ Goal: build the rendering architecture that supports high quality without imposi
 
 The GPU visible-instance order is not a contract because the current atomic compaction is intended
 for opaque depth-tested geometry. Forward+ is now the productive lighting path, with shadows,
-procedural environment and quality fallbacks implemented; VRAM policy and the final performance
-comparison between Forward+, Clustered and Deferred remain open Phase 7 work.
+procedural environment, quality fallbacks, VRAM tracking/budgeting and the local reference-hardware
+baseline implemented and verified.
 
 ### Phase 7D validation status
 
@@ -290,7 +290,7 @@ comparison between Forward+, Clustered and Deferred remain open Phase 7 work.
   runtime fallback.
 - [x] Report startup, CPU/GPU pass timing, draws, dispatches and available RAM/VRAM/resource
   metrics without versioning numeric benchmark results.
-- [ ] Choose the production lighting architecture from reference-hardware measurements.
+- [x] Choose the production lighting architecture from reference-hardware measurements.
 - [x] Implement production-quality procedural Forward+ with Low/Medium/High fallbacks, shadows and environment.
 
 The benchmark is intentionally isolated from the normal renderer. Unsupported Vulkan builds print
@@ -307,7 +307,7 @@ workloads.
 - [x] Add unit coverage for quality resolution, tile lists, shadow matrices and procedural
   cubemap mip data.
 - [x] Complete validated Vulkan shadow-map and cubemap sampling for the High profile on the local reference device.
-- [ ] Document the local reference-hardware baseline and confirm advanced-resource lifetime/VRAM
+- [x] Document the local reference-hardware baseline and confirm advanced-resource lifetime/VRAM
   policy before closing Phase 7.
 
 ### Completion criteria
