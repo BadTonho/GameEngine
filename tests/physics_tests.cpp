@@ -228,18 +228,18 @@ int main()
         const scene::Entity ground_b = scene_b.create_entity();
         const scene::Entity box_b = scene_b.create_entity();
 
-        scene_a.add_transform(ground_a, {.local_position = {0.0F, 0.0F, 0.0F}});
-        scene_a.add_transform(box_a, {.local_position = {0.2F, 4.0F, 0.1F}});
-        scene_a.update_transforms();
+        passed = expect(scene_a.add_transform(ground_a, {.local_position = {0.0F, 0.0F, 0.0F}}).ok()) && passed;
+        passed = expect(scene_a.add_transform(box_a, {.local_position = {0.2F, 4.0F, 0.1F}}).ok()) && passed;
+        passed = expect(scene_a.update_transforms().ok()) && passed;
 
-        scene_b.add_transform(ground_b, {.local_position = {0.0F, 0.0F, 0.0F}});
-        scene_b.add_transform(box_b, {.local_position = {0.2F, 4.0F, 0.1F}});
-        scene_b.update_transforms();
+        passed = expect(scene_b.add_transform(ground_b, {.local_position = {0.0F, 0.0F, 0.0F}}).ok()) && passed;
+        passed = expect(scene_b.add_transform(box_b, {.local_position = {0.2F, 4.0F, 0.1F}}).ok()) && passed;
+        passed = expect(scene_b.update_transforms().ok()) && passed;
 
         physics::PhysicsWorld world_a;
         physics::PhysicsWorld world_b;
-        world_a.initialize();
-        world_b.initialize();
+        passed = expect(world_a.initialize().ok()) && passed;
+        passed = expect(world_b.initialize().ok()) && passed;
 
         const physics::BodyDesc ground_desc{
             .shape = physics::ShapeType::box,
@@ -253,20 +253,20 @@ int main()
             .mass_kilograms = 3.0F,
         };
 
-        world_a.add_body(scene_a, ground_a, ground_desc);
-        world_a.add_body(scene_a, box_a, box_desc);
-        world_b.add_body(scene_b, ground_b, ground_desc);
-        world_b.add_body(scene_b, box_b, box_desc);
+        passed = expect(world_a.add_body(scene_a, ground_a, ground_desc).ok()) && passed;
+        passed = expect(world_a.add_body(scene_a, box_a, box_desc).ok()) && passed;
+        passed = expect(world_b.add_body(scene_b, ground_b, ground_desc).ok()) && passed;
+        passed = expect(world_b.add_body(scene_b, box_b, box_desc).ok()) && passed;
 
         for (core::u32 step = 0; step < 60; ++step) {
-            world_a.update(1.0F / 60.0F);
-            world_b.update(1.0F / 60.0F);
+            passed = expect(world_a.update(1.0F / 60.0F).ok()) && passed;
+            passed = expect(world_b.update(1.0F / 60.0F).ok()) && passed;
         }
 
         math::Vec3 pos_a{}, pos_b{};
         math::Quaternion rot_a{}, rot_b{};
-        world_a.body_pose(box_a, pos_a, rot_a);
-        world_b.body_pose(box_b, pos_b, rot_b);
+        passed = expect(world_a.body_pose(box_a, pos_a, rot_a).ok()) && passed;
+        passed = expect(world_b.body_pose(box_b, pos_b, rot_b).ok()) && passed;
 
         passed = expect(pos_a.x == pos_b.x && pos_a.y == pos_b.y && pos_a.z == pos_b.z,
                         "exact deterministic position across worlds") && passed;
@@ -282,34 +282,34 @@ int main()
         scene::Scene scene;
         const scene::Entity ground = scene.create_entity();
         const scene::Entity sphere = scene.create_entity();
-        scene.add_transform(ground, {.local_position = {0.0F, 0.0F, 0.0F}});
-        scene.add_transform(sphere, {.local_position = {0.0F, 2.5F, 0.0F}});
-        scene.update_transforms();
+        passed = expect(scene.add_transform(ground, {.local_position = {0.0F, 0.0F, 0.0F}}).ok()) && passed;
+        passed = expect(scene.add_transform(sphere, {.local_position = {0.0F, 2.5F, 0.0F}}).ok()) && passed;
+        passed = expect(scene.update_transforms().ok()) && passed;
 
         physics::PhysicsWorld world;
-        world.initialize();
+        passed = expect(world.initialize().ok()) && passed;
 
-        world.add_body(scene, ground, {
+        passed = expect(world.add_body(scene, ground, {
             .shape = physics::ShapeType::box,
             .half_extents = {5.0F, 0.5F, 5.0F},
             .motion = physics::MotionType::static_body,
-        });
+        }).ok()) && passed;
 
         // Radius 0.5 at y = 2.5 -> rests at ground top (0.5) + radius (0.5) = y ~ 1.0
-        world.add_body(scene, sphere, {
+        passed = expect(world.add_body(scene, sphere, {
             .shape = physics::ShapeType::sphere,
             .radius = 0.5F,
             .motion = physics::MotionType::dynamic_body,
             .mass_kilograms = 1.0F,
-        });
+        }).ok()) && passed;
 
         for (core::u32 step = 0; step < 120; ++step) {
-            world.update(1.0F / 60.0F);
+            passed = expect(world.update(1.0F / 60.0F).ok()) && passed;
         }
 
         math::Vec3 sphere_pos{};
         math::Quaternion sphere_rot{};
-        world.body_pose(sphere, sphere_pos, sphere_rot);
+        passed = expect(world.body_pose(sphere, sphere_pos, sphere_rot).ok()) && passed;
         passed = expect(near_equal(sphere_pos.y, 1.0F, 0.15F), "sphere rested at y ~ 1.0") && passed;
 
         world.shutdown();
